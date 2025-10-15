@@ -3,7 +3,7 @@ import type {Config} from '@docusaurus/types';
 import {themes as prismThemes} from 'prism-react-renderer';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
-
+const baseUrl = process.env.BASE_URL || '/';
 const config: Config = {
   title: 'XR Blocks',
   tagline: 'XR and AI for the Web',
@@ -18,7 +18,7 @@ const config: Config = {
   url: process.env.URL || 'https://your-docusaurus-site.example.com',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: process.env.BASE_URL || '/',
+  baseUrl: baseUrl,
   trailingSlash: true,
 
   // GitHub pages deployment config.
@@ -48,7 +48,7 @@ const config: Config = {
       tagName: 'link',
       attributes: {
         rel: 'icon',
-        href: '/img/favicon.ico',
+        href: baseUrl + 'img/favicon.ico',
         sizes: 'any',
       },
     },
@@ -56,7 +56,7 @@ const config: Config = {
       tagName: 'link',
       attributes: {
         rel: 'icon',
-        href: '/img/favicon.svg',
+        href: baseUrl + 'img/favicon.svg',
         type: 'image/svg+xml',
       },
     },
@@ -64,7 +64,7 @@ const config: Config = {
       tagName: 'link',
       attributes: {
         rel: 'apple-touch-icon',
-        href: '/img/apple-touch-icon.png',
+        href: baseUrl + 'img/apple-touch-icon.png',
         sizes: '180x180',
       },
     },
@@ -72,7 +72,7 @@ const config: Config = {
       tagName: 'link',
       attributes: {
         rel: 'icon',
-        href: '/img/web-app-manifest-192x192.png',
+        href: baseUrl + 'img/web-app-manifest-192x192.png',
         sizes: '192x192',
         type: 'image/png',
       },
@@ -81,7 +81,7 @@ const config: Config = {
       tagName: 'link',
       attributes: {
         rel: 'icon',
-        href: '/img/web-app-manifest-512x512.png',
+        href: baseUrl + 'img/web-app-manifest-512x512.png',
         sizes: '512x512',
         type: 'image/png',
       },
@@ -90,7 +90,7 @@ const config: Config = {
       tagName: 'link',
       attributes: {
         rel: 'manifest',
-        href: '/img/site.webmanifest',
+        href: baseUrl + 'img/site.webmanifest',
       },
     },
     {

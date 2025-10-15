@@ -1,15 +1,14 @@
-import {Tool} from '../Tool';
+import {Tool, ToolResult} from '../Tool';
 
 export interface GetWeatherArgs {
   latitude: number;
   longitude: number;
 }
 
-export type GetWeatherToolResults = {
-  error?: string;
-  temperature?: number;
-  weathercode?: number;
-};
+export interface WeatherData {
+  temperature: number;
+  weathercode: number;
+}
 
 /**
  * A tool that gets the current weather for a specific location.
@@ -39,9 +38,9 @@ export class GetWeatherTool extends Tool {
   /**
    * Executes the tool's action.
    * @param args - The arguments for the tool.
-   * @returns A promise that resolves with the weather information.
+   * @returns A promise that resolves with a ToolResult containing weather information.
    */
-  override async execute(args: GetWeatherArgs): Promise<GetWeatherToolResults> {
+  override async execute(args: GetWeatherArgs): Promise<ToolResult<WeatherData>> {
     if (!args.latitude || !args.longitude) {
       args.latitude = 37.7749;  // Default to San Francisco
       args.longitude = -122.4194;
@@ -56,18 +55,31 @@ export class GetWeatherTool extends Tool {
 
       if (response.ok) {
         return {
-          temperature: data.current.temperature_2m,
-          weathercode: data.current.weather_code,
+          success: true,
+          data: {
+            temperature: data.current.temperature_2m,
+            weathercode: data.current.weather_code,
+          },
+          metadata: {
+            latitude: args.latitude,
+            longitude: args.longitude,
+            timestamp: Date.now()
+          }
         };
       } else {
         return {
-          error: 'Could not retrieve weather for the specified location.'
+          success: false,
+          error: 'Could not retrieve weather for the specified location.',
+          metadata: {latitude: args.latitude, longitude: args.longitude}
         };
       }
     } catch (error) {
       console.error('Error fetching weather:', error);
       return {
-        error: 'There was an error fetching the weather.'
+        success: false,
+        error: error instanceof Error ? error.message :
+                                        'There was an error fetching the weather.',
+        metadata: {latitude: args.latitude, longitude: args.longitude}
       };
     }
   }

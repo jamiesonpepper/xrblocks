@@ -5,6 +5,21 @@ export interface ToolCall {
   args: unknown;
 }
 
+/**
+ * Standardized result type for tool execution.
+ * @template T The type of data returned on success.
+ */
+export interface ToolResult<T = unknown> {
+  /** Whether the tool execution succeeded */
+  success: boolean;
+  /** The result data if successful */
+  data?: T;
+  /** Error message if execution failed */
+  error?: string;
+  /** Additional metadata about the execution */
+  metadata?: Record<string, unknown>;
+}
+
 // Identical to GoogleGenAITypes.Schema but replaces the Type enum with actual
 // strings so tools don't need to import the types from @google/genai.
 export type ToolSchema = Omit<GoogleGenAITypes.Schema, 'type'|'properties'>&{
@@ -20,7 +35,7 @@ export type ToolOptions = {
   /** The parameters of the tool */
   parameters?: ToolSchema;
   /** A callback to execute when the tool is triggered */
-  onTriggered?: (args: unknown) => unknown;
+  onTriggered?: (args: unknown) => unknown | Promise<unknown>;
 };
 
 /**
@@ -43,16 +58,29 @@ export class Tool {
   }
 
   /**
-   * Executes the tool's action.
+   * Executes the tool's action with standardized error handling.
    * @param args - The arguments for the tool.
-   * @returns The result of the tool's action.
+   * @returns A promise that resolves with a ToolResult containing success/error information.
    */
-  execute(args: unknown): unknown {
-    if (this.onTriggered) {
-      return this.onTriggered(args);
+  async execute(args: unknown): Promise<ToolResult> {
+    try {
+      if (this.onTriggered) {
+        const result = await Promise.resolve(this.onTriggered(args));
+        return {
+          success: true,
+          data: result,
+          metadata: {executedAt: Date.now(), toolName: this.name}
+        };
+      }
+      throw new Error(
+          'The execute method must be implemented by a subclass or onTriggered must be provided.');
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: {executedAt: Date.now(), toolName: this.name}
+      };
     }
-    throw new Error(
-        'The execute method must be implemented by a subclass or onTriggered must be provided.');
   }
 
   /**
@@ -64,7 +92,7 @@ export class Tool {
     if (this.description) {
       result.description = this.description;
     }
-    if (this.parameters && this.parameters.required) {
+    if (this.parameters) {
       result.parameters = this.parameters as GoogleGenAITypes.Schema;
     }
     return result;

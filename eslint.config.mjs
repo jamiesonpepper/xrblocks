@@ -26,6 +26,10 @@ export default defineConfig(
       },
     },
     {
+      files: ['demos/**/*.js', 'templates/**/*.js'],
+      languageOptions: {globals: {...globals.browser}},
+    },
+    {
       files: ['rollup.config.js', 'docs/docusaurus.config.js'],
       languageOptions: {globals: {...globals.node}}
     });

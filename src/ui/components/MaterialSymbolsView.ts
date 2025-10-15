@@ -126,16 +126,16 @@ export class MaterialSymbolsView extends View {
     const group = new THREE.Group();
 
     const scale = 1 / Math.max(viewWidth, viewHeight);
+
+    const material = new THREE.MeshBasicMaterial({
+      color: this.iconColor,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+
     for (let i = 0; i < paths.length; i++) {
       const path = paths[i];
-
-      const material = new THREE.MeshBasicMaterial({
-        color: this.iconColor,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-        depthTest: false
-      });
-
       const shapes = SVGLoader.createShapes(path);
 
       for (let j = 0; j < shapes.length; j++) {

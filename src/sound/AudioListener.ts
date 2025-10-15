@@ -23,11 +23,13 @@ export class AudioListener extends Script {
   static dependencies = {registry: Registry};
   private options: AudioListenerOptions;
   private audioStream?: MediaStream;
-  private audioContext?: AudioContext;
+  audioContext?: AudioContext;
   private sourceNode?: MediaStreamAudioSourceNode;
   private processorNode?: AudioWorkletNode;
   private isCapturing = false;
   private latestAudioBuffer: ArrayBuffer|null = null;
+  private accumulatedChunks: ArrayBuffer[] = [];
+  private isAccumulating = false;
   private registry!: Registry;
   aiService?: AI;
   private onAudioData?: ((audioBuffer: ArrayBuffer) => void);
@@ -55,10 +57,17 @@ export class AudioListener extends Script {
   async startCapture(callbacks: {
     onAudioData?: (audioBuffer: ArrayBuffer) => void;
     onError?: (error: Error) => void;
+    accumulate?: boolean;
   } = {}) {
     if (this.isCapturing) return;
     this.onAudioData = callbacks.onAudioData;
     this.onError = callbacks.onError;
+    this.isAccumulating = callbacks.accumulate || false;
+    
+    if (this.isAccumulating) {
+      this.accumulatedChunks = [];
+    }
+    
     try {
       await this.setupAudioCapture();
       this.isCapturing = true;
@@ -92,6 +101,12 @@ export class AudioListener extends Script {
     this.processorNode.port.onmessage = (event) => {
       if (event.data.type === 'audioData') {
         this.latestAudioBuffer = event.data.data;
+        
+        // Accumulate chunks if requested
+        if (this.isAccumulating) {
+          this.accumulatedChunks.push(event.data.data);
+        }
+        
         this.onAudioData?.(event.data.data);
         this.streamToAI(event.data.data);
       }
@@ -158,6 +173,8 @@ export class AudioListener extends Script {
     this.onAudioData = undefined;
     this.onError = undefined;
     this.latestAudioBuffer = null;
+    this.accumulatedChunks = [];
+    this.isAccumulating = false;
     this.aiService = undefined;
   }
 
@@ -175,6 +192,40 @@ export class AudioListener extends Script {
 
   clearLatestAudioBuffer() {
     this.latestAudioBuffer = null;
+  }
+
+  /**
+   * Gets all accumulated audio chunks as a single combined buffer
+   */
+  getAccumulatedBuffer(): ArrayBuffer|null {
+    if (this.accumulatedChunks.length === 0) return null;
+    
+    const totalLength = this.accumulatedChunks.reduce(
+        (sum, chunk) => sum + chunk.byteLength, 0);
+    const combined = new ArrayBuffer(totalLength);
+    const combinedArray = new Uint8Array(combined);
+    
+    let offset = 0;
+    for (const chunk of this.accumulatedChunks) {
+      combinedArray.set(new Uint8Array(chunk), offset);
+      offset += chunk.byteLength;
+    }
+    
+    return combined;
+  }
+
+  /**
+   * Clears accumulated chunks
+   */
+  clearAccumulatedBuffer() {
+    this.accumulatedChunks = [];
+  }
+
+  /**
+   * Gets the number of accumulated chunks
+   */
+  getAccumulatedChunkCount(): number {
+    return this.accumulatedChunks.length;
   }
 
   dispose() {

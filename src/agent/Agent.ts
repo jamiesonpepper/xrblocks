@@ -7,6 +7,20 @@ import {Memory} from './Memory';
 import {Tool} from './Tool';
 
 /**
+ * Lifecycle callbacks for agent events.
+ */
+export interface AgentLifecycleCallbacks {
+  /** Called when a session starts */
+  onSessionStart?: () => void | Promise<void>;
+  /** Called when a session ends */
+  onSessionEnd?: () => void | Promise<void>;
+  /** Called after a tool is executed */
+  onToolExecuted?: (toolName: string, result: unknown) => void;
+  /** Called when an error occurs */
+  onError?: (error: Error) => void;
+}
+
+/**
  * An agent that can use an AI to reason and execute tools.
  */
 export class Agent {
@@ -15,12 +29,17 @@ export class Agent {
   tools: Tool[];
   memory: Memory;
   contextBuilder: Context;
+  lifecycleCallbacks?: AgentLifecycleCallbacks;
+  isSessionActive = false;
 
-  constructor(ai: AI, tools: Tool[] = [], instruction: string = '') {
+  constructor(
+      ai: AI, tools: Tool[] = [], instruction: string = '',
+      callbacks?: AgentLifecycleCallbacks) {
     this.ai = ai;
     this.tools = tools;
     this.memory = new Memory();
     this.contextBuilder = new Context(instruction);
+    this.lifecycleCallbacks = callbacks;
   }
 
   /**
@@ -79,5 +98,17 @@ export class Agent {
 
   findTool(name: string): Tool|undefined {
     return this.tools.find(tool => tool.name === name);
+  }
+
+  /**
+   * Get the current session state.
+   * @returns Object containing session information
+   */
+  getSessionState() {
+    return {
+      isActive: this.isSessionActive,
+      toolCount: this.tools.length,
+      memorySize: this.memory.getShortTerm?.()?.length || 0,
+    };
   }
 }

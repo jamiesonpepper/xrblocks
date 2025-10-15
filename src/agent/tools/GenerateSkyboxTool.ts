@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import {AI} from '../../ai/AI';
-import {Tool} from '../Tool';
+import {Tool, ToolResult} from '../Tool';
 
 /**
  * A tool that generates a 360-degree equirectangular skybox image
@@ -30,9 +30,9 @@ export class GenerateSkyboxTool extends Tool {
   /**
    * Executes the tool's action.
    * @param args - The prompt to use to generate the skybox.
-   * @returns A promise that resolves with the result of the skybox generation.
+   * @returns A promise that resolves with a ToolResult containing success/error information.
    */
-  override async execute(args: {prompt: string}): Promise<string> {
+  override async execute(args: {prompt: string}): Promise<ToolResult<string>> {
     try {
       const image = await this.ai.generate(
           'Generate a 360 equirectangular skybox image for the prompt of:' +
@@ -43,13 +43,26 @@ export class GenerateSkyboxTool extends Tool {
         console.log('Applying texture...');
         this.scene.background = new THREE.TextureLoader().load(image);
         this.scene.background.mapping = THREE.EquirectangularReflectionMapping;
-        return 'Skybox generated successfully.';
+        return {
+          success: true,
+          data: 'Skybox generated successfully.',
+          metadata: {prompt: args.prompt, timestamp: Date.now()}
+        };
       } else {
-        return 'Sorry, I had trouble creating that skybox.';
+        return {
+          success: false,
+          error: 'Failed to generate skybox image',
+          metadata: {prompt: args.prompt, timestamp: Date.now()}
+        };
       }
     } catch (e) {
       console.error('error:', e);
-      return 'Sorry, I encountered an error while creating the skybox.';
+      return {
+        success: false,
+        error: e instanceof Error ? e.message :
+                                    'Unknown error while creating skybox',
+        metadata: {prompt: args.prompt, timestamp: Date.now()}
+      };
     }
   }
 }
