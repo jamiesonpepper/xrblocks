@@ -2,6 +2,7 @@ import {AIOptions} from '../ai/AIOptions';
 import {DeviceCameraOptions, xrDeviceCameraEnvironmentOptions, xrDeviceCameraUserOptions} from '../camera/CameraOptions.js';
 import {DepthOptions, xrDepthMeshOptions} from '../depth/DepthOptions.js';
 import {HandsOptions} from '../input/HandsOptions.js';
+import {GestureRecognitionOptions} from '../input/gestures/GestureRecognitionOptions.js';
 import {LightingOptions} from '../lighting/LightingOptions.js';
 import {PhysicsOptions} from '../physics/PhysicsOptions';
 import {SimulatorOptions} from '../simulator/SimulatorOptions';
@@ -88,6 +89,7 @@ export class Options {
   lighting = new LightingOptions();
   deviceCamera = new DeviceCameraOptions();
   hands = new HandsOptions();
+  gestures = new GestureRecognitionOptions();
   reticles = new ReticleOptions();
   sound = new SoundOptions();
   ai = new AIOptions();
@@ -196,6 +198,16 @@ export class Options {
    */
   enableHands() {
     this.hands.enabled = true;
+    return this;
+  }
+
+  /**
+   * Enables the gesture recognition block and ensures hands are available.
+   * @returns The instance for chaining.
+   */
+  enableGestures() {
+    this.enableHands();
+    this.gestures.enable();
     return this;
   }
 
