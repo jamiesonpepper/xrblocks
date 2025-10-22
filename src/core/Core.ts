@@ -7,6 +7,8 @@ import {UI_OVERLAY_LAYER} from '../constants';
 import {Depth} from '../depth/Depth';
 import {DepthOptions} from '../depth/DepthOptions';
 import {Hands} from '../input/Hands';
+import {GestureRecognition} from '../input/gestures/GestureRecognition';
+import {GestureRecognitionOptions} from '../input/gestures/GestureRecognitionOptions.js';
 import {Input} from '../input/Input';
 import {Lighting} from '../lighting/Lighting';
 import {Physics} from '../physics/Physics';
@@ -107,6 +109,7 @@ export class Core {
   xrButton?: XRButton;
   effects?: XREffects;
   ai = new AI();
+  gestureRecognition?: GestureRecognition;
   transition?: XRTransition;
   currentFrame?: XRFrame;
   scriptsManager = new ScriptsManager(async (script: Script) => {
@@ -173,6 +176,7 @@ export class Core {
     this.registry.register(options.world, WorldOptions);
     this.registry.register(options.ai, AIOptions);
     this.registry.register(options.sound, SoundOptions);
+    this.registry.register(options.gestures, GestureRecognitionOptions);
 
     if (options.transition.enabled) {
       this.transition = new XRTransition();
@@ -246,6 +250,11 @@ export class Core {
     if (options.hands.enabled) {
       webXRRequiredFeatures.push('hand-tracking');
       this.user.hands = new Hands(this.input.hands);
+      if (options.gestures.enabled) {
+        this.gestureRecognition = new GestureRecognition();
+        this.scene.add(this.gestureRecognition);
+        this.registry.register(this.gestureRecognition);
+      }
     }
     if (options.world.planes.enabled) {
       webXRRequiredFeatures.push('plane-detection');

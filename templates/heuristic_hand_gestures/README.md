@@ -1,0 +1,6 @@
+# Heuristic Hand Gestures
+
+This template enables the heuristic gesture recognizer and simply logs gesture
+`start`/`end` events to the console for each hand. Use it to validate pinch,
+open-palm, fist, thumbs-up, point, and spread detections on devices like Quest
+or in the simulator.
