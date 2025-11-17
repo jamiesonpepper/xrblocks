@@ -489,7 +489,6 @@ export class Core {
    * scripts.
    */
   private onXRSessionEnded() {
-    this.startSimulator();
     this.scriptsManager.onXRSessionEnded();
   }
 
