@@ -260,6 +260,7 @@ export class Core {
           this.options.depth.useFloat32 ? 'float32' : 'luminance-alpha',
         ],
         depthTypeRequest: options.depth.depthTypeRequest,
+        matchDepthView: options.depth.matchDepthView,
       };
       this.depth.init(
         this.camera,
