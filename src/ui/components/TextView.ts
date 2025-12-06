@@ -394,9 +394,9 @@ export class TextView extends View<TextViewEventMap> {
     }
   }
 
-  protected setTextColor(color: number) {
+  protected setTextColor(color: number | string) {
     if (Text && this.textObj instanceof Text) {
-      this.textObj.color = color;
+      this.textObj.color = getColorHex(color);
     }
   }
 

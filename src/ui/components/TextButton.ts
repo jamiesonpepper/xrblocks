@@ -15,6 +15,8 @@ export type TextButtonOptions = TextViewOptions & {
   maxWidth?: number;
   radius?: number;
   boxSize?: number;
+  hoverColor?: string | number;
+  selectedFontColor?: string | number;
 };
 
 export class TextButton extends TextView {
@@ -60,7 +62,7 @@ export class TextButton extends TextView {
   constructor(options: TextButtonOptions = {}) {
     const geometry = new THREE.PlaneGeometry(1, 1);
     const colorVec4 = getVec4ByColorString(
-      options.backgroundColor ?? '#00000000'
+      options.backgroundColor ?? '#000000'
     );
 
     const {
@@ -93,6 +95,9 @@ export class TextButton extends TextView {
     // Applies our own overrides to the default values.
     this.fontSize = options.fontSize ?? this.fontSize;
     this.fontColor = options.fontColor ?? this.fontColor;
+    this.hoverColor = options.hoverColor ?? this.hoverColor;
+    this.selectedFontColor =
+      options.selectedFontColor ?? this.selectedFontColor;
     this.width = options.width ?? this.width;
     this.height = options.height ?? this.height;
   }
@@ -119,18 +124,18 @@ export class TextButton extends TextView {
     if (!this.textObj) {
       return;
     }
-    if (this.textObj) {
-      this.textObj.renderOrder = this.renderOrder + 1;
-    }
+    // Update render order to ensure text appears on top of the button mesh
+    this.textObj.renderOrder = this.renderOrder + 1;
+
     const ux = this.ux;
     if (ux.isHovered()) {
       if (ux.isSelected()) {
-        this.setTextColor(0x666666);
+        this.setTextColor(this.selectedFontColor);
       } else {
-        this.setTextColor(0xaaaaaa);
+        this.setTextColor(this.hoverColor);
       }
     } else {
-      this.setTextColor(0xffffff);
+      this.setTextColor(this.fontColor);
       this.uniforms.uOpacity.value = this.defaultOpacity * this.opacity;
     }
   }
