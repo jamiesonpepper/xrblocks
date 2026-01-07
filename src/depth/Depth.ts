@@ -33,7 +33,14 @@ export class Depth {
   options = new DepthOptions();
   width = DEFAULT_DEPTH_WIDTH;
   height = DEFAULT_DEPTH_HEIGHT;
-  rawValueToMeters = 0.0010000000474974513;
+  get rawValueToMeters() {
+    if (this.cpuDepthData.length) {
+      return this.cpuDepthData[0].rawValueToMeters;
+    } else if (this.gpuDepthData.length) {
+      return this.gpuDepthData[0].rawValueToMeters;
+    }
+    return 0;
+  }
   occludableShaders = new Set<Shader>();
   private occlusionPass?: OcclusionPass;
 
@@ -189,11 +196,6 @@ export class Depth {
 
   updateCPUDepthData(depthData: XRCPUDepthInformation, viewId = 0) {
     this.cpuDepthData[viewId] = depthData;
-    // Workaround for b/382679381.
-    this.rawValueToMeters = depthData.rawValueToMeters;
-    if (this.options.useFloat32) {
-      this.rawValueToMeters = 1.0;
-    }
 
     // Updates Depth Array.
     if (this.depthArray[viewId] == null) {
@@ -225,11 +227,6 @@ export class Depth {
 
   updateGPUDepthData(depthData: XRWebGLDepthInformation, viewId = 0) {
     this.gpuDepthData[viewId] = depthData;
-    // Workaround for b/382679381.
-    this.rawValueToMeters = depthData.rawValueToMeters;
-    if (this.options.useFloat32) {
-      this.rawValueToMeters = 1.0;
-    }
 
     // For now, assume that we need cpu depth only if depth mesh is enabled.
     // In the future, add a separate option.
@@ -314,22 +311,22 @@ export class Depth {
     if (xrRefSpace) {
       const pose = frame.getViewerPose(xrRefSpace);
       if (pose) {
-        for (let view_id = 0; view_id < pose.views.length; ++view_id) {
-          const view = pose.views[view_id];
-          this.view[view_id] = view;
+        for (let viewId = 0; viewId < pose.views.length; ++viewId) {
+          const view = pose.views[viewId];
+          this.view[viewId] = view;
 
           if (session.depthUsage === 'gpu-optimized') {
             const depthData = binding.getDepthInformation(view);
             if (!depthData) {
               return;
             }
-            this.updateGPUDepthData(depthData, view_id);
+            this.updateGPUDepthData(depthData, viewId);
           } else {
             const depthData = frame.getDepthInformation(view);
             if (!depthData) {
               return;
             }
-            this.updateCPUDepthData(depthData, view_id);
+            this.updateCPUDepthData(depthData, viewId);
           }
         }
       } else {

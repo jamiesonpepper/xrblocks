@@ -79,7 +79,6 @@ export class AI extends Script {
   }
 
   async init({aiOptions}: {aiOptions: AIOptions}) {
-    this.lock = false;
     this.options = aiOptions;
 
     if (!aiOptions.enabled) {
@@ -172,7 +171,7 @@ export class AI extends Script {
   }
 
   isAvailable() {
-    return this.model && this.model.isAvailable() && !this.lock;
+    return this.model && this.model.isAvailable();
   }
 
   async query(
@@ -197,12 +196,10 @@ export class AI extends Script {
     if (!('isLiveAvailable' in this.model) || !this.model.isLiveAvailable()) {
       throw new Error('Live session is not available for the current model.');
     }
-    this.lock = true;
     try {
       const session = await this.model.startLiveSession(config, model);
       return session;
     } catch (error) {
-      this.lock = false;
       console.error('❌ Failed to start Live session:', error);
       throw error;
     }
@@ -214,8 +211,6 @@ export class AI extends Script {
       await ('stopLiveSession' in this.model && this.model.stopLiveSession());
     } catch (error) {
       console.error('❌ Error stopping Live session:', error);
-    } finally {
-      this.lock = false;
     }
   }
 

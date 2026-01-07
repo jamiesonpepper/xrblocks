@@ -63,6 +63,14 @@ export class VideoView extends View {
    */
   constructor(options: VideoViewOptions = {}) {
     super(options);
+    // set video options if passed in
+    this.autoplay = options.autoplay ?? this.autoplay;
+    this.muted = options.muted ?? this.muted;
+    this.loop = options.loop ?? this.loop;
+    this.playsInline = options.playsInline ?? this.playsInline;
+    if (options.crossOrigin) this.crossOrigin = options.crossOrigin;
+    if (options.mode) this.mode = options.mode;
+
     const videoGeometry = new THREE.PlaneGeometry(1, 1);
     const videoMaterial = new THREE.MeshBasicMaterial({
       transparent: true,
