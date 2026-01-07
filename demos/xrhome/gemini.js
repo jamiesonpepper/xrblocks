@@ -26,10 +26,22 @@ export class GeminiManager {
             console.log("Gemini Live Connected");
             this.isConnected = true;
             this.sendSetup();
+            // Kickstart conversation after a brief delay for setup to process
+            setTimeout(() => {
+                this.sendText("System Ready. Please describe what you see in the video stream inside the room.");
+            }, 1000);
         };
 
-        this.ws.onmessage = (event) => {
-            this.handleMessage(event.data);
+        this.ws.onmessage = async (event) => {
+            let data = event.data;
+            if (data instanceof Blob) {
+               // Binary Audio response. 
+               // Do NOT update HUD (User requested less noise). 
+               // Just log to console so we know it happened.
+               console.log("Gemini sent Audio Blob (ignored by HUD)");
+               return; 
+            }
+            this.handleMessage(data);
         };
 
         this.ws.onerror = (err) => {
@@ -54,38 +66,18 @@ export class GeminiManager {
         const setupMsg = {
             setup: {
                 model: "models/gemini-2.0-flash-exp",
-                tools: [{ 
-                    function_declarations: [{
-                        name: "report_found_lights",
-                        description: "Report the location of lights or lamps found in the video stream.",
-                        parameters: {
-                            type: "OBJECT",
-                            properties: {
-                                lights: {
-                                    type: "ARRAY",
-                                    items: {
-                                        type: "OBJECT",
-                                        properties: {
-                                            label: { type: "STRING", description: "The type of light (e.g. lamp, overhead)" },
-                                            ymin: { type: "NUMBER", description: "Top Y coordinate (0-1)" },
-                                            xmin: { type: "NUMBER", description: "Left X coordinate (0-1)" },
-                                            ymax: { type: "NUMBER", description: "Bottom Y coordinate (0-1)" },
-                                            xmax: { type: "NUMBER", description: "Right X coordinate (0-1)" }
-                                        },
-                                        required: ["label", "ymin", "xmin", "ymax", "xmax"]
-                                    }
-                                }
-                            },
-                            required: ["lights"]
-                        }
-                    }]
-                }],
-                // generation_config: {
-                //    response_modalities: ["TEXT"] // Relax this, let it send Audio if it wants, we just ignore/log it for now.
-                // },
+                // Tools and Tool Config removed to simplify - using pure Text Prompting which is often more reliable for "Vision to Struct" in v2-exp
+                generation_config: {
+                    response_modalities: ["TEXT"],
+                    temperature: 0.1 // Low temperature for deterministic JSON
+                },
                 system_instruction: {
                     parts: [{
-                        text: "You are a Light Detector. Call 'report_found_lights' when you see lights. Do not chat."
+                        text: "You are a Vision System. Analyze the video stream for light sources (lamps, ceiling lights). \
+If you see lights, output their 2D bounding boxes as a strictly valid JSON array prefixed with 'JSON_LIGHTS:'. \
+Format: JSON_LIGHTS: [{\"label\": \"lamp\", \"ymin\": 0.1, \"xmin\": 0.1, \"ymax\": 0.2, \"xmax\": 0.2}, ...]\
+If you see no lights, simply output 'NO_LIGHTS'. \
+DO NOT CHAT. DO NOT SPEAK. ONLY OUTPUT JSON."
                     }]
                 }
             }
@@ -112,7 +104,11 @@ export class GeminiManager {
     // MimeType: 'audio/pcm;rate=16000' or 'image/jpeg'
     sendChunk(base64Data, mimeType) {
         if (!this.isConnected || !this.ws) return;
-        // console.log("Sending chunk:", mimeType, base64Data.length); // Verbose
+        
+        // Debug: Log video size occasionally to prove it's sending
+        if (mimeType.startsWith('image') && Math.random() < 0.05) {
+             console.log("Sending Video Frame, size: " + base64Data.length);
+        }
 
         const msg = {
             realtime_input: {
@@ -131,26 +127,46 @@ export class GeminiManager {
             
             // Log for debug to see why it's ignoring tools
             // console.log("Gemini Raw:", JSON.stringify(response).substring(0, 200) + "..."); 
+            
+            // Debug: Log if turn complete but empty?
+            if (response.serverContent) {
+                 console.log("Gemini Server Content Type:", Object.keys(response.serverContent));
+            } 
 
-            // Handle Tool Calls (The "Function Call")
+            // Handle Text Responses (including embedded JSON)
             if (response.serverContent && response.serverContent.modelTurn) {
                 const parts = response.serverContent.modelTurn.parts;
                 for (const part of parts) {
                     if (part.text) {
-                        console.log("Gemini Text:", part.text);
-                        if (this.onMessage) this.onMessage(part.text);
-                    }
-                    if (part.functionCall) {
-                        console.log("Gemini Function Call:", part.functionCall);
-                        if (part.functionCall.name === "report_found_lights") {
-                            const args = part.functionCall.args;
-                            if (this.onLightsFound && args.lights) {
-                                this.onLightsFound(args.lights);
+                        const txt = part.text.trim();
+                        console.log("Gemini Text:", txt);
+                        
+                        // 1. Check for JSON_LIGHTS prefix
+                        if (txt.includes("JSON_LIGHTS:")) {
+                            try {
+                                const jsonStr = txt.split("JSON_LIGHTS:")[1].trim().replace(/```json/g, '').replace(/```/g, '');
+                                const lights = JSON.parse(jsonStr);
+                                if (this.onLightsFound) this.onLightsFound(lights);
+                                if (this.onMessage) this.onMessage("FOUND " + lights.length + " LIGHTS", '#00FFFF');
+                                return; // Done
+                            } catch (e) {
+                                console.error("Failed to parse JSON_LIGHTS", e);
                             }
-                            
-                            // Acknowledge the function call to keep the conversation going
-                            this.sendToolResponse(part.functionCall.id || "function-call-id", "Lights recorded."); 
                         }
+                        
+                        // 1b. Fallback: Check if message STARTs with JSON array (sometimes prefix is lost)
+                        if (txt.trim().startsWith("[") && txt.includes("label")) {
+                             try {
+                                const jsonStr = txt.trim().replace(/```json/g, '').replace(/```/g, '');
+                                const lights = JSON.parse(jsonStr);
+                                if (this.onLightsFound) this.onLightsFound(lights);
+                                if (this.onMessage) this.onMessage("FOUND " + lights.length + " LIGHTS", '#00FFFF');
+                                return;
+                            } catch (e) { }
+                        }
+
+                        // 2. Otherwise just show text
+                        if (this.onMessage) this.onMessage(txt);
                     }
                 }
             }

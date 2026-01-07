@@ -6,16 +6,16 @@
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { GeminiManager } from './gemini.js';
+import { VisionManager } from './vision.js';
 import { SmartHomeManager } from './smarthome.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { Text } from 'troika-three-text';
+import { HUDManager } from './hud.js';
 
 // Globals
 const auth = new AuthManager();
 const camera = new CameraManager('webrtc-video');
-const gemini = new GeminiManager();
+const vision = new VisionManager();
 let smartHome = null;
 
 // XR State
@@ -23,7 +23,7 @@ let realDevices = []; // From Google Home
 let virtualLights = []; // 3D Objects in Scene
 let lastScanTime = 0;
 const SCAN_INTERVAL = 30000; // Scan every 30s to save tokens/rate limits
-let statusTextMesh = null;
+const hud = new HUDManager();
 let videoPlane = null;
 
 // Setup Configuration UI
@@ -172,103 +172,75 @@ async function initApp() {
     // 5. Create Passthrough Plane (HUD)
     createPassthrough();
     
-    // 6. Create Status Text
-    createStatusText();
+    // 6. Init HUD
+    hud.init(xb);
+    hud.log("System Initialized");
 
-    // 7. Connect to Live API
-    connectLiveAPI();
+    // 7. Init Vision
+    vision.init(auth.config.geminiKey);
+    startVisionLoop();
 }
 
-function connectLiveAPI() {
-    if (!auth.config.geminiKey) return;
-    
-    // Connect WS
-    gemini.connect(auth.config.geminiKey);
-    
-    // Handle Text Responses
-    gemini.onMessage = (text) => {
-        if (statusTextMesh) {
-            // Check if it looks like JSON or just text?
-            // "Flash Exp" might just chat. 
-            // We prompted carefully? Wait, we didn't send a system prompt in setup yet?
-            // The Live API doesn't always support system instructions well in v2-exp, 
-            // let's just show what it says.
-            statusTextMesh.text = "Gemini: " + text;
-            statusTextMesh.sync();
-        }
+function startVisionLoop() {
+    // Handle specific status updates
+    vision.onStatus = (msg) => {
+        // Only log "Found" or "Error" to keep HUD clean, or simple dots?
+        // Let's log everything for now to prove it works
+        hud.log(msg, msg.includes("Found") ? '#00FFFF' : '#00FF00');
     };
 
-    // Handle Tool Calls (Found Lights)
-    gemini.onLightsFound = (lights) => {
-        console.log("Live API Found Lights:", lights);
-        if (statusTextMesh) {
-             statusTextMesh.text = `Found ${lights.length} lights!`;
-             statusTextMesh.sync();
-        }
-
-        // Clear existing for demo simplicity (or update smart tracking)
-        // For now, just rebuild
-        for(let l of virtualLights) xb.remove(l);
-        virtualLights = [];
-
-        let deviceIdx = 0;
-        for (const l of lights) {
-            // Unproject Bounding Box Center
-            // ymin, xmin, ymax, xmax (0-1)
-            const cx = (l.xmin + l.xmax) / 2;
-            const cy = (l.ymin + l.ymax) / 2;
-
-            // Map to Video Plane (3.2 x 1.8)
-            const x = (cx - 0.5) * 3.2; 
-            const y = -(cy - 0.5) * 1.8 + 1.6;
-            const z = -2.8;
-
-            const vLight = new VirtualLight({ x: cx, y: cy }, l.label || "Light " + deviceIdx);
-            vLight.position.set(x, y, z);
-            
-            if (deviceIdx < realDevices.length) {
-                vLight.realDevice = realDevices[deviceIdx];
-            }
-
-            xb.add(vLight);
-            virtualLights.push(vLight);
-            deviceIdx++;
-        }
+    vision.onLightsFound = (lights) => {
+        // Existing Light Creation Logic...
+        // ... (We can reuse the logic, just moved here)
+        spawnVirtualLights(lights);
     };
 
-    // Start Video/Audio Streams
-    // Audio: continuous
-    camera.startAudioStream((base64PCM) => {
-        gemini.sendChunk(base64PCM, 'audio/pcm;rate=16000');
-    });
-
-    // Video: 1fps
+    hud.log("Vision System Started");
+    
+    // Poll every 1.5s (Balance between Latency and Rate Limit)
+    // Flash Rate Limit is high, but let's be reasonable.
     setInterval(async () => {
-        if (!camera.stream) return;
         const canvas = document.getElementById('process-canvas');
         const blob = await camera.captureFrame(canvas);
         if (blob) {
-            // Convert method needed since GeminiManager changed
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const base64 = reader.result.split(',')[1];
-                gemini.sendChunk(base64, 'image/jpeg');
-            };
-            reader.readAsDataURL(blob);
+            vision.analyzeFrame(blob);
         }
-    }, 1000); // 1 Frame per second
-    
-    if (statusTextMesh) {
-        statusTextMesh.text = "Connected to Gemini Live";
-        statusTextMesh.sync();
+    }, 5000); // Poll every 5 seconds to avoid 429 Quota errors 
+}
+
+function spawnVirtualLights(lights) {
+    console.log("Rebuilding Lights:", lights);
+    // Clear existing
+    for(let l of virtualLights) {
+        if (l.parent) l.parent.remove(l);
     }
-    
-    // Periodic "Proactive" Prompt to force detection if silent
-    setInterval(() => {
-        if (gemini.isConnected) {
-             gemini.sendText("Do you see any lights? If so, call report_found_lights.");
+    virtualLights = [];
+
+    let deviceIdx = 0;
+    for (const l of lights) {
+        // Unproject Bounding Box Center
+        const cx = (l.xmin + l.xmax) / 2;
+        const cy = (l.ymin + l.ymax) / 2;
+
+        // Map to Video Plane (3.2 x 1.8)
+        // Note: Video Plane is at z = -5
+        // Width 3.2, Height 1.8
+        const x = (cx - 0.5) * 3.2; 
+        const y = -(cy - 0.5) * 1.8 + 1.6;
+        const z = -4.8; // Slightly in front of video (-5)
+
+        const vLight = new VirtualLight({ x: cx, y: cy }, l.label || "Light " + deviceIdx);
+        vLight.position.set(x, y, z);
+        
+        if (deviceIdx < realDevices.length) {
+            vLight.realDevice = realDevices[deviceIdx];
         }
-    }, 10000); 
+
+        xb.add(vLight);
+        virtualLights.push(vLight);
+        deviceIdx++;
+    }
+ 
 }
 
 
@@ -285,22 +257,13 @@ function createPassthrough() {
     });
     
     videoPlane = new THREE.Mesh(geometry, material);
-    videoPlane.position.set(0, 1.6, -3); // 3 meters away
+    videoPlane.position.set(0, 1.6, -5); // Push video WAY back (-5m)
     xb.add(videoPlane);
 }
 
-function createStatusText() {
-    statusTextMesh = new Text();
-    statusTextMesh.text = "Initializing...";
-    statusTextMesh.fontSize = 0.1;
-    statusTextMesh.position.set(0, 2.6, -3); // Above video
-    statusTextMesh.color = 0xffffff;
-        statusTextMesh.anchorX = 'center';
-    // Use WOFF (v1) which is more widely supported without custom decoders in some envs
-    statusTextMesh.font = 'https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Mu4mxP.woff'; 
-    statusTextMesh.sync();
-    xb.add(statusTextMesh);
-}
+// createStatusText - REMOVED (Replaced by HUDManager)
+
+// createStatusText - REMOVED (Replaced by HUDManager)
 
 // Interaction System for Gestures
 // We register a global system to check hands against our virtual lights

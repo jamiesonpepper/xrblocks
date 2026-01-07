@@ -34,6 +34,7 @@ export class CameraManager {
             
             return new Promise((resolve) => {
                 this.videoElement.onloadedmetadata = () => {
+                    this.videoElement.play(); // Explicitly play to ensure frames are rendering
                     resolve();
                 };
             });
@@ -47,8 +48,10 @@ export class CameraManager {
         if (!this.stream || !this.videoElement) return null;
 
         const ctx = canvasElement.getContext('2d');
-        canvasElement.width = this.videoElement.videoWidth;
-        canvasElement.height = this.videoElement.videoHeight;
+        // Downscale to 640px width for bandwidth efficiency / API preferred size
+        const scale = 640 / this.videoElement.videoWidth;
+        canvasElement.width = 640;
+        canvasElement.height = this.videoElement.videoHeight * scale;
         
         ctx.drawImage(this.videoElement, 0, 0, canvasElement.width, canvasElement.height);
         
