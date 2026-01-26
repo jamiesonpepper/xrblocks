@@ -115,19 +115,19 @@ export class ObjectDetector extends Script {
       return [];
     }
 
-    const base64Image = this.deviceCamera.getSnapshot({
+    // Cache depth and camera data to align with the captured image frame.
+    const cachedDepthArray = this.depth.depthArray[0].slice(0);
+    const cachedMatrixWorld = this.camera.matrixWorld.clone();
+
+    const base64Image = await this.deviceCamera.getSnapshot({
       outputFormat: 'base64',
-    }) as string | null;
+    });
     if (!base64Image) {
       console.warn('Could not get device camera snapshot.');
       return [];
     }
 
     const {mimeType, strippedBase64} = parseBase64DataURL(base64Image);
-
-    // Cache depth and camera data to align with the captured image frame.
-    const cachedDepthArray = this.depth.depthArray[0].slice(0);
-    const cachedMatrixWorld = this.camera.matrixWorld.clone();
 
     // Temporarily set the Gemini config for this specific query type.
     const originalGeminiConfig = this.aiOptions.gemini.config;

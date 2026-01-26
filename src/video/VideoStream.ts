@@ -22,23 +22,56 @@ export interface VideoStreamEventMap<T> extends THREE.Object3DEventMap {
   statechange: {state: StreamState; details?: T};
 }
 
-export type VideoStreamGetSnapshotOptions = {
+type VideoStreamGetSnapshotImageDataOptionsBase = {
   /** The target width, defaults to the video width. */
   width?: number;
   /** The target height, defaults to the video height. */
   height?: number;
-  /** The output format, defaults to 'texture'. */
-  outputFormat?: 'texture' | 'base64' | 'imageData';
-  /** The MIME type for base64 output. */
-  mimeType?: string;
-  /** The quality for base64 output. */
-  quality?: number;
 };
+
+export type VideoStreamGetSnapshotImageDataOptions =
+  VideoStreamGetSnapshotImageDataOptionsBase & {
+    outputFormat: 'imageData';
+  };
+
+export type VideoStreamGetSnapshotBase64Options =
+  VideoStreamGetSnapshotImageDataOptionsBase & {
+    outputFormat: 'base64';
+    mimeType?: string;
+    quality?: number;
+  };
+
+export type VideoStreamGetSnapshotBlobOptions =
+  VideoStreamGetSnapshotImageDataOptionsBase & {
+    outputFormat: 'blob';
+    mimeType?: string;
+    quality?: number;
+  };
+
+export type VideoStreamGetSnapshotTextureOptions =
+  VideoStreamGetSnapshotImageDataOptionsBase & {
+    outputFormat?: 'texture';
+  };
+
+export type VideoStreamGetSnapshotOptions =
+  | VideoStreamGetSnapshotImageDataOptions
+  | VideoStreamGetSnapshotBase64Options
+  | VideoStreamGetSnapshotTextureOptions
+  | VideoStreamGetSnapshotBlobOptions;
 
 export type VideoStreamOptions = {
   /** Hint for performance optimization for frequent captures. */
   willCaptureFrequently?: boolean;
 };
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.readAsDataURL(blob);
+    reader.onerror = () => reject(reader.error);
+  });
+}
 
 /**
  * The base class for handling video streams (from camera or file), managing
@@ -137,12 +170,15 @@ export class VideoStream<
    * @param options - The options for the snapshot.
    * @returns The captured data.
    */
+  getSnapshot(_: VideoStreamGetSnapshotImageDataOptions): ImageData;
+  getSnapshot(_: VideoStreamGetSnapshotBase64Options): Promise<string | null>;
+  getSnapshot(_: VideoStreamGetSnapshotTextureOptions): THREE.Texture;
+  getSnapshot(_: VideoStreamGetSnapshotBlobOptions): Promise<Blob | null>;
   getSnapshot({
     width = this.width,
     height = this.height,
     outputFormat = 'texture',
-    mimeType = 'image/jpeg',
-    quality = 0.9,
+    ...rest
   }: VideoStreamGetSnapshotOptions = {}) {
     if (
       !this.loaded ||
@@ -162,6 +198,10 @@ export class VideoStream<
         }px). The snapshot will be upscaled.`
       );
     }
+
+    const mimeType =
+      ('mimeType' in rest ? rest.mimeType : undefined) ?? 'image/jpeg';
+    const quality = ('quality' in rest ? rest.quality : undefined) ?? 0.9;
 
     try {
       // Re-initialize canvas only if dimensions have changed.
@@ -183,7 +223,13 @@ export class VideoStream<
         case 'imageData':
           return this.context_!.getImageData(0, 0, width, height);
         case 'base64':
-          return this.canvas_.toDataURL(mimeType, quality);
+          return new Promise<Blob | null>((resolve) =>
+            this.canvas_!.toBlob(resolve, mimeType, quality)
+          ).then((blob) => (blob ? blobToBase64(blob) : null));
+        case 'blob':
+          return new Promise<Blob | null>((resolve) =>
+            this.canvas_!.toBlob(resolve, mimeType, quality)
+          );
         case 'texture':
         default: {
           const frozenTexture = new THREE.Texture(this.canvas_);
