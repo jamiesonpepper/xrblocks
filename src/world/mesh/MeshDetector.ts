@@ -5,6 +5,9 @@ import {DetectedMesh} from './DetectedMesh';
 import {MeshDetectionOptions} from './MeshDetectionOptions';
 import {Physics} from '../../physics/Physics';
 
+const SEMANTIC_LABELS = ['Floor', 'Ceiling', 'Wall', 'Table'];
+const SEMANTIC_COLORS = [0x00ff00, 0xff0000, 0x0000ff, 0xffff00];
+
 // Wrapper around WebXR Mesh Detection API
 // https://immersive-web.github.io/real-world-meshing/
 export class MeshDetector extends Script {
@@ -12,11 +15,13 @@ export class MeshDetector extends Script {
     options: MeshDetectionOptions,
     renderer: THREE.WebGLRenderer,
   };
-  private _debugMaterial: THREE.Material | null = null;
+  private debugMaterials = new Map<string, THREE.Material>();
+  private fallbackDebugMaterial: THREE.Material | null = null;
   xrMeshToThreeMesh = new Map<XRMesh, DetectedMesh>();
   threeMeshToXrMesh = new Map<DetectedMesh, XRMesh>();
   private renderer!: THREE.WebGLRenderer;
   private physics?: Physics;
+  private defaultMaterial = new THREE.MeshBasicMaterial({visible: false});
 
   override init({
     options,
@@ -27,11 +32,22 @@ export class MeshDetector extends Script {
   }) {
     this.renderer = renderer;
     if (options.showDebugVisualizations) {
-      this._debugMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffff00,
+      this.fallbackDebugMaterial = new THREE.MeshBasicMaterial({
+        color: 0x000000,
         wireframe: true,
         side: THREE.DoubleSide,
       });
+
+      for (let i = 0; i < SEMANTIC_LABELS.length; i++) {
+        this.debugMaterials.set(
+          SEMANTIC_LABELS[i],
+          new THREE.MeshBasicMaterial({
+            color: SEMANTIC_COLORS[i],
+            wireframe: true,
+            side: THREE.DoubleSide,
+          })
+        );
+      }
     }
   }
 
@@ -77,8 +93,11 @@ export class MeshDetector extends Script {
   }
 
   private createMesh(frame: XRFrame, xrMesh: XRMesh) {
+    const semanticLabel = xrMesh.semanticLabel;
     const material =
-      this._debugMaterial || new THREE.MeshBasicMaterial({visible: false});
+      (semanticLabel && this.debugMaterials.get(semanticLabel)) ||
+      this.fallbackDebugMaterial ||
+      this.defaultMaterial;
     const mesh = new DetectedMesh(xrMesh, material);
     this.updateMeshPose(frame, xrMesh, mesh);
     return mesh;
