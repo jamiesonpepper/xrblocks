@@ -67,6 +67,7 @@ export class MeshDetector extends Script {
       if (!meshes.has(xrMesh)) {
         this.xrMeshToThreeMesh.delete(xrMesh);
         this.threeMeshToXrMesh.delete(threeMesh);
+        threeMesh.geometry.dispose();
         this.remove(threeMesh);
       }
     }
