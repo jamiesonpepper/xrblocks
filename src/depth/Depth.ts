@@ -140,7 +140,7 @@ export class Depth {
     const depth = this.getDepth(u, v);
     target.set(2.0 * (u - 0.5), 2.0 * (v - 0.5), -1);
     target.applyMatrix4(this.depthProjectionInverseMatrices[0]);
-    target.multiplyScalar((target.z - depth) / target.z);
+    target.multiplyScalar(-depth / target.z);
     return target;
   }
 
@@ -219,20 +219,11 @@ export class Depth {
     this.updateDepthMatrices(depthData, viewId);
 
     // Updates Depth Array.
-    if (this.depthArray[viewId] == null) {
-      this.depthArray[viewId] = this.options.useFloat32
-        ? new Float32Array(depthData.data)
-        : new Uint16Array(depthData.data);
-      this.width = depthData.width;
-      this.height = depthData.height;
-    } else {
-      // Copies the data from an ArrayBuffer to the existing TypedArray.
-      this.depthArray[viewId].set(
-        this.options.useFloat32
-          ? new Float32Array(depthData.data)
-          : new Uint16Array(depthData.data)
-      );
-    }
+    this.depthArray[viewId] = this.options.useFloat32
+      ? new Float32Array(depthData.data)
+      : new Uint16Array(depthData.data);
+    this.width = depthData.width;
+    this.height = depthData.height;
 
     // Updates Depth Texture.
     if (this.options.depthTexture.enabled && this.depthTextures) {
