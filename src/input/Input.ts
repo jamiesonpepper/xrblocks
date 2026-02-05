@@ -64,6 +64,8 @@ export class Input {
   }) {
     scene.add(this.activeControllers);
 
+    this.controllersEnabled = options.controllers.enabled;
+
     this.options = options;
     this.scene = scene;
 
