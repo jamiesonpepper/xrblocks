@@ -6,6 +6,7 @@ import {NUM_HANDS} from '../constants';
 import {Options} from '../core/Options.js';
 import {KeyEvent, Script} from '../core/Script';
 import {Reticle} from '../ui/core/Reticle.js';
+import {Raycaster} from '../core/components/Raycaster';
 
 import {ControllerRayVisual} from './components/ControllerRayVisual';
 import type {
@@ -35,7 +36,7 @@ export class Input {
   controllers: Controller[] = [];
   controllerGrips: THREE.Group[] = [];
   hands: THREE.XRHandSpace[] = [];
-  raycaster = new THREE.Raycaster();
+  raycaster = new Raycaster();
   initialized = false;
   pivotsEnabled = false;
   gazeController = new GazeController();
