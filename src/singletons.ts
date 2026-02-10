@@ -50,6 +50,11 @@ export const ai = core.ai;
  */
 export const depth = core.depth;
 
+/**
+ * A direct alias to the `Timer` instance, which manages time deltas.
+ */
+export const timer = core.timer;
+
 // --- Function Aliases ---
 // These are bound shortcuts to frequently used methods for convenience.
 
@@ -93,13 +98,23 @@ export function uninitScript(script: Script) {
 }
 
 /**
- * A shortcut for `core.clock.getDeltaTime()`. Gets the time in seconds since
+ * A shortcut for `core.timer.getDelta()`. Gets the time in seconds since
  * the last frame, useful for animations.
  * @returns The delta time in seconds.
- * @see {@link Clock.getDeltaTime}
+ * @see {@link THREE.Timer.getDelta}
  */
 export function getDeltaTime() {
   return core.timer.getDelta();
+}
+
+/**
+ * A shortcut for `core.timer.getElapsed()`. Gets the total time in seconds
+ * since the application started.
+ * @returns The elapsed time in seconds.
+ * @see {@link THREE.Timer.getElapsed}
+ */
+export function getElapsedTime() {
+  return core.timer.getElapsed();
 }
 
 /**
