@@ -5,6 +5,7 @@ import fs from 'fs';
 import {globSync} from 'glob';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {dts} from 'rollup-plugin-dts';
 
 // Read the version from package.json
 const packageJson = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
@@ -69,6 +70,7 @@ const externalPackages = [
   'openai',
   '@sparkjsdev/spark',
   /^lit(\/.*)?$/,
+  'rapier3d',
 ];
 
 const xrblocksPackages = ['xrblocks', /xrblocks\/addons\//];
@@ -84,6 +86,27 @@ export default [
       sourcemap: true,
     },
     plugins: [typescript()],
+    onwarn: (warning, warn) => {
+      // Need to suppress this warning because 'composite' creates a `.tsbuildinfo` file.
+      if (
+        warning.message.includes(
+          'outputToFilesystem option is defaulting to true'
+        )
+      ) {
+        return;
+      }
+      warn(warning);
+    },
+  },
+  {
+    input: 'src/xrblocks.ts',
+    external: externalPackages,
+    output: {
+      file: 'build/xrblocks.d.ts',
+      format: 'esm',
+      banner: bannerText,
+    },
+    plugins: [typescript(), dts()],
   },
   {
     input: 'src/xrblocks.ts',
@@ -117,6 +140,15 @@ export default [
       dir: 'build/',
       format: 'esm',
     },
-    plugins: [typescript({tsconfig: 'src/addons/tsconfig.lib.json'})],
+    plugins: [
+      typescript({
+        tsconfig: 'src/addons/tsconfig.lib.json',
+        exclude: ['src/!(addons)/**/*.ts', 'src/*.ts'],
+        compilerOptions: {
+          declaration: true,
+          declarationDir: 'build/addons/',
+        },
+      }),
+    ],
   },
 ];

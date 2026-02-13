@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "../",
+    "rootDir": ".",
     "types": ["node"],
     "paths": {
       "rapier3d": ["../../node_modules/@dimforge/rapier3d/rapier"],
