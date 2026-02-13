@@ -155,17 +155,17 @@ export function ScriptMixin<TBase extends Constructor<THREE.Object3D>>(
      * Called when the controller starts hovering over this object with reticle.
      * @param _controller - An XR controller.
      */
-    onHoverEnter(_controller: THREE.Object3D) {}
+    onHoverEnter(_controller: THREE.Object3D): boolean | void {}
     /**
      * Called when the controller hovers over this object with reticle.
      * @param _controller - An XR controller.
      */
-    onHoverExit(_controller: THREE.Object3D) {}
+    onHoverExit(_controller: THREE.Object3D): boolean | void {}
     /**
      * Called when the controller hovers over this object with reticle.
      * @param _controller - An XR controller.
      */
-    onHovering(_controller: THREE.Object3D) {}
+    onHovering(_controller: THREE.Object3D): boolean | void {}
     /**
      * Called when a hand's index finger starts touching this object.
      */

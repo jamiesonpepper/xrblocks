@@ -516,8 +516,12 @@ export class User extends Script {
    */
   callHoverExit(controller: Controller, target: THREE.Object3D | null) {
     if (target == null) return;
-    if ((target as MaybeXRScript).isXRScript) {
-      (target as Script).onHoverExit(controller);
+    if (
+      (target as MaybeXRScript).isXRScript &&
+      (target as Script).onHoverExit(controller)
+    ) {
+      // The event was handled already so do not propagate up.
+      return;
     }
     this.callHoverExit(controller, target.parent);
   }
@@ -529,8 +533,12 @@ export class User extends Script {
    */
   callHoverEnter(controller: Controller, target: THREE.Object3D | null) {
     if (target == null) return;
-    if ((target as MaybeXRScript).isXRScript) {
-      (target as Script).onHoverEnter(controller);
+    if (
+      (target as MaybeXRScript).isXRScript &&
+      (target as Script).onHoverEnter(controller)
+    ) {
+      // The event was handled already so do not propagate up.
+      return;
     }
     this.callHoverEnter(controller, target.parent);
   }
@@ -542,12 +550,15 @@ export class User extends Script {
    */
   callOnHovering(controller: Controller, target: THREE.Object3D | null) {
     if (target == null) return;
-    if ((target as MaybeXRScript).isXRScript) {
-      (target as Script).onHovering(controller);
+    if (
+      (target as MaybeXRScript).isXRScript &&
+      (target as Script).onHovering(controller)
+    ) {
+      // The event was handled already so do not propagate up.
+      return;
     }
     this.callOnHovering(controller, target.parent);
   }
-
   /**
    * Recursively calls onObjectSelectStart on a target and its ancestors until
    * the event is handled.
