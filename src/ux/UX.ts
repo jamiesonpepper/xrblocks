@@ -125,10 +125,7 @@ export class UX {
     const id = controller.userData.id;
     this.initializeVariablesForId(id);
 
-    if (
-      intersection.object === this.parent ||
-      intersection.object === (this.parent as Partial<View>).mesh
-    ) {
+    if (this.isRelevantIntersection(intersection)) {
       this.hovered[id] = true;
       this.selected[id] = controller.userData.selected;
       if (intersection.uv) {
@@ -157,6 +154,20 @@ export class UX {
       this.distances.push(1);
       this.uvs.push(new THREE.Vector2());
     }
+  }
+
+  /**
+   * Checks if the intersection object belongs to this UX's attached Script.
+   * Allow overriding this function for more complex objects with multiple
+   * meshes.
+   * @param intersection - The raycast intersection to check.
+   * @returns True if the intersection is relevant to this UX's parent object.
+   */
+  isRelevantIntersection(intersection: THREE.Intersection): boolean {
+    return (
+      intersection.object === this.parent ||
+      intersection.object === (this.parent as Partial<View>).mesh
+    );
   }
 
   /**
