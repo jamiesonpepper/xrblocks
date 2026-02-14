@@ -8,18 +8,18 @@ This website is built using [Docusaurus](https://docusaurus.io/).
 Start the development server for the documentation:
 
 ```bash
-# In the xrblocks/docs folder:
+# In the xrblocks/docs/ directory
 npm start
 ```
 
-For templates and samples in the documentation site to be loaded, a web server needs to be started in the `xrblocks` folder:
+This serves the documentation site locally at `http://localhost:3000/` and
+watches for changes to the documentation source files.
 
-```bash
-# In the xrblocks folder:
-npm run build
-http-server --cors
-```
+When viewing docs pages that embed templates or samples, **also** follow the
+[development guide](../README.md#development-guide) in the root README to serve
+the SDK on port 8080. Both servers can run simultaneously.
 
 ## Deployment
 
-The documentation site is automatically deployed to https://xrblocks.github.io/docs/ whenever it is updated in the [google/xrblocks](https://github.com/google/xrblocks) repository.
+The documentation site is automatically deployed to https://xrblocks.github.io/docs/
+whenever it is updated in the [google/xrblocks](https://github.com/google/xrblocks) repository.
