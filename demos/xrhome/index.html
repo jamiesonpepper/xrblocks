@@ -84,6 +84,18 @@
         #process-canvas {
             display: none;
         }
+        
+        /* Force XRBlocks Canvas to be transparent */
+        canvas[data-engine="three.js"], canvas {
+            background-color: transparent !important;
+            pointer-events: auto; /* Allow interaction */
+            z-index: 10; /* Above video */
+        }
+
+        /* Hide any default XRBlocks overlay UI if it uses common IDs/classes */
+        #xrblocks-ui, .xrblocks-ui {
+            display: none !important;
+        }
     </style>
     <script>
       window.litDisableBundleWarning = true;
@@ -121,16 +133,8 @@
                     <input type="password" id="gemini-key" placeholder="AIza..." autocomplete="current-password" />
                 </div>
                 <div class="input-group">
-                    <label for="project-id">Device Access Project ID</label>
-                    <input type="text" id="project-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="on" />
-                </div>
-                <div class="input-group">
-                    <label for="client-id">OAuth Client ID</label>
-                    <input type="text" id="client-id" placeholder="xxxx.apps.googleusercontent.com" autocomplete="on" />
-                </div>
-                <div class="input-group">
-                    <label for="client-secret">OAuth Client Secret</label>
-                    <input type="password" id="client-secret" placeholder="Optional for some flows" autocomplete="current-password" />
+                    <label for="matter-code">Matter Pairing Codes (Optional, Comma separated)</label>
+                    <input type="text" id="matter-code" placeholder="Code1, Code2..." autocomplete="off" />
                 </div>
 
                 <button id="start-btn" type="button">Start Demo</button>
@@ -141,6 +145,14 @@
     <!-- Hidden Processing Elements -->
     <video id="webrtc-video" autoplay playsinline></video>
     <canvas id="process-canvas"></canvas>
+
+    <!-- UI Overlay for Main App -->
+    <!-- Replaced by HUD Canvas Button -->
+    <!-- 
+    <button id="scan-now-btn" ...>Scan Room 📷</button>
+    -->
+
+
 
     <!-- Main Logic -->
     <script type="module" src="main.js"></script>

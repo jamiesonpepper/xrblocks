@@ -30,13 +30,13 @@ export class VisionManager {
             // Convert Blob to Base64
             const base64Data = await this.blobToBase64(imageBlob);
 
-            // Switching to Gemini 2.0 Flash Exp (User's project definitely has access to this as Live API worked)
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${this.apiKey}`;
+            // Switching to Gemini 2.0 Flash (Stable)
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`;
             
             const payload = {
                 contents: [{
                     parts: [
-                        { text: "Find all light sources (lamps, ceiling lights) in this image. Return a JSON array of objects with keys: label, ymin, xmin, ymax, xmax. Coordinates are normalized 0-1. If none, return empty array." },
+                        { text: "Find all light sources (lamps, ceiling lights, bulbs) in this image, whether they are turned ON or OFF. Look for lamp shades, fixures, and bulbs even if they are dark. Return a JSON array of objects with keys: label, ymin, xmin, ymax, xmax. Coordinates are normalized 0-1. If none, return empty array." },
                         {
                             inline_data: {
                                 mime_type: "image/jpeg",
