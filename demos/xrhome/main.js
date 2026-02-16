@@ -4,82 +4,135 @@
  */
 
 // XR Interaction Logic
+// XR Interaction Logic
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
 
-function onXRSelect(event) {
-    // This triggers on Controller "Select" (Trigger or Pinch)
-    const controller = event.target;
-    
-    tempMatrix.identity().extractRotation(controller.matrixWorld);
-    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-    
-    // 1. Check HUD Interaction
-    // If HUD mesh exists (3D Mode)
-    if (hud.mesh) {
-        const hudIntersects = raycaster.intersectObject(hud.mesh);
-        if (hudIntersects.length > 0) {
-            const hit = hudIntersects[0];
-            const uv = hit.uv;
-            // UV is 0..1. HUD canvas is 1024x256.
-            // checkClick expects pixel coords.
-            const x = uv.x * hud.canvas.width;
-            const y = (1 - uv.y) * hud.canvas.height; // UV Y is bottom-up? ThreeJS PlaneGeometry UVs are usually 0 at bottom, 1 at top.
-            // Wait, Canvas 2D Y is top-down (0 at top).
-            // ThreeJS Plane UV (0,0) is bottom-left. (0,1) is top-left.
-            // So uv.y=1 maps to canvas y=0.
-            // y_canvas = (1 - uv.y) * h
+// Drag State
+let dragController = null;
+let dragOffset = new THREE.Vector3();
+let dragQuaternion = new THREE.Quaternion();
+
+class HUDInteraction extends xb.Script {
+    onUpdate() {
+        if (dragController && hud.panel) {
+            // Update HUD position ensuring it stays attached to controller relative transform
+            // Simple: Make it follow controller position + offset?
+            // Better: Apply the relative transform captured at start.
             
-            const action = hud.checkClick(x, y);
-            if (action) {
-                console.log("XR HUD Click:", action);
-                if (action.type === 'SCAN') {
-                    toggleScan();
-                } else {
-                     // Config/Other
-                     // handle if needed
-                }
-                return; // Prioritize HUD
-            }
+            // For now, simpler "move with controller"
+            // hud.panel.position.copy(dragController.position).add(dragOffset); // Naive
+            
+            // Allow rotation dragging too?
+            // hud.panel.quaternion.copy(dragController.quaternion).multiply(dragQuaternion);
+            
+            // Let's use `attach` logic implicitly by just parenting?
+            // No, re-parenting in XR can be jumpy.
+            
+            // Best: Calculate new world matrix based on controller world matrix * inverse controller start * panel start
+            // Too complex for quick fix.
+            
+            // Simple "stick to hand" logic:
+            // Get controller world pos/rot
+            const cPos = new THREE.Vector3();
+            const cQuat = new THREE.Quaternion();
+            dragController.getWorldPosition(cPos);
+            dragController.getWorldQuaternion(cQuat);
+            
+            // Apply local offset stored in dragOffset (rotated)
+            const v = dragOffset.clone().applyQuaternion(cQuat);
+            hud.panel.position.copy(cPos).add(v);
+            
+            // Lock rotation to face user or keep relative? Keep relative to controller is naturally easiest for "grabbing"
+            hud.panel.quaternion.copy(cQuat).multiply(dragQuaternion);
         }
     }
+}
 
-    // 2. Check Virtual Lights
-    // We need to raycast against the 'mesh' of each virtual light
-    const meshes = virtualLights.map(vl => vl.mesh).filter(m => m);
+function onXRSelectStart(event) {
+    const controller = event.target;
     
-    const intersects = raycaster.intersectObjects(meshes);
-    
-    if (intersects.length > 0) {
-        const hit = intersects[0];
-        const vl = virtualLights.find(v => v.mesh === hit.object);
+    // 1. Raycast HUD
+    if (hud.panel) {
+        tempMatrix.identity().extractRotation(controller.matrixWorld);
+        raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
         
-        if (vl) {
-            console.log("XR Pinch on Light:", vl.labelText);
-            vl.toggle();
-            hud.speak(vl.isOn ? "On" : "Off");
+        const intersects = raycaster.intersectObject(hud.panel, true); // Recursive for buttons
+        
+        if (intersects.length > 0) {
+            const hit = intersects[0];
             
-            // Visual Feedback
-             if (vl.mesh) {
-                vl.mesh.material.color.setHex(0xFFFFFF);
-                setTimeout(() => {
-                    vl.mesh.material.color.setHex(vl.isOn ? 0xFFFFFF : 0xFFFF00);
-                }, 200);
+            // Check if Border Hit
+            // Convert to Local Point on Panel
+            const localPoint = hud.panel.worldToLocal(hit.point.clone());
+            
+            // Panel Size (0.6 x 0.8)
+            const w = 0.6;
+            const h = 0.8;
+            const border = 0.04; // Tolerance for border grab
+            
+            if (Math.abs(localPoint.x) > w/2 - border || Math.abs(localPoint.y) > h/2 - border) {
+                // START DRAG
+                dragController = controller;
+                
+                // Calculate Offset: Panel Pos relative to Controller
+                const cPos = new THREE.Vector3();
+                const cQuat = new THREE.Quaternion();
+                controller.getWorldPosition(cPos);
+                controller.getWorldQuaternion(cQuat);
+                
+                // offset = (panelPos - cPos) applying inverse controller rotation
+                dragOffset.copy(hud.panel.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
+                
+                // rotation offset
+                dragQuaternion.copy(cQuat.clone().invert()).multiply(hud.panel.quaternion);
+                
+                hud.speak("Moving HUD");
+                return; // Consume event
             }
         }
     }
 }
 
-// Attach to Controllers when XR Session starts
-// Since we use 'xb' (XRBlocks), we might need to hook into its controller logic or scene
-// Assuming standard Three.js WebXR setup via xb.renderer?
-// main.js InitApp passes 'renderer' to xb? No, xb usually manages it.
-// We can listen to controller events on the scene or xb.
-// Let's try to find where to attach. 
-// xb.renderer.xr.getController(0).addEventListener('select', onXRSelect);
+function onXRSelectEnd(event) {
+    if (dragController === event.target) {
+        dragController = null;
+    }
+}
 
-// We'll verify this in initApp
+function onXRSelect(event) {
+    // This triggers on Controller "Select" (Click) - i.e. Button Press
+    const controller = event.target;
+    
+    // If we were dragging, ignore the click
+    if (dragController === controller) return;
+
+    // 2. Check Virtual Lights (Legacy Logic preserved)
+    tempMatrix.identity().extractRotation(controller.matrixWorld);
+    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+    // Target the hitMesh (invisible plane) for easier clicking
+    const meshes = virtualLights.map(vl => vl.hitMesh).filter(m => m);
+    const intersects = raycaster.intersectObjects(meshes);
+    
+    if (intersects.length > 0) {
+        const hit = intersects[0];
+        // Find VL that owns this hitMesh
+        const vl = virtualLights.find(v => v.hitMesh === hit.object);
+        
+        if (vl) {
+            console.log("XR Pinch on Light:", vl.labelText);
+            vl.toggle();
+            // hud.speak(vl.isOn ? "On" : "Off"); // moved to toggle()
+        }
+    }
+    
+    // Note: xb.SpatialPanel buttons handle their own clicks via xb's system usually.
+    // If not, we might need to manually trigger them here.
+    // We'll trust xb first.
+}
 
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
@@ -98,16 +151,19 @@ const vision = new VisionManager();
 let smartHome = null;
 
 // XR State
-let realDevices = []; // From Google Home
-let virtualLights = []; // 3D Objects in Scene
+let realDevices = []; 
+let virtualLights = []; 
 let lastScanTime = 0;
-const SCAN_INTERVAL = 30000; // Scan every 30s to save tokens/rate limits
+const SCAN_INTERVAL = 30000; 
 const hud = new HUDManager();
+// Wire up HUD Scan Event
+hud.onScanToggle = () => toggleScan();
+
 const menu = new DeviceMenu();
 let videoPlane = null;
-let selectedLight = null; // Light being edited
+let selectedLight = null; 
 let isScanning = false;
-let isConfiguring = false; // Blocking Modal Mode
+let isConfiguring = false; 
 let configIndex = 0;
 
 // Setup Configuration UI
@@ -137,123 +193,213 @@ function setupUI() {
         overlay.style.display = 'none';
         initApp();
         
-        // Setup XR Interacton
-        // Wait minor tick for xb to init renderer
+        // Setup XR Interaction
         setTimeout(() => {
             if (xb.renderer && xb.renderer.xr) {
                 const controller0 = xb.renderer.xr.getController(0);
                 const controller1 = xb.renderer.xr.getController(1);
                 
+                // Add Listeners
                 controller0.addEventListener('select', onXRSelect);
                 controller1.addEventListener('select', onXRSelect);
+                
+                controller0.addEventListener('selectstart', onXRSelectStart);
+                controller1.addEventListener('selectstart', onXRSelectStart);
+                
+                controller0.addEventListener('selectend', onXRSelectEnd);
+                controller1.addEventListener('selectend', onXRSelectEnd);
+                
                 console.log("XR Interaction Listeners Attached");
+                
+                // Add Interaction Script for Dragging
+                xb.add(new HUDInteraction());
             }
         }, 1000);
     });
 }
 
-class VirtualLight extends xb.Script {
+// --- 2D Virtual Light (Desktop) ---
+class VirtualLight2D {
+    constructor(geminiData, labelText) {
+        this.geminiData = geminiData;
+        this.labelText = labelText; // Display Name
+        this.label = labelText;     // Alias for pairing logic
+        
+        // Store Normalized Coordinates for HUD Drawing
+        this.xmin = geminiData.xmin;
+        this.xmax = geminiData.xmax;
+        this.ymin = geminiData.ymin;
+        this.ymax = geminiData.ymax;
+        
+        this.cx = (this.xmin + this.xmax) / 2;
+        this.cy = (this.ymin + this.ymax) / 2;
+        
+        this.isOn = false;
+        this.brightness = 100;
+        this.realDevice = null;
+        this.linkedNodeId = null; 
+    }
+
+    checkClick(normX, normY) {
+        // Simple 2D Box Hit Test
+        return (normX >= this.xmin && normX <= this.xmax && 
+                normY >= this.ymin && normY <= this.ymax);
+    }
+
+    toggle() {
+        this.isOn = !this.isOn;
+        console.log(`[2D Light] Toggle ${this.labelText} -> ${this.isOn}`);
+        
+        // Send to real device
+        if (this.realDevice && smartHome) {
+            hud.speak(this.isOn ? "Turning On" : "Turning Off");
+            smartHome.toggleLight(this.realDevice.id, this.isOn);
+        }
+        
+        // Force HUD Redraw
+        if (hud && hud.drawLights) hud.drawLights(virtualLights);
+    }
+    
+    setBrightness(val) {
+        this.brightness = val;
+        if (this.realDevice && smartHome) {
+            smartHome.setBrightness(this.realDevice.name, val);
+        }
+    }
+    
+    updateVisuals() {
+        // No-op for 2D object, HUD handles drawing based on state
+    }
+}
+
+// --- 3D Virtual Light (AR/XR) ---
+class VirtualLight3D extends xb.Script {
   constructor(geminiData, labelText) {
       super();
       this.geminiData = geminiData;
       this.labelText = labelText;
+      this.label = labelText;
       this.isOn = false;
       this.brightness = 100;
+      this.realDevice = null;
+      this.linkedNodeId = null; 
 
-      // Create a visual indicator (Ring)
-      const geometry = new THREE.RingGeometry(0.08, 0.1, 32);
-      // Use Standard Material to allow Emissive "Glow"
-      const material = new THREE.MeshStandardMaterial({ 
-          color: 0x00ff00, 
-          side: THREE.DoubleSide,
-          emissive: 0x000000,
-          emissiveIntensity: 0.2,
-          roughness: 0.4,
-          metalness: 0.1
-      });
-      this.mesh = new THREE.Mesh(geometry, material);
+      // 1. Calculate Dimensions (Video Plane: 3.2 x 1.8)
+      const vW = 3.2;
+      const vH = 1.8;
       
-      // Face camera (Billboarding)
-      this.mesh.lookAt(0, 1.6, 0); 
+      const width = (geminiData.xmax - geminiData.xmin) * vW;
+      const height = (geminiData.ymax - geminiData.ymin) * vH;
+      
+      // 2. Create Bounding Box (LineSegments)
+      const geometry = new THREE.BoxGeometry(width, height, 0.05); 
+      const edges = new THREE.EdgesGeometry(geometry);
+      const material = new THREE.LineBasicMaterial({ 
+          color: 0xFFFF00, // Default Yellow
+          linewidth: 2 
+      });
+      
+      this.mesh = new THREE.LineSegments(edges, material);
+      
+      // Hit Mesh
+      const hitGeo = new THREE.PlaneGeometry(width, height);
+      const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+      this.hitMesh = new THREE.Mesh(hitGeo, hitMat);
+      this.mesh.add(this.hitMesh); 
+      
       this.add(this.mesh);
       
-      // Store normalized 2D center for click detection
-      this.cx = (geminiData.xmin + geminiData.xmax) / 2;
-      this.cy = (geminiData.ymin + geminiData.ymax) / 2;
+      // 3. Label + Icon
+      this.labelSprite = this.createLabelSprite(labelText, "⚙️", "#FFFF00");
+      this.labelSprite.position.set(0, -height/2 - 0.15, 0); 
+      this.mesh.add(this.labelSprite);
       
-      console.log("Created Virtual Light Mesh for:", this.labelText, "at", this.cx, this.cy);
-      
-      // Expose geometry for HUD
+      // Restore needed properties for compatibility/logic
       this.xmin = geminiData.xmin;
       this.xmax = geminiData.xmax;
       this.ymin = geminiData.ymin;
       this.ymax = geminiData.ymax;
-      this.label = labelText; // HUD uses .label
-      this.realDevice = null; // Exposed for HUD check
-      this.linkedNodeId = null; // Explicit Link
-      
-      this.lastPinch = false;
   }
   
-  checkClick(normX, normY) {
-      // Simple distance check in normalized space
-      const dist = Math.sqrt((this.cx - normX)**2 + (this.cy - normY)**2);
-      // Threshold: 5% of screen
-      return dist < 0.05; 
+  createLabelSprite(text, icon, color) {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = 512;
+      canvas.height = 128;
+      
+      ctx.font = 'bold 48px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      ctx.shadowColor = 'black';
+      ctx.shadowBlur = 4;
+      ctx.fillStyle = color;
+      
+      // "Name  [Icon]"
+      const fullText = `${text}  ${icon}`;
+      ctx.fillText(fullText, 256, 64);
+      
+      const texture = new THREE.CanvasTexture(canvas);
+      const material = new THREE.SpriteMaterial({ map: texture });
+      const sprite = new THREE.Sprite(material);
+      sprite.scale.set(0.8, 0.2, 1.0);
+      return sprite;
   }
-
-  onStart() {
-      // Logic Loop start
-  }
-
-  onUpdate(dt) {
-      // Update position logic if needed
+  
+  updateVisuals() {
+      if (!this.mesh) return;
+      
+      const isPaired = !!(this.realDevice || this.linkedNodeId);
+      const isOn = this.isOn;
+      
+      let colorHex = 0xFFFF00; // Yellow (Unpaired)
+      let icon = "⚙️"; // Gear
+      
+      if (isPaired) {
+          if (isOn) {
+              colorHex = 0xFFFFFF; // White (On)
+              icon = "✕"; 
+          } else {
+              colorHex = 0x00FF00; // Green (Off)
+              icon = "✕";
+          }
+      }
+      
+      if (this.mesh.material) {
+          this.mesh.material.color.setHex(colorHex);
+      }
+      
+      const oldSprite = this.labelSprite;
+      this.labelSprite = this.createLabelSprite(this.labelText, icon, isPaired ? (isOn ? '#FFFFFF' : '#00FF00') : '#FFFF00');
+      this.labelSprite.position.copy(oldSprite.position);
+      
+      this.mesh.remove(oldSprite);
+      this.mesh.add(this.labelSprite);
+      
+      if (oldSprite.material.map) oldSprite.material.map.dispose();
   }
 
   toggle() {
-      // Toggle Local State
       this.isOn = !this.isOn;
+      this.updateVisuals();
       
-      // Determine Color based on Link Status
-      let color = 0xFFFF00; // Default Unlinked (Yellow)
-      if (this.linkedNodeId || this.realDevice) {
-          color = this.isOn ? 0xFFFFFF : 0x00FF00;
-      }
-      
-      if (this.mesh) {
-          this.mesh.material.color.setHex(color);
-          this.mesh.material.emissive.setHex(color); // Make it glow correctly
-          this.mesh.material.emissiveIntensity = this.isOn ? 1.0 : 0.2;
-      }
-      
-      // Send to real device
-      if (this.realDevice) {
-          console.log(`[Toggle] Sending command to Device ID: ${this.realDevice.id} Name: ${this.realDevice.name} - State: ${this.isOn}`);
-          
-          if (smartHome) {
-              smartHome.toggleLight(this.realDevice.id, this.isOn).then(() => {
-                  console.log("[Toggle] Command Sent Successfully");
-                  hud.speak(this.isOn ? "Turning On" : "Turning Off");
-                  hud.log(`Toggle: ${this.labelText} -> ${this.isOn ? 'ON' : 'OFF'}`, this.isOn ? '#FFFFFF' : '#00FF00');
-              }).catch(e => {
-                  console.error("[Toggle] Command Failed:", e);
-                  hud.speak("Command Failed");
-              });
-          } else {
-              console.error("[Toggle] Error: smartHome (MatterClient) is missing!");
-          }
-      } else {
-          console.warn(`[Toggle] Virtual Light '${this.labelText}' has NO Real Device linked!`);
-      }
+      if (this.realDevice && smartHome) {
+          console.log(`[Toggle] 3D Light ${this.labelText} -> ${this.isOn}`);
+          smartHome.toggleLight(this.realDevice.id, this.isOn).then(() => {
+              hud.speak(this.isOn ? "Turning On" : "Turning Off");
+          });
+      } 
   }
 
   setBrightness(val) {
       this.brightness = Math.max(0, Math.min(100, val));
       if (this.realDevice && smartHome) {
-          // Debounce this ideally
           smartHome.setBrightness(this.realDevice.name, this.brightness);
       }
   }
+  
+  // Legacy checkClick for 3D? Not used, handled by Raycaster
+  checkClick() { return false; }
 }
 
 
@@ -713,6 +859,9 @@ function setupVoiceCommand() {
 function spawnVirtualLights(lights) {
     console.log("Rebuilding Lights:", lights);
     
+    // Check Mode
+    const is3D = (hud.mode === '3D');
+    
     // 1. Separate tracked vs untracked
     const keptLights = [];
     const newCandidates = [];
@@ -723,10 +872,12 @@ function spawnVirtualLights(lights) {
             keptLights.push(vl);
         } else {
             // Remove unlinked ones from scene to be replaced
+            // Only if it's a 3D light with a mesh
             if (vl.mesh) {
-                if (vl.parent) vl.parent.remove(vl.mesh); // VL extends Script? No, it's just a helper class usually.
-                // Wait, VL wraps a mesh.
-                xb.scene.remove(vl.mesh);
+                // Remove from scene/parent
+                if (vl.parent) vl.parent.remove(vl); // If added via xb.add
+                else xb.scene.remove(vl.mesh);       // Direct scene remove fallback
+                
                 if (vl.mesh.geometry) vl.mesh.geometry.dispose();
                 if (vl.mesh.material) vl.mesh.material.dispose();
             }
@@ -735,8 +886,6 @@ function spawnVirtualLights(lights) {
     
     // 2. Process New Detections
     for (const l of lights) {
-        // Check if this detection loosely matches an existing kept light to avoid duplicates?
-        // For simplicity: If we have a kept light with same Label, ignore new one?
         const exists = keptLights.find(kl => kl.labelText === l.label);
         if (!exists) {
              newCandidates.push(l);
@@ -746,45 +895,46 @@ function spawnVirtualLights(lights) {
     // 3. Rebuild List
     virtualLights = [...keptLights];
 
-    // 4. Create Meshes for New Candidates
-    let deviceIdx = virtualLights.length;
+    // 4. Create Objects for New Candidates
+    let deviceIdx = virtualLights.length + 1;
     
     for (const l of newCandidates) {
-        const vLight = new VirtualLight(l, l.label || "Light " + deviceIdx++);
+        const label = l.label || "Light " + (deviceIdx++);
         
-        // Unproject Bounding Box Center
-        const cx = (l.xmin + l.xmax) / 2;
-        const cy = (l.ymin + l.ymax) / 2;
-
-        // Map to Video Plane (3.2 x 1.8)
-        const x = (cx - 0.5) * 3.2; 
-        const y = -(cy - 0.5) * 1.8 + 1.6;
-        const z = -4.8; 
-        
-        if (vLight.mesh) {
-             vLight.mesh.position.set(x, y, z);
-             // Default New/Unpaired = Yellow
-             vLight.mesh.material.color.setHex(0xFFFF00); 
+        if (is3D) {
+            // --- 3D MODE ---
+            const vLight = new VirtualLight3D(l, label);
+            
+            // Unproject Bounding Box Center
+            const cx = (l.xmin + l.xmax) / 2;
+            const cy = (l.ymin + l.ymax) / 2;
+    
+            // Map to Video Plane (3.2 x 1.8)
+            const x = (cx - 0.5) * 3.2; 
+            const y = -(cy - 0.5) * 1.8 + 1.6;
+            const z = -4.8; 
+            
+            if (vLight.mesh) {
+                 vLight.mesh.position.set(x, y, z);
+                 // Default New/Unpaired = Yellow
+                 vLight.mesh.material.color.setHex(0xFFFF00); 
+            }
+            
+            virtualLights.push(vLight);
+            xb.add(vLight.mesh); 
+        } else {
+            // --- 2D MODE ---
+            const vLight = new VirtualLight2D(l, label);
+            virtualLights.push(vLight);
         }
-        
-        virtualLights.push(vLight);
-        xb.add(vLight.mesh); // Add mesh, not VL wrapper if VL logic handles it differently
-        // Wait, xb.add(object) usually adds to scene.
-        // check VirtualLight class? It likely extends something or has a mesh.
-        // In previous view, it has a .mesh property.
     }
     
-    // 5. Update Colors for Kept Lights (Persistence Check)
+    // 5. Update Colors / State for Kept Lights
     for (const vl of keptLights) {
-        if (vl.mesh) {
-            // Restore correct color based on state
-            // White = On, Green = Off (Paired)
-            vl.mesh.material.color.setHex(vl.isOn ? 0xFFFFFF : 0x00FF00);
-            vl.mesh.material.emissiveIntensity = vl.isOn ? 1.0 : 0.2;
-        }
+        if (vl.updateVisuals) vl.updateVisuals();
     }
     
-    // Re-Link (Updating references if needed, though they should be preserved)
+    // Re-Link
     linkLightsToDevices();
  } 
 

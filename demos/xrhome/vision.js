@@ -29,9 +29,12 @@ export class VisionManager {
         try {
             // Convert Blob to Base64
             const base64Data = await this.blobToBase64(imageBlob);
+            console.log(`[Vision] Encoded Frame Size: ${base64Data.length} chars (~${Math.round(base64Data.length/1024)} KB)`);
 
             // Switching to Gemini 2.0 Flash (Stable)
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`;
+            
+            console.log(`[Vision] Sending Request to Gemini...`);
             
             const payload = {
                 contents: [{
@@ -71,20 +74,25 @@ export class VisionManager {
             });
 
             if (!response.ok) {
+                console.error(`[Vision] API Error Status: ${response.status} ${response.statusText}`);
+                const errorText = await response.text();
+                console.error(`[Vision] API Error Body: ${errorText}`);
                 throw new Error(`API Error: ${response.status}`);
             }
 
             const data = await response.json();
+            console.log(`[Vision] Response Received:`, data);
             
             // Parse Result
             if (data.candidates && data.candidates[0].content && data.candidates[0].content.parts[0].text) {
                 const jsonText = data.candidates[0].content.parts[0].text;
                 const lights = JSON.parse(jsonText);
                 
-                console.log("Vision API Found:", lights);
+                console.log(`[Vision] Parsed Lights: ${lights.length} found.`);
                 if (this.onLightsFound) this.onLightsFound(lights);
                 if (this.onStatus) this.onStatus(`Found ${lights.length} lights`);
             } else {
+                console.warn(`[Vision] No candidates in response.`);
                 if (this.onStatus) this.onStatus("No result");
             }
 
