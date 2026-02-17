@@ -9,8 +9,10 @@ export * from './ai/Gemini';
 export * from './ai/OpenAI';
 export * from './camera/CameraOptions';
 export * from './camera/CameraUtils';
+export * from './camera/CameraParameterUtils';
 export * from './camera/XRDeviceCamera';
 export * from './constants';
+export * from './core/components/Raycaster';
 export * from './core/components/Registry';
 export * from './core/components/ScreenshotSynthesizer';
 export * from './core/components/ScriptsManager';
@@ -119,6 +121,7 @@ export * from './world/objects/ObjectsOptions';
 export * from './world/planes/DetectedPlane';
 export * from './world/planes/PlaneDetector';
 export * from './world/planes/PlanesOptions';
+export * from './world/planes/SimulatorPlane';
 export * from './world/World';
 export * from './world/WorldOptions';
 

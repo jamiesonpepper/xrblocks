@@ -442,7 +442,11 @@ export class User extends Script {
       const currentlyTouchedMeshes: THREE.Mesh[] = [];
       this.scene.traverse((object) => {
         if ((object as Partial<THREE.Mesh>).isMesh && object.visible) {
-          tempBox.setFromObject(object);
+          try {
+            tempBox.setFromObject(object);
+          } catch (_) {
+            return;
+          }
           if (tempBox.containsPoint(indexTipPosition)) {
             currentlyTouchedMeshes.push(object as THREE.Mesh);
           }
@@ -512,8 +516,12 @@ export class User extends Script {
    */
   callHoverExit(controller: Controller, target: THREE.Object3D | null) {
     if (target == null) return;
-    if ((target as MaybeXRScript).isXRScript) {
-      (target as Script).onHoverExit(controller);
+    if (
+      (target as MaybeXRScript).isXRScript &&
+      (target as Script).onHoverExit(controller)
+    ) {
+      // The event was handled already so do not propagate up.
+      return;
     }
     this.callHoverExit(controller, target.parent);
   }
@@ -525,8 +533,12 @@ export class User extends Script {
    */
   callHoverEnter(controller: Controller, target: THREE.Object3D | null) {
     if (target == null) return;
-    if ((target as MaybeXRScript).isXRScript) {
-      (target as Script).onHoverEnter(controller);
+    if (
+      (target as MaybeXRScript).isXRScript &&
+      (target as Script).onHoverEnter(controller)
+    ) {
+      // The event was handled already so do not propagate up.
+      return;
     }
     this.callHoverEnter(controller, target.parent);
   }
@@ -538,12 +550,15 @@ export class User extends Script {
    */
   callOnHovering(controller: Controller, target: THREE.Object3D | null) {
     if (target == null) return;
-    if ((target as MaybeXRScript).isXRScript) {
-      (target as Script).onHovering(controller);
+    if (
+      (target as MaybeXRScript).isXRScript &&
+      (target as Script).onHovering(controller)
+    ) {
+      // The event was handled already so do not propagate up.
+      return;
     }
     this.callOnHovering(controller, target.parent);
   }
-
   /**
    * Recursively calls onObjectSelectStart on a target and its ancestors until
    * the event is handled.

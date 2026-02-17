@@ -39,14 +39,13 @@ export class XRDeviceCamera extends VideoStream<XRDeviceCameraDetails> {
   /**
    * @param options - The configuration options.
    */
-  constructor({
-    videoConstraints = {facingMode: 'environment'},
-    willCaptureFrequently = false,
-    rgbToDepthParams = DEFAULT_RGB_TO_DEPTH_PARAMS,
-  }: Partial<DeviceCameraOptions> = {}) {
-    super({willCaptureFrequently});
-    this.videoConstraints_ = {...videoConstraints};
-    this.rgbToDepthParams = rgbToDepthParams;
+  constructor(private options: DeviceCameraOptions) {
+    super({willCaptureFrequently: options.willCaptureFrequently ?? false});
+    this.videoConstraints_ = options.videoConstraints ?? {
+      facingMode: 'environment',
+    };
+    this.rgbToDepthParams =
+      options.rgbToDepthParams ?? DEFAULT_RGB_TO_DEPTH_PARAMS;
   }
 
   /**
@@ -92,6 +91,12 @@ export class XRDeviceCamera extends VideoStream<XRDeviceCameraDetails> {
     }
   }
 
+  protected getDeviceIdFromLabel(label: string): string | null {
+    return (
+      this.availableDevices_.find((x) => x.label == label)?.deviceId ?? null
+    );
+  }
+
   /**
    * Initializes the media stream from the user's camera. After the stream
    * starts, it updates the current device index based on the stream's active
@@ -127,6 +132,16 @@ export class XRDeviceCamera extends VideoStream<XRDeviceCameraDetails> {
             ?.groupId === 'simulator') ||
           (!targetDeviceId &&
             this.videoConstraints_.facingMode === 'environment'));
+
+      const targetDeviceIdFromLabel = this.options.cameraLabel
+        ? this.getDeviceIdFromLabel(this.options.cameraLabel)
+        : null;
+      if (!this.videoConstraints_.deviceId && targetDeviceIdFromLabel) {
+        this.videoConstraints_ = {
+          deviceId: targetDeviceIdFromLabel,
+          ...this.videoConstraints_,
+        };
+      }
 
       if (useSimulatorCamera) {
         stream = this.simulatorCamera!.getMedia(this.videoConstraints_);

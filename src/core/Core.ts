@@ -23,6 +23,7 @@ import {traverseUtil} from '../utils/SceneGraphUtils';
 import {DragManager} from '../ux/DragManager';
 import {World} from '../world/World';
 import {WorldOptions} from '../world/WorldOptions';
+import {MeshDetectionOptions} from '../world/mesh/MeshDetectionOptions';
 
 import {Registry} from './components/Registry';
 import {ScreenshotSynthesizer} from './components/ScreenshotSynthesizer';
@@ -165,6 +166,7 @@ export class Core {
     this.registry.register(this.simulator);
     this.registry.register(this.scriptsManager);
     this.registry.register(this.depth);
+    this.registry.register(this.world);
   }
 
   /**
@@ -181,6 +183,7 @@ export class Core {
     this.registry.register(options.depth, DepthOptions);
     this.registry.register(options.simulator, SimulatorOptions);
     this.registry.register(options.world, WorldOptions);
+    this.registry.register(options.world.meshes, MeshDetectionOptions);
     this.registry.register(options.ai, AIOptions);
     this.registry.register(options.sound, SoundOptions);
     this.registry.register(options.gestures, GestureRecognitionOptions);
@@ -282,6 +285,9 @@ export class Core {
     if (options.world.planes.enabled) {
       webXRRequiredFeatures.push('plane-detection');
     }
+    if (options.world.meshes.enabled) {
+      webXRRequiredFeatures.push('mesh-detection');
+    }
 
     // Sets up lighting.
     if (options.lighting.enabled) {
@@ -330,6 +336,8 @@ export class Core {
       this.xrButton = new XRButton(
         this.webXRSessionManager,
         this.permissionsManager,
+        options.xrButton?.appTitle,
+        options.xrButton?.appDescription,
         options.xrButton?.startText,
         options.xrButton?.endText,
         options.xrButton?.invalidText,

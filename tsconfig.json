@@ -7,8 +7,9 @@
       "troika-three-text": [
         "./node_modules/troika-types/packages/troika-three-text/dist/src/index"
       ]
-    }
+    },
+    "composite": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/addons/**/*"]
+  "exclude": ["src/addons/**/*", "src/addons/**/cli/*"]
 }

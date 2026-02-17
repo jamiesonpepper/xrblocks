@@ -6,6 +6,7 @@ import {NUM_HANDS} from '../constants';
 import {Options} from '../core/Options.js';
 import {KeyEvent, Script} from '../core/Script';
 import {Reticle} from '../ui/core/Reticle.js';
+import {Raycaster} from '../core/components/Raycaster';
 
 import {ControllerRayVisual} from './components/ControllerRayVisual';
 import type {
@@ -35,7 +36,7 @@ export class Input {
   controllers: Controller[] = [];
   controllerGrips: THREE.Group[] = [];
   hands: THREE.XRHandSpace[] = [];
-  raycaster = new THREE.Raycaster();
+  raycaster = new Raycaster();
   initialized = false;
   pivotsEnabled = false;
   gazeController = new GazeController();
@@ -63,6 +64,8 @@ export class Input {
     renderer: THREE.WebGLRenderer;
   }) {
     scene.add(this.activeControllers);
+
+    this.controllersEnabled = options.controllers.enabled;
 
     this.options = options;
     this.scene = scene;
@@ -206,7 +209,7 @@ export class Input {
   defaultOnSelectStart(event: ControllerEvent) {
     const controller = event.target;
     controller.userData.selected = true;
-    this._setRaycasterFromController(controller);
+    this.setRaycasterFromController(controller);
     this.performRaycastOnScene(controller);
   }
 
@@ -376,7 +379,7 @@ export class Input {
     obj: THREE.Object3D
   ): THREE.Intersection[] {
     controller.updateMatrixWorld();
-    this._setRaycasterFromController(controller);
+    this.setRaycasterFromController(controller);
     return this.raycaster.intersectObject(obj, false);
   }
 
@@ -426,9 +429,11 @@ export class Input {
       return;
     }
     controller.updateMatrixWorld();
-    this._setRaycasterFromController(controller);
-    this.performRaycastOnScene(controller);
-    this.updateReticleFromIntersections(controller);
+    if (this.options.controllers.performRaycastOnUpdate) {
+      this.setRaycasterFromController(controller);
+      this.performRaycastOnScene(controller);
+      this.updateReticleFromIntersections(controller);
+    }
   }
 
   /**
@@ -437,7 +442,7 @@ export class Input {
    * `setFromXRController`.
    * @param controller - The controller to cast a ray from.
    */
-  private _setRaycasterFromController(controller: THREE.Object3D) {
+  setRaycasterFromController(controller: THREE.Object3D) {
     controller.getWorldPosition(this.raycaster.ray.origin);
     MATRIX4.identity().extractRotation(controller.matrixWorld);
     this.raycaster.ray.direction

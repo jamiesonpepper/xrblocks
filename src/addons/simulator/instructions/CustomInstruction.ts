@@ -1,8 +1,7 @@
 import {html} from 'lit';
 import {customElement} from 'lit/decorators/custom-element.js';
 import {property} from 'lit/decorators/property.js';
-
-import type {SimulatorCustomInstruction} from '../../../simulator/SimulatorOptions.js';
+import type {SimulatorCustomInstruction} from 'xrblocks';
 
 import {SimulatorInstructionsCard} from './SimulatorInstructionsCard.js';
 

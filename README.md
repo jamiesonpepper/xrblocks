@@ -3,6 +3,7 @@
 [![NPM Package](https://img.shields.io/npm/v/xrblocks)](https://www.npmjs.com/package/xrblocks)
 [![Build Size](https://badgen.net/bundlephobia/minzip/xrblocks)](https://bundlephobia.com/result?p=xrblocks)
 ![jsDelivr hits (GitHub)](https://img.shields.io/jsdelivr/gh/hw/google/xrblocks)
+[![arXiv](https://img.shields.io/badge/arXiv-2509.25504-b31b1b.svg)](https://arxiv.org/abs/2509.25504)
 
 #### JavaScript library for rapid XR and AI prototyping
 
@@ -131,28 +132,58 @@ code below:
 </html>
 ```
 
-### Development guide
+### Development Guide
 
-Follow the steps below to clone the repository and build XR Blocks:
+#### Setup
 
 ```bash
 # Clone the repository.
 git clone --depth=1 git@github.com:google/xrblocks.git
 cd xrblocks
 
-# Install dependencies.
+# Install dependencies and build the SDK.
 npm ci
+```
 
-# Build xrblocks.js.
-npm run build
+After setup, either serve the samples and demos or develop locally, as
+described below.
 
-# After making changes, check ESLint and run Prettier
+#### Serve samples and demos
+
+Serve the repository to view samples and demos through
+`http://localhost:8080/`:
+
+```bash
+# Serve the repository on http://localhost:8080
+npm run serve
+```
+
+#### Develop locally
+
+For active SDK development, run watch mode and local serving together:
+
+```bash
+# Build the SDK in watch mode and serve the repository on http://localhost:8080
+npm run dev
+```
+
+#### Linting and formatting
+
+XR Blocks uses ESLint for linting and Prettier for formatting. Run the
+following commands to check your code before submitting a pull request:
+
+```bash
 npm run lint # ESLint check
 npm run format # Prettier format
 ```
 
-XR Blocks uses ESLint for linting and Prettier for formatting.
-If coding in VSCode, make sure to install the [ESLint extension](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) and the [Prettier extension](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode). Then set Prettier as your default formatter.
+If you are using VS Code, install the
+[ESLint extension](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint)
+and the
+[Prettier extension](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode),
+then set Prettier as your default formatter.
+
+#### Notice
 
 This is not an officially supported Google product, but will be actively
 maintained by the XR Labs team and external collaborators. This project is not

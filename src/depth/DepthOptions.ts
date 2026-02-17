@@ -18,6 +18,8 @@ export class DepthMeshOptions {
   // Whether to always update the full resolution geometry.
   updateFullResolutionGeometry = false;
   colliderUpdateFps = 5;
+  depthFullResolution = 160;
+  ignoreEdgePixels = 3;
 }
 
 export class DepthOptions {

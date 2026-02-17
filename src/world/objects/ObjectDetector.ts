@@ -3,7 +3,11 @@ import * as THREE from 'three';
 import {AI} from '../../ai/AI';
 import {AIOptions} from '../../ai/AIOptions';
 import {Gemini} from '../../ai/Gemini';
-import {cropImage, transformRgbUvToWorld} from '../../camera/CameraUtils';
+import {
+  cropImage,
+  getCameraParametersSnapshot,
+  transformRgbUvToWorld,
+} from '../../camera/CameraUtils';
 import {XRDeviceCamera} from '../../camera/XRDeviceCamera';
 import {Script} from '../../core/Script';
 import {Depth} from '../../depth/Depth';
@@ -25,12 +29,13 @@ export class ObjectDetector extends Script {
     deviceCamera: XRDeviceCamera,
     depth: Depth,
     camera: THREE.Camera,
+    renderer: THREE.WebGLRenderer,
   };
 
   /**
    * A map from the object's UUID to our custom `DetectedObject` instance.
    */
-  private _detectedObjects = new Map<string, DetectedObject>();
+  private _detectedObjects = new Map<string, DetectedObject<unknown>>();
 
   private _debugVisualsGroup?: THREE.Group;
 
@@ -45,7 +50,10 @@ export class ObjectDetector extends Script {
   private aiOptions!: AIOptions;
   private deviceCamera!: XRDeviceCamera;
   private depth!: Depth;
-  private camera!: THREE.Camera;
+  private camera!: THREE.PerspectiveCamera;
+  private renderer!: THREE.WebGLRenderer;
+
+  targetDevice = 'galaxyxr';
 
   /**
    * Initializes the ObjectDetector.
@@ -58,13 +66,15 @@ export class ObjectDetector extends Script {
     deviceCamera,
     depth,
     camera,
+    renderer,
   }: {
     options: WorldOptions;
     ai: AI;
     aiOptions: AIOptions;
     deviceCamera: XRDeviceCamera;
     depth: Depth;
-    camera: THREE.Camera;
+    camera: THREE.PerspectiveCamera;
+    renderer: THREE.WebGLRenderer;
   }) {
     this.options = options;
     this.ai = ai;
@@ -72,6 +82,7 @@ export class ObjectDetector extends Script {
     this.deviceCamera = deviceCamera;
     this.depth = depth;
     this.camera = camera;
+    this.renderer = renderer;
     this._geminiConfig = this._buildGeminiConfig();
 
     if (this.options.objects.showDebugVisualizations) {
@@ -87,12 +98,12 @@ export class ObjectDetector extends Script {
    * @returns A promise that resolves with an
    * array of detected `DetectedObject` instances.
    */
-  async runDetection() {
+  async runDetection<T = null>(): Promise<DetectedObject<T>[]> {
     this.clear(); // Clear previous results before starting a new detection.
 
     switch (this.options.objects.backendConfig.activeBackend) {
       case 'gemini':
-        return this._runGeminiDetection();
+        return this._runGeminiDetection<T>();
       // Future backends like 'mediapipe' will be handled here.
       // case 'mediapipe':
       //   return this._runMediaPipeDetection();
@@ -106,28 +117,48 @@ export class ObjectDetector extends Script {
     }
   }
 
+  private getDepthMeshSnapshot() {
+    const clonedGeometry = this.depth.depthMesh!.geometry.clone();
+    clonedGeometry.computeBoundingSphere();
+    clonedGeometry.computeBoundingBox();
+    const depthMeshSnapshot = new THREE.Mesh(
+      clonedGeometry,
+      new THREE.MeshBasicMaterial()
+    );
+    this.depth.depthMesh!.getWorldPosition(depthMeshSnapshot.position);
+    this.depth.depthMesh!.getWorldQuaternion(depthMeshSnapshot.quaternion);
+    this.depth.depthMesh!.getWorldScale(depthMeshSnapshot.scale);
+    depthMeshSnapshot.updateMatrixWorld(true);
+    return depthMeshSnapshot;
+  }
+
   /**
    * Runs object detection using the Gemini backend.
    */
-  private async _runGeminiDetection() {
+  private async _runGeminiDetection<T>(): Promise<DetectedObject<T>[]> {
     if (!this.ai.isAvailable()) {
       console.error('Gemini is unavailable for object detection.');
       return [];
     }
 
-    const base64Image = this.deviceCamera.getSnapshot({
+    // Cache depth and camera data to align with the captured image frame.
+    const depthMeshSnapshot = this.getDepthMeshSnapshot();
+    const cameraParametersSnapshot = getCameraParametersSnapshot(
+      this.camera,
+      this.renderer.xr.getCamera(),
+      this.deviceCamera,
+      this.targetDevice
+    );
+
+    const base64Image = await this.deviceCamera.getSnapshot({
       outputFormat: 'base64',
-    }) as string | null;
+    });
     if (!base64Image) {
       console.warn('Could not get device camera snapshot.');
       return [];
     }
 
     const {mimeType, strippedBase64} = parseBase64DataURL(base64Image);
-
-    // Cache depth and camera data to align with the captured image frame.
-    const cachedDepthArray = this.depth.depthArray[0].slice(0);
-    const cachedMatrixWorld = this.camera.matrixWorld.clone();
 
     // Temporarily set the Gemini config for this specific query type.
     const originalGeminiConfig = this.aiOptions.gemini.config;
@@ -173,7 +204,6 @@ export class ObjectDetector extends Script {
 
       if (this.options.objects.showDebugVisualizations) {
         this._visualizeBoundingBoxesOnImage(base64Image, parsedResponse);
-        this._visualizeDepthMap(cachedDepthArray);
       }
 
       const detectionPromises = parsedResponse.map(async (item) => {
@@ -194,20 +224,14 @@ export class ObjectDetector extends Script {
         const center = new THREE.Vector2();
         boundingBox.getCenter(center);
 
-        const uvInput = {u: center.x, v: center.y};
-        const projectionMatrix = this.deviceCamera.simulatorCamera
-          ? this.camera.projectionMatrix
-          : new THREE.Matrix4().fromArray(this.depth.view[0].projectionMatrix);
-        const worldPosition = transformRgbUvToWorld(
-          uvInput,
-          cachedDepthArray,
-          projectionMatrix,
-          cachedMatrixWorld,
-          this.deviceCamera,
-          this.depth
+        const worldCoordinates = transformRgbUvToWorld(
+          center,
+          depthMeshSnapshot,
+          cameraParametersSnapshot
         );
 
-        if (worldPosition) {
+        if (worldCoordinates) {
+          const {worldPosition} = worldCoordinates;
           const margin = this.options.objects.objectImageMargin;
 
           // Create a new bounding box for cropping that includes the margin.
@@ -216,11 +240,11 @@ export class ObjectDetector extends Script {
           cropBox.max.addScalar(margin);
           const objectImage = await cropImage(base64Image, cropBox);
 
-          const object = new DetectedObject(
+          const object = new DetectedObject<T>(
             objectName,
             objectImage,
             boundingBox,
-            additionalData
+            additionalData as T
           );
           object.position.copy(worldPosition);
 
@@ -235,7 +259,7 @@ export class ObjectDetector extends Script {
       });
 
       const detectedObjects = (await Promise.all(detectionPromises)).filter(
-        Boolean
+        (obj): obj is DetectedObject<T> => obj !== null && obj !== undefined
       );
       return detectedObjects;
     } catch (error) {
@@ -254,12 +278,14 @@ export class ObjectDetector extends Script {
    * all objects are returned.
    * @returns An array of `Object` instances.
    */
-  get(label = null) {
+  get<T = null>(label = null): DetectedObject<T>[] {
     const allObjects = Array.from(this._detectedObjects.values());
     if (!label) {
-      return allObjects;
+      return allObjects as DetectedObject<T>[];
     }
-    return allObjects.filter((obj) => obj.label === label);
+    return allObjects.filter(
+      (obj) => obj.label === label
+    ) as DetectedObject<T>[];
   }
 
   /**
@@ -443,7 +469,7 @@ export class ObjectDetector extends Script {
    * (center of its 2D detection bounding box).
    * @param object - The detected object to visualize.
    */
-  private async _createDebugVisual(object: DetectedObject) {
+  private async _createDebugVisual(object: DetectedObject<unknown>) {
     // Create sphere.
     const sphere = new THREE.Mesh(
       new THREE.SphereGeometry(0.03, 16, 16),

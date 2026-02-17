@@ -1,4 +1,4 @@
-import type RAPIER_NS from '@dimforge/rapier3d';
+import type RAPIER_NS from 'rapier3d';
 import * as THREE from 'three';
 
 import {MeshScript} from '../core/Script';
@@ -10,7 +10,6 @@ import {DepthTextures} from './DepthTextures';
 
 export class DepthMesh extends MeshScript {
   static dependencies = {
-    camera: THREE.Camera,
     renderer: THREE.WebGLRenderer,
   };
   static isDepthMesh = true;
@@ -32,8 +31,8 @@ export class DepthMesh extends MeshScript {
   private colliderUpdateFps: number;
 
   private renderer!: THREE.WebGLRenderer;
-  private camera!: THREE.Camera;
-  private projectionMatrixInverse = new THREE.Matrix4();
+  private projectionMatrixInverse: Readonly<THREE.Matrix4> =
+    new THREE.Matrix4();
   private lastColliderUpdateTime = 0;
   private options: DepthMeshOptions;
   private depthTextureMaterialUniforms?;
@@ -56,7 +55,29 @@ export class DepthMesh extends MeshScript {
     private depthTextures?: DepthTextures
   ) {
     const options = depthOptions.depthMesh;
-    const geometry = new THREE.PlaneGeometry(1, 1, 159, 159);
+    const depthResolution = options.depthFullResolution;
+    const ignoreEdgePixels = options.ignoreEdgePixels;
+    const activeRes = Math.max(2, depthResolution - 2 * ignoreEdgePixels);
+    const geometry = new THREE.PlaneGeometry(
+      1,
+      1,
+      activeRes - 1,
+      activeRes - 1
+    );
+
+    const minU = ignoreEdgePixels / (depthResolution - 1);
+    const maxU =
+      (depthResolution - 1 - ignoreEdgePixels) / (depthResolution - 1);
+    const minV = ignoreEdgePixels / (depthResolution - 1);
+    const maxV =
+      (depthResolution - 1 - ignoreEdgePixels) / (depthResolution - 1);
+
+    const uvs = geometry.attributes.uv.array;
+    for (let i = 0; i < uvs.length; i += 2) {
+      uvs[i] = minU + uvs[i] * (maxU - minU);
+      uvs[i + 1] = minV + uvs[i + 1] * (maxV - minV);
+    }
+
     let material: THREE.Material;
     let uniforms;
     if (options.useDepthTexture || options.showDebugTexture) {
@@ -90,7 +111,6 @@ export class DepthMesh extends MeshScript {
 
     this.visible = options.showDebugTexture || options.renderShadow;
     this.options = options;
-    this.projectionMatrixInverse = new THREE.Matrix4();
     this.lastColliderUpdateTime = performance.now();
     this.updateVertexNormals = options.updateVertexNormals;
     this.colliderUpdateFps = options.colliderUpdateFps;
@@ -103,6 +123,11 @@ export class DepthMesh extends MeshScript {
     // Create a downsampled geometry for raycasts and physics.
     if (options.useDownsampledGeometry) {
       this.downsampledGeometry = new THREE.PlaneGeometry(1, 1, 39, 39);
+      const dsUvs = this.downsampledGeometry.attributes.uv.array;
+      for (let i = 0; i < dsUvs.length; i += 2) {
+        dsUvs[i] = minU + dsUvs[i] * (maxU - minU);
+        dsUvs[i + 1] = minV + dsUvs[i + 1] * (maxV - minV);
+      }
       this.downsampledMesh = new THREE.Mesh(this.downsampledGeometry, material);
       this.downsampledMesh.visible = false;
       this.add(this.downsampledMesh);
@@ -112,14 +137,7 @@ export class DepthMesh extends MeshScript {
   /**
    * Initialize the depth mesh.
    */
-  init({
-    camera,
-    renderer,
-  }: {
-    camera: THREE.Camera;
-    renderer: THREE.WebGLRenderer;
-  }) {
-    this.camera = camera;
+  init({renderer}: {renderer: THREE.WebGLRenderer}) {
     this.renderer = renderer;
   }
 
@@ -127,12 +145,11 @@ export class DepthMesh extends MeshScript {
    * Updates the depth data and geometry positions based on the provided camera
    * and depth data.
    */
-  updateDepth(depthData: XRCPUDepthInformation) {
-    const camera = this.renderer.xr?.getCamera?.()?.cameras?.[0] || this.camera;
-    if (!camera) return;
-
-    // Inverts the projection matrix.
-    this.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+  updateDepth(
+    depthData: Readonly<XRCPUDepthInformation>,
+    projectionMatrixInverse: Readonly<THREE.Matrix4>
+  ) {
+    this.projectionMatrixInverse = projectionMatrixInverse;
 
     this.minDepth = 8;
     this.maxDepth = 0;
@@ -175,11 +192,14 @@ export class DepthMesh extends MeshScript {
     this.updateColliderIfNeeded();
   }
 
-  updateGPUDepth(depthData: XRWebGLDepthInformation) {
-    this.updateDepth(this.convertGPUToGPU(depthData));
+  updateGPUDepth(
+    depthData: Readonly<XRWebGLDepthInformation>,
+    projectionMatrixInverse: Readonly<THREE.Matrix4>
+  ) {
+    this.updateDepth(this.convertGPUToGPU(depthData), projectionMatrixInverse);
   }
 
-  convertGPUToGPU(depthData: XRWebGLDepthInformation) {
+  convertGPUToGPU(depthData: Readonly<XRWebGLDepthInformation>) {
     if (!this.depthTarget) {
       this.depthTarget = new THREE.WebGLRenderTarget(
         depthData.width,
@@ -297,8 +317,8 @@ export class DepthMesh extends MeshScript {
       const v = geometry.attributes.uv.array[2 * i + 1];
 
       // Grabs the nearest for now.
-      const depthX = Math.round(clamp(u * width, 0, width - 1));
-      const depthY = Math.round(clamp((1.0 - v) * height, 0, height - 1));
+      const depthX = Math.round(clamp(u * (width - 1), 0, width - 1));
+      const depthY = Math.round(clamp((1.0 - v) * (height - 1), 0, height - 1));
       const rawDepth = depthArray[depthY * width + depthX];
       let depth = depthData.rawValueToMeters * rawDepth;
 
@@ -338,7 +358,7 @@ export class DepthMesh extends MeshScript {
   /**
    * Optimizes collider updates to run periodically based on the specified FPS.
    */
-  updateColliderIfNeeded() {
+  private updateColliderIfNeeded() {
     const timeSinceLastUpdate = performance.now() - this.lastColliderUpdateTime;
     if (this.RAPIER && timeSinceLastUpdate > 1000 / this.colliderUpdateFps) {
       this.getWorldPosition(this.worldPosition);
@@ -412,40 +432,16 @@ export class DepthMesh extends MeshScript {
     this.lastColliderUpdateTime = performance.now();
   }
 
-  getDepth(
-    raycaster: THREE.Raycaster,
-    ndc: THREE.Vector2,
-    camera: THREE.Camera
-  ) {
-    // Convert the point from blendedWorld space to normalized device
-    // coordinates (NDC) const ndc = point.clone().project(camera);
-
-    // Create a Vector2 for the NDC x, y coordinates (used by the Raycaster)
-    const ndc2D = new THREE.Vector2(ndc.x, ndc.y);
-
-    // Set up the Raycaster to cast a ray from the camera through the NDC point
-    raycaster.setFromCamera(ndc2D, camera);
-
-    // Check for intersections with the mesh
-    const intersects = raycaster.intersectObject(this);
-
-    // If an intersection is found, calculate the distance from the point to the
-    // intersection
-    if (intersects.length > 0) {
-      const distance = intersects[0].distance;
-      return distance;
-    } else {
-      return -1;
-    }
-  }
-
   /**
    * Customizes raycasting to compute normals for intersections.
    * @param raycaster - The raycaster object.
    * @param intersects - Array to store intersections.
    * @returns - True if intersections are found.
    */
-  raycast(raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) {
+  override raycast(
+    raycaster: THREE.Raycaster,
+    intersects: THREE.Intersection[]
+  ) {
     const intersections: THREE.Intersection[] = [];
     if (this.downsampledMesh) {
       this.downsampledMesh.raycast(raycaster, intersections);

@@ -30,6 +30,8 @@ export class InputOptions {
   visualization = false;
   /** Whether to show the ray lines extending from the controllers. */
   visualizeRays = false;
+  /** Whether to perform raycast on update. This is needed for the reticle to work properly. */
+  performRaycastOnUpdate = true;
 }
 
 /**
@@ -117,6 +119,8 @@ export class Options {
    * Configuration for the XR session button.
    */
   xrButton = {
+    appTitle: '',
+    appDescription: '',
     enabled: true,
     startText: 'Enter XR',
     endText: 'Exit XR',
@@ -253,6 +257,37 @@ export class Options {
    */
   enableXRTransitions() {
     this.transition.enabled = true;
+    return this;
+  }
+
+  /**
+   * Enables input from hands and controllers.
+   * Note that this is enabled by default and can also be changed at runtime with
+   * xb.core.input.enableControllers() and xb.core.input.disableControllers().
+   * @returns The instance for chaining.
+   */
+  enableControllers() {
+    this.controllers.enabled = true;
+    return this;
+  }
+
+  /**
+   * Sets the title of the app to be displayed above the XR button.
+   * @param title - The title of the app.
+   * @returns The instance for chaining.
+   */
+  setAppTitle(title: string) {
+    this.xrButton.appTitle = title;
+    return this;
+  }
+
+  /**
+   * Sets the description of the app to be displayed above the XR button.
+   * @param description - The description of the app.
+   * @returns The instance for chaining.
+   */
+  setAppDescription(description: string) {
+    this.xrButton.appDescription = description;
     return this;
   }
 }

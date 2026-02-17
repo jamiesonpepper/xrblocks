@@ -62,6 +62,7 @@ export class DeviceCameraOptions {
    * Parameters for RGB to depth UV mapping given different aspect ratios.
    */
   rgbToDepthParams: RgbToDepthParams = {...DEFAULT_RGB_TO_DEPTH_PARAMS};
+  cameraLabel?: string;
 
   constructor(options?: DeepReadonly<DeepPartial<DeviceCameraOptions>>) {
     deepMerge(this, options);

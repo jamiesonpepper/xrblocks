@@ -5,6 +5,7 @@ import fs from 'fs';
 import {globSync} from 'glob';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {dts} from 'rollup-plugin-dts';
 
 // Read the version from package.json
 const packageJson = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
@@ -69,6 +70,7 @@ const externalPackages = [
   'openai',
   '@sparkjsdev/spark',
   /^lit(\/.*)?$/,
+  'rapier3d',
 ];
 
 const xrblocksPackages = ['xrblocks', /xrblocks\/addons\//];
@@ -84,6 +86,27 @@ export default [
       sourcemap: true,
     },
     plugins: [typescript()],
+    onwarn: (warning, warn) => {
+      // Need to suppress this warning because 'composite' creates a `.tsbuildinfo` file.
+      if (
+        warning.message.includes(
+          'outputToFilesystem option is defaulting to true'
+        )
+      ) {
+        return;
+      }
+      warn(warning);
+    },
+  },
+  {
+    input: 'src/xrblocks.ts',
+    external: externalPackages,
+    output: {
+      file: 'build/xrblocks.d.ts',
+      format: 'esm',
+      banner: bannerText,
+    },
+    plugins: [typescript(), dts()],
   },
   {
     input: 'src/xrblocks.ts',
@@ -98,23 +121,34 @@ export default [
   },
   {
     input: Object.fromEntries(
-      globSync('src/addons/**/*.{js,ts}').map((file) => [
-        // This removes `src/` as well as the file extension from
-        // each file, so e.g. src/nested/foo.js becomes nested/foo
-        path.relative(
-          'src',
-          file.slice(0, file.length - path.extname(file).length)
-        ),
-        // This expands the relative paths to absolute paths, so
-        // e.g. src/nested/foo becomes /project/src/nested/foo.js
-        fileURLToPath(new URL(file, import.meta.url)),
-      ])
+      globSync('src/addons/**/*.{js,ts}', {ignore: 'src/addons/**/cli/**'}).map(
+        (file) => [
+          // This removes `src/` as well as the file extension from
+          // each file, so e.g. src/nested/foo.js becomes nested/foo
+          path.relative(
+            'src',
+            file.slice(0, file.length - path.extname(file).length)
+          ),
+          // This expands the relative paths to absolute paths, so
+          // e.g. src/nested/foo becomes /project/src/nested/foo.js
+          fileURLToPath(new URL(file, import.meta.url)),
+        ]
+      )
     ),
     external: [...externalPackages, ...xrblocksPackages],
     output: {
       dir: 'build/',
       format: 'esm',
     },
-    plugins: [typescript({tsconfig: 'src/addons/tsconfig.json'})],
+    plugins: [
+      typescript({
+        tsconfig: 'src/addons/tsconfig.lib.json',
+        exclude: ['src/!(addons)/**/*.ts', 'src/*.ts'],
+        compilerOptions: {
+          declaration: true,
+          declarationDir: 'build/addons/',
+        },
+      }),
+    ],
   },
 ];
