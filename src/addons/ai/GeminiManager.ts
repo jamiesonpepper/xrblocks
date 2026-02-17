@@ -41,6 +41,10 @@ export class GeminiManager extends xb.Script<GeminiManagerEventMap> {
 
   scheduleAheadTime = DEFAULT_SCHEDULE_AHEAD_TIME;
 
+  // Type and quality settings for sending the camera feed to Gemini.
+  cameraMimeType = 'image/jpeg';
+  cameraQuality = 0.8;
+
   constructor() {
     super();
   }
@@ -175,8 +179,8 @@ export class GeminiManager extends xb.Script<GeminiManagerEventMap> {
     try {
       const base64Image = await this.xrDeviceCamera!.getSnapshot({
         outputFormat: 'base64',
-        mimeType: 'image/jpeg',
-        quality: 1,
+        mimeType: this.cameraMimeType,
+        quality: this.cameraQuality,
       });
       if (typeof base64Image == 'string') {
         // Strip the data URL prefix if present
