@@ -85,18 +85,14 @@ export default [
       banner: bannerText,
       sourcemap: true,
     },
-    plugins: [typescript()],
-    onwarn: (warning, warn) => {
-      // Need to suppress this warning because 'composite' creates a `.tsbuildinfo` file.
-      if (
-        warning.message.includes(
-          'outputToFilesystem option is defaulting to true'
-        )
-      ) {
-        return;
-      }
-      warn(warning);
-    },
+    plugins: [
+      typescript({
+        compilerOptions: {
+          composite: false,
+          declaration: false,
+        },
+      }),
+    ],
   },
   {
     input: 'src/xrblocks.ts',
@@ -106,7 +102,15 @@ export default [
       format: 'esm',
       banner: bannerText,
     },
-    plugins: [typescript(), dts()],
+    plugins: [
+      typescript({
+        compilerOptions: {
+          composite: false,
+          declaration: false,
+        },
+      }),
+      dts(),
+    ],
   },
   {
     input: 'src/xrblocks.ts',
@@ -116,7 +120,15 @@ export default [
       format: 'esm',
       sourcemap: true,
     },
-    plugins: [typescript(), terser()],
+    plugins: [
+      typescript({
+        compilerOptions: {
+          composite: false,
+          declaration: false,
+        },
+      }),
+      terser(),
+    ],
     watch: false, // Skip this rule when using watch.
   },
   {
