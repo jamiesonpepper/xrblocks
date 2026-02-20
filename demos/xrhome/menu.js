@@ -37,6 +37,19 @@ export class VirtualKeypad {
         // Ensure mesh is interactive
         this.panel.isInteractive = true;
         this.panel.mesh.isDraggable = true;
+        
+        // Force Keypad to render on top of spatial panels
+        this.panel.traverse(child => {
+            child.renderOrder = 999;
+            if (child.material) {
+                if (Array.isArray(child.material)) {
+                    child.material.forEach(m => { m.depthTest = false; m.depthWrite = false; });
+                } else {
+                    child.material.depthTest = false;
+                    child.material.depthWrite = false;
+                }
+            }
+        });
 
         // Add to local group
         // FIX: Add the PANEL itself (Group), not just the mesh, to include edges!
@@ -51,7 +64,7 @@ export class VirtualKeypad {
         const headerRow = grid.addRow({ weight: 0.15 });
         headerRow.addText({
             text: "ENTER CODE",
-            fontSize: 0.12, // 200% of 0.06 (Was 0.20 - too big)
+            fontSize: 0.08, // Reduced size
             fontColor: '#aaaaaa',
             textAlign: 'left'
         });
@@ -102,7 +115,7 @@ export class VirtualKeypad {
                 const col = btnRow.addCol({ weight: 1.0 / rowChars.length });
                 const btn = col.addTextButton({
                     text: char,
-                    fontSize: 0.225, // Increased by 25% (was 0.18)
+                    fontSize: 0.28, // Increased by 25% from 0.225
                     backgroundColor: bgColor,
                     fontColor: fgColor,
                     borderRadius: 0.05

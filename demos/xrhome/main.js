@@ -334,34 +334,35 @@ class VirtualLight2D {
 // --- 3D Virtual Light (AR/XR) ---
 // --- 3D Virtual Light (AR/XR) ---
 // --- 3D Virtual Light (AR/XR) ---
-class VirtualLight3D extends xb.Script {
-  constructor(geminiData, labelText) {
+class VirtualLight3D extends THREE.Group {
+  constructor(geminiData, labelText, width = 1.2, height = 0.4) {
       super();
-      this.geminiData = geminiData;
-      this.labelText = labelText;
-      this.label = labelText;
+      this.geminiData = geminiData; // Keep for xmin/xmax/ymin/ymax
+      this.labelText = labelText || "Light";
+      this.label = labelText; // Alias for pairing logic
       this.isOn = false;
       this.brightness = 100;
       this.realDevice = null;
       this.linkedNodeId = null; 
 
-      // 1. Calculate Dimensions (Video Plane: 3.2 x 1.8)
-      const vW = 3.2;
-      const vH = 1.8;
+      // Removed 3D Model logic for simplicity (just using label box)
+      // If we wanted to draw a 3D box, we could do it here.
       
-      const width = (geminiData.xmax - geminiData.xmin) * vW;
-      const height = (geminiData.ymax - geminiData.ymin) * vH;
+      /* Legacy Box
+      const geo = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+      const mat = new THREE.MeshStandardMaterial({ 
+          color: 0x555555,
+          emissive: 0x000000,
+          roughness: 0.2
+      });
+      this.mesh = new THREE.Mesh(geo, mat);
+      this.add(this.mesh);
       
-      // 2. Create Bounding Box (LineSegments) - REMOVED per user request
-      /*
-      const geometry = new THREE.BoxGeometry(width, height, 0.05); 
-      const edges = new THREE.EdgesGeometry(geometry);
+      const edges = new THREE.EdgesGeometry(geo);
       const material = new THREE.LineBasicMaterial({ 
           color: 0xFFFF00, // Default Yellow
           linewidth: 2 
       });
-      
-      this.mesh = new THREE.LineSegments(edges, material);
       */
       
       // Hit Mesh (Invisible, for easier raycasting if needed)
@@ -379,14 +380,10 @@ class VirtualLight3D extends xb.Script {
       
       // 3. Label + Interface (Spatial Panel)
       this.panel = new xb.SpatialPanel({
-          width: 1.2, 
-          height: 0.4, 
-          backgroundColor: '#00000000', // Transparent
-          showEdge: true,               // Same border as HUD
-          edgeColor: 'white',
-          edgeWidth: 0.02,
-          isDraggable: false,           // Not Movable
-          fontColor: '#ffffff'
+          width: width, 
+          height: height, 
+          backgroundColor: '#00000033', // Black with 20% opacity using alpha hex
+          draggable: false,             // Disables XRBlocks native dragging
       });
       
       this.panel.isInteractive = false;
@@ -429,41 +426,31 @@ class VirtualLight3D extends xb.Script {
       this.panel.isRotatable = false;
       this.panel.userData.isVirtualLight = true; // Flag for strict ignore
       
-      // Force Color (Manual Material Override) to Transparent
-      if (this.panel.mesh && this.panel.mesh.material) {
-          this.panel.mesh.material.transparent = true;
-          this.panel.mesh.material.opacity = 0.0;
-          this.panel.mesh.material.needsUpdate = true;
-      }
+      // Removed custom borderMesh and manual opacity override. 
+      // Opacity is handled correctly by xrblocks via the #00000033 hex in the constructor.
       
-      // Update Edge Color dynamically based on state
-      const targetEdgeColor = this.edgeColorHex !== undefined ? this.edgeColorHex : 0xFFFF00;
-      this.panel.traverse(c => {
-          if (c.isLineSegments || c.isLine || c.type === 'LineSegments') {
-              if (c.material && c.material.color) {
-                  c.material.color.setHex(targetEdgeColor);
-              }
-          }
-      });
-      
-      // Ensure the newly rebuilt panel and its edge are strictly not draggable or rotatable
+      // Ensure the newly rebuilt panel and its children are strictly not draggable, rotatable, or grabbable
       this.panel.traverse(c => {
           c.isDraggable = false;
           c.isRotatable = false;
+          c.isGrabbable = false;
           c.userData = c.userData || {};
           c.userData.isDraggable = false;
           c.userData.isRotatable = false;
+          c.userData.isGrabbable = false;
       });
       
       const isPaired = !!(this.realDevice || this.linkedNodeId);
       const isOn = this.isOn;
       
+      const stateColor = this.stateColor !== undefined ? this.stateColor : '#FFFF00';
+      
       // ROW 1: Label
       const rowLabel = this.mainGrid.addRow({ weight: 0.4 });
       rowLabel.addText({ 
           text: this.labelText, 
-          fontSize: 0.08, // Smaller (was 0.10)
-          fontColor: isPaired && isOn ? '#00FF00' : '#ffffff',
+          fontSize: 0.08, 
+          fontColor: stateColor, // Label text dynamically matches state
           textAlign: 'center'
       });
       
@@ -472,35 +459,37 @@ class VirtualLight3D extends xb.Script {
       
       if (!isPaired) {
           // --- UNPAIRED UI ---
-          // Use FULL WIDTH Button (like Start Scan)
           const btn = rowBtn.addTextButton({ 
               text: 'ADD DEVICE',  
-              fontSize: 0.20, // HUGE (was 0.14)
-              // height: 0.15, // Let grid handle height
+              fontSize: 0.20,
               backgroundColor: '#00AA00', 
               fontColor: '#FFFFFF',
+              hoverColor: '#FFFFFF', // Prevent dark hover
+              selectedFontColor: '#FFFFFF',
               borderRadius: 0.05
           });
-          // HUD uses onTriggered, not onClick
           btn.onTriggered = () => this.handleConfigClick();
           
       } else {
           // --- PAIRED UI ---
-          // Split Row for Toggle / Unpair
           const toggleBtn = rowBtn.addCol({weight: 0.5}).addTextButton({
               text: isOn ? "TURN OFF" : "TURN ON",
-              fontSize: 0.20, // Match "ADD DEVICE" size (huge)
-              backgroundColor: isOn ? '#FFFFFF' : '#333333',
-              fontColor: isOn ? '#000000' : '#FFFFFF',
+              fontSize: 0.20,
+              backgroundColor: '#333333', // Uniform button color
+              fontColor: '#FFFFFF', // Always white to be readable
+              hoverColor: '#FFFFFF', // Prevent dark hover
+              selectedFontColor: '#FFFFFF',
               borderRadius: 0.05
           });
           toggleBtn.onTriggered = () => this.toggle();
 
           const unpairBtn = rowBtn.addCol({weight: 0.5}).addTextButton({ 
               text: 'UNPAIR', 
-              fontSize: 0.20, // Match "ADD DEVICE" size (huge)
+              fontSize: 0.20,
               backgroundColor: '#CC0000', 
               fontColor: '#FFFFFF',
+              hoverColor: '#FFFFFF', // Prevent dark hover
+              selectedFontColor: '#FFFFFF',
               borderRadius: 0.05
           });
           unpairBtn.onTriggered = () => this.handleConfigClick();
@@ -580,14 +569,20 @@ class VirtualLight3D extends xb.Script {
       // if (!this.mesh) return; // Mesh removed
       
       const isPaired = !!(this.realDevice || this.linkedNodeId);
-      const isOn = this.isOn;
       
-      let colorHex = 0xFFFF00; // Yellow (Unpaired)
-      if (isPaired) {
-          colorHex = isOn ? 0xFFFFFF : 0x00FF00;
+      // Hydrate state from realDevice if available BEFORE rebuilding buttons
+      if (this.realDevice && this.realDevice.traits && this.realDevice.traits['sdm.devices.traits.OnOff']) {
+          this.isOn = this.realDevice.traits['sdm.devices.traits.OnOff'].isOn;
       }
       
-      this.edgeColorHex = colorHex;
+      const isOn = this.isOn;
+      
+      let colorStr = '#FFFF00'; // Yellow (Unpaired)
+      if (isPaired) {
+          colorStr = isOn ? '#FFFFFF' : '#00FF00';
+      }
+      
+      this.stateColor = colorStr;
       
       // Rebuild Panel to update Text/Icon
       this.rebuildPanel();
@@ -1227,8 +1222,6 @@ async function spawnVirtualLights(lights, cameraMatrix) {
         
         if (is3D) {
             // --- 3D MODE ---
-            const vLight = new VirtualLight3D(l, label);
-            
             // Unproject Bounding Box Center
             const cx = (l.xmin + l.xmax) / 2;
             const cy = (l.ymin + l.ymax) / 2;
@@ -1263,29 +1256,46 @@ async function spawnVirtualLights(lights, cameraMatrix) {
             const x = (cx - 0.5) * vW; 
             const y = -(cy - 0.5) * vH; 
             
-            // POSITIONING FIX: Use Vector Math (Cam Pos + Cam Dir * Distance)
+            // Calculate physical dimensions correctly based on depth and FOV
+            const physicalW = Math.max(0.6, (l.xmax - l.xmin) * vW);
+            const physicalH = Math.max(0.3, (l.ymax - l.ymin) * vH);
+
+            const vLight = new VirtualLight3D(l, label, physicalW, physicalH);
             
-            if (cam) {
+            // POSITIONING FIX: Use Historical Camera Matrix correctly 
+            if (cameraMatrix) {
+                 // The coordinates (x, y, z) are relative to the camera AT THE TIME OF CAPTURE
+                 vLight.position.set(x, y, z);
+                 
+                 // Apply the exact transform the camera had when it took the photo
+                 vLight.applyMatrix4(cameraMatrix);
+                 
+                 // Make the panel face the user's *current* position so they can read it
+                 let currentCam = xb.camera;
+                 try {
+                     if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                         currentCam = xb.renderer.xr.getCamera();
+                     }
+                 } catch (err) {}
+                 if (currentCam) vLight.lookAt(currentCam.position);
+                 
+                 console.log(`[Spawn] Placed '${label}' via Historical Matrix at`, vLight.position);
+            } else if (cam) {
+                 // Fallback if no matrix was saved during capture (shouldn't happen with the fast loop fix)
                  const camPos = new THREE.Vector3();
                  const camDir = new THREE.Vector3();
                  cam.getWorldPosition(camPos);
                  cam.getWorldDirection(camDir);
                  
-                 // Base Position: Camera + Forward * Distance
-                 const basePos = camPos.clone().add(camDir.multiplyScalar(4.8)); // 4.8m away
+                 const basePos = camPos.clone().add(camDir.multiplyScalar(4.8));
                  
                  vLight.position.copy(basePos);
-                 vLight.lookAt(camPos); // Look back at user
+                 vLight.lookAt(camPos); 
                  
-                 console.log(`[Spawn] Placed '${label}' via Vector Math at`, vLight.position);
+                 console.log(`[Spawn] Placed '${label}' via Fallback Math at`, vLight.position);
             } else {
                  console.warn(`[Spawn] No Camera! Using Safe Center with Offset.`);
-                 // Fallback: If no camera, assume user is at 0,0,0 looking -Z.
-                 // We MUST rely on 'x' and 'y' derived from bounding box to prevent overlap.
-                 // Since 'vW' and 'vH' are defaults (3.2, 1.8) if cam is null, 'x' and 'y' ARE valid relative to a 16:9 plane.
-                 
-                 // Just place them at Depth -4.0 using the calculated x/y.
-                 vLight.position.set(x, 1.6 + y, z); // 1.6m up + y offset, Depth z
+                 vLight.position.set(x, 1.6 + y, z); 
             }
             
             // CRITICAL: Interaction Logic
@@ -1295,13 +1305,14 @@ async function spawnVirtualLights(lights, cameraMatrix) {
             vLight.isRotatable = false;
             
             // Re-enable interaction on Panel ONLY (handled in class)
-            // But explicitly disable drag there too.
+            // But explicitly disable drag and grab there too.
             if (vLight.traverse) {
                 vLight.traverse(child => {
                      // Don't disable isInteractive on children, or buttons break!
-                     // But do disable drag.
+                     // But do disable drag/grab.
                     child.isDraggable = false;
                     child.isRotatable = false;
+                    child.isGrabbable = false;
                 });
             }
             
