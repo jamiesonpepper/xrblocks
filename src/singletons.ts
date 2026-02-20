@@ -3,6 +3,9 @@ import * as THREE from 'three';
 import {Core} from './core/Core';
 import {Options} from './core/Options';
 import {Script} from './core/Script';
+import {checkThreeVersion} from './utils/VersionCheck';
+
+checkThreeVersion();
 
 /**
  * The global singleton instance of Core, serving as the main entry point
