@@ -19,8 +19,9 @@ export class VisionManager {
     /**
      * Captures a frame and sends it to Gemini 1.5 Flash.
      * @param {Blob} imageBlob - JPEG output from CameraManager
+     * @param {THREE.Matrix4} [cameraMatrix] - Optional camera pose at time of capture
      */
-    async analyzeFrame(imageBlob) {
+    async analyzeFrame(imageBlob, cameraMatrix = null) {
         if (!this.apiKey || this.isScanning) return;
         
         this.isScanning = true;
@@ -39,7 +40,7 @@ export class VisionManager {
             const payload = {
                 contents: [{
                     parts: [
-                        { text: "Find all light sources (lamps, ceiling lights, bulbs) in this image, whether they are turned ON or OFF. Look for lamp shades, fixures, and bulbs even if they are dark. Return a JSON array of objects with keys: label, ymin, xmin, ymax, xmax. Coordinates are normalized 0-1. If none, return empty array." },
+                        { text: "Analyze this image from a wide-angle room camera. Find all light sources (lamps, ceiling lights, bulbs, strips) even if they are small, distant, or currently turned OFF. Look carefully for lamp shades, recessed lights, and fixtures. Return a JSON array of objects with keys: label, ymin, xmin, ymax, xmax. Coordinates are normalized 0-1. If none, return empty array." },
                         {
                             inline_data: {
                                 mime_type: "image/jpeg",
@@ -89,7 +90,7 @@ export class VisionManager {
                 const lights = JSON.parse(jsonText);
                 
                 console.log(`[Vision] Parsed Lights: ${lights.length} found.`);
-                if (this.onLightsFound) this.onLightsFound(lights);
+                if (this.onLightsFound) this.onLightsFound(lights, cameraMatrix); // Pass Matrix Back
                 if (this.onStatus) this.onStatus(`Found ${lights.length} lights`);
             } else {
                 console.warn(`[Vision] No candidates in response.`);

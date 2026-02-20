@@ -51,7 +51,11 @@ export class WebXRSessionManager extends THREE.EventDispatcher<WebXRSessionManag
    * This should be called to initialize the manager and trigger the first
    * events.
    */
+  private initializing = false;
+
   public async initialize() {
+    if (this.initializing || this.xrModeSupported !== undefined) return;
+    this.initializing = true;
     if (!('xr' in navigator)) {
       console.warn('WebXR not supported');
       this.xrModeSupported = false;

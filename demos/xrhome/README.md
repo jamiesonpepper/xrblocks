@@ -1,83 +1,83 @@
 # XRHome Demo (Matter Edition)
 
-A WebXR Proof of Concept that combines **XRBlocks**, **Vertex Vision API**, and **Matter.js** for local smart home control.
+A WebXR Proof of Concept that combines **XRBlocks**, **Vertex Vision API**, and **Matter.js** for local smart home control via AR.
 
-This demo allows you to:
+## Features
 
-1.  **Scan** your environment using the device camera (WebRTC).
-2.  **Identify** lamps and lights using Gemini Vision.
-3.  **Control** real smart lights via **Matter Multi-Admin** (Local WiFi/Thread).
-    - **Pinch**: Toggle Light On/Off.
+- **Room-Scale Scanning**: Detects lights using the device camera and Gemini Vision API.
+- **Matter Integration**: Pairs with and controls real Matter smart lights over local WiFi/Thread.
+- **3D Interaction**: Use XR controllers to point, click, and interact with virtual overlays.
 
-## Prerequisites
+## Usage Guide
 
-1.  **Google Gemini API Key**: Get one from [Google AI Studio](https://aistudio.google.com/).
-    14: 2. **Smart Lights Paired to Google Home**: > [!IMPORTANT] > **Requires Native Matter Devices**: The "Link Apps" menu in Google Home **ONLY** appears for Matter-enabled devices (e.g., newer Nest, Eve, Nanoleaf, tapo). > If your lights are standard WiFi/Zigbee (e.g. older Hue, LiFX, Cync) connected via Cloud, **you cannot control them locally with Matter**. > _This demo specifically showcases Matter Local Control._
+### 1. Setup
 
-15: 3. **Matter Pairing Code**: 3. **Matter Pairing Code**: You must obtain a "Link Apps" code from Google Home for each light you want to control. - _Google Home App > Device Settings > Linked Matter Apps & Services > Link Apps_.
+1.  **Gemini API Key**: Enter your key in the HUD when prompted.
+2.  **Matter Pairing Code**:
+    - For new devices, use the QR code sticker.
+    - For existing devices (already in Google Home), go to _Device Settings > Linked Matter Apps > Link Apps_ to get a new pairing code.
 
-## Setup & Running
+### 2. Scanning (New Paradigm)
 
-You can run this project using Docker (Recommended for Linux) or Node.js (Recommended for Windows/Mac to ensure reliable network discovery).
+The scanning system uses a decoupled loop for performance:
 
-### Option 1: Docker (Linux/WSL2)
+- **Live Capture (500ms)**: The camera continuously buffers the latest frame.
+- **Analysis (5s)**: Every 5 seconds, the _latest_ frame is sent to Vertex Vision for analysis.
+- **Action**: Click **"Start Scan"** in the HUD (or use voice command "Scan").
+- **Result**: Detected lights appear as **Yellow Wireframe Boxes** in 3D space.
 
-Matter requires access to the host network for mDNS device discovery.
+### 3. Visual Feedback (Color Coding)
 
-1.  **Build the Image**:
+The virtual boxes indicate the status of the device:
 
-    ```bash
-    docker build -t xrhome-demo .
-    ```
+| Color         | Meaning            | Interaction                                |
+| :------------ | :----------------- | :----------------------------------------- |
+| 🟨 **Yellow** | **Unpaired / New** | Needs pairing. Shows a **Gear Icon (⚙️)**. |
+| ⬜ **White**  | **Paired (ON)**    | Device is controlled and currently ON.     |
+| 🟩 **Green**  | **Paired (OFF)**   | Device is controlled and currently OFF.    |
 
-2.  **Run with Host Networking**:
+### 4. Interactions
 
-    ```bash
-    docker run --name xrhome --network host -it --rm -p 8080:8080 xrhome-demo
-    ```
+Use your XR Controller (Laser Pointer) to interact.
 
-    - Frontend: [http://localhost:8080/demos/xrhome/index.html](http://localhost:8080/demos/xrhome/index.html)
-    - Backend: `http://localhost:3000`
+#### Pairing a Device
 
-    _Note: On Windows/Mac Docker Desktop, `--network host` may not fully expose mDNS. If device discovery fails, use Option 2._
+1.  Locate a **Yellow** box.
+2.  Point at the **Gear Icon (⚙️)** and click (Trigger).
+3.  A **Virtual Keypad** will appear.
+4.  Enter the 11-digit Matter Pairing Code.
+5.  The system will commission the device (this may take 10-30 seconds).
+6.  Upon success, the box turns **Green/White** and the icon changes to an **X**.
 
-### Option 2: Local Node.js (Windows/Mac)
+#### Controlling a Light
 
-1.  **Install Dependencies**:
+- **Toggle On/Off**: Point at the **Main Box** (not the icon) and click/pinch. The box color will toggle between White and Green.
 
-    ```bash
-    npm install
-    ```
+#### Unpairing
 
-2.  **Start the Stack**:
-    This runs both the Matter Controller backend and the Web Server.
+1.  Point at the **Red X Icon** on a paired device.
+2.  Click to unpair. The box returns to **Yellow**.
 
-    ```bash
-    npm run dev
-    ```
+## Technical Setup (Developers)
 
-3.  **Open in Browser**:
-    Navigate to [http://localhost:8080/demos/xrhome/index.html](http://localhost:8080/demos/xrhome/index.html).
+### Docker (Linux/WSL2)
 
-## Usage
+Required for Matter mDNS discovery on Linux.
 
-1.  **Configuration**: Enter your `Gemini API Key` in the HUD overlay.
+```bash
+docker build -t xrhome-demo .
+docker run --name xrhome --network host -it --rm -p 8080:8080 xrhome-demo
+```
 
-2.  **Ensure Device is in Pairing Mode**
-    - **New Device**: Power on and scan the QR code sticker (or enter code). It is usually in pairing mode for 15 minutes after power on.
-    - **Existing Device (Google Home/Alexa)**: You must enable **Multi-Admin Pairing**.
-      - Open Google Home App -> Tap Device -> Settings (Gear) -> Linked Matter Apps & Services -> "Link Apps & Services".
-      - Use the **Pairing Code** provided there. This puts the device back into advertisement mode.
-    - **Without Pairing Mode**: The controller cannot find the device, even if the code is correct.
+frontend: `http://localhost:8080/demos/xrhome/index.html`
 
-3.  **Access the Application**
-    - Open `https://localhost:8080` (Accept the self-signed cert warning).
-    - Click "Start Scanning".
-    - When a light is found and you click "Pair New Device", enter the code from Step 2.\*\* from Google Home.
-    * Wait for the "Device Paired!" message.
-4.  **Scanning**:
-    - Click **Start Scan** (or say "Scan").
-    - Point camera at a light.
-5.  **Control**:
-    - The detected light will be highlighted.
-    - **Pinch** the virtual marker to toggle the real light.
+### Local Node.js (Windows/Mac)
+
+Recommended for development.
+
+```bash
+npm install
+npm run dev
+```
+
+Access at `https://localhost:8080` (Accept self-signed cert).

@@ -127,7 +127,7 @@ export class HUDManager {
         this.scanButton = rowBtn.addTextButton({
              text: "START SCAN",
              fontSize: 0.08,
-             backgroundColor: '#00AA00',
+             backgroundColor: '#22aa33', // Green from samples/ui
              fontColor: '#ffffff',
              borderRadius: 0.05
         });
@@ -153,8 +153,11 @@ export class HUDManager {
             this.draw2D();
         } else if (this.scanButton) {
             this.scanButton.text = scanning ? "STOP SCAN" : "START SCAN";
-            this.scanButton.backgroundColor = scanning ? '#CC0000' : '#00AA00'; // Red vs Green
-            // Force redraw? SpatialPanel properties are reactive usually.
+            this.scanButton.backgroundColor = scanning ? '#CC0000' : '#22aa33'; // Red vs Green
+            
+            // Explicitly force update if needed (SpatialPanel usually handles setter)
+            // But let's log to be sure
+            console.log("HUD 3D Scan State:", scanning);
         }
     }
 
@@ -164,6 +167,7 @@ export class HUDManager {
         const h = this.canvas.height;
         
         ctx.clearRect(0, 0, w, h);
+        this.configRects = []; // Reset click targets
         
         // 1. Draw Text Log
         ctx.font = '24px Arial';

@@ -525,7 +525,13 @@ export class Core {
   private onWindowResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    if (!this.renderer.xr.isPresenting) {
+        try {
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+        } catch (e) {
+            // Suppress warning: Can't change size while VR device is presenting
+        }
+    }
   }
 
   private renderSimulatorAndScene() {

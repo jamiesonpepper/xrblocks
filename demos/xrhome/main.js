@@ -13,6 +13,10 @@ let dragController = null;
 let dragOffset = new THREE.Vector3();
 let dragQuaternion = new THREE.Quaternion();
 
+// Vision Buffers (Global for access by toggleScan)
+let latestFrameBlob = null;
+let latestCameraMatrix = null;
+
 class HUDInteraction extends xb.Script {
     onUpdate() {
         if (dragController && hud.panel) {
@@ -52,44 +56,83 @@ class HUDInteraction extends xb.Script {
 function onXRSelectStart(event) {
     const controller = event.target;
     
-    // 1. Raycast HUD
-    if (hud.panel) {
-        tempMatrix.identity().extractRotation(controller.matrixWorld);
-        raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+    // Define draggables: HUD and Keypad ONLY
+    const draggables = [];
+    if (hud.panel) draggables.push(hud.panel);
+    if (keypad.visible && keypad.panel && keypad.panel.mesh) draggables.push(keypad.panel); 
+
+    // STRICT: Do NOT add Virtual Lights to draggables list.
+    // However, if Raycaster hits them via other means (global scene check?), we must ignore.
+    // Pass 'draggables' to intersectObjects limits the check to ONLY these items.
+    // So if Virtual Lights are not in this list, they CANNOT be dragged by this function.
+    // This confirms onXRSelectStart is NOT moving them. 
+    //
+    // UNLESS: 'hud.panel' or 'keypad.panel' somehow includes the lights? (Unlikely)
+    // OR: There is *another* drag handler.
+    //
+    // Let's assume onXRSelectStart is the culprit and maybe my logic for "draggables" included them before?
+    // No, I was using 'hud.panel' explicitly.
+    //
+    // Wait! 'hud.panel' might contain them if they are parented to it?
+    // VirtualLight3D is added to 'scene' or 'world'? 
+    //
+    // Let's verify VirtualLights are NOT children of HUD or Keypad.
+    
+    tempMatrix.identity().extractRotation(controller.matrixWorld);
+    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+    // Intersect ONLY permitted draggables
+    const intersects = raycaster.intersectObjects(draggables, true);
+
+    if (intersects.length > 0) {
+        const hit = intersects[0];
         
-        const intersects = raycaster.intersectObject(hud.panel, true); // Recursive for buttons
+        // Find root draggable (Panel)
+        let targetPanel = null;
+        if (hud.panel && (hit.object === hud.panel || hud.panel.children.includes(hit.object))) targetPanel = hud.panel;
+        else if (keypad.panel && (hit.object === keypad.panel || keypad.panel.children.includes(hit.object) || hit.object.parent === keypad.panel)) targetPanel = keypad.panel;
         
-        if (intersects.length > 0) {
-            const hit = intersects[0];
+        // Check explicit lock
+        if (targetPanel && (targetPanel.isDraggable === false || targetPanel.userData?.isDraggable === false)) return;
+
+        if (targetPanel) {
+             // Convert to Local Point on Panel
+            const localPoint = targetPanel.worldToLocal(hit.point.clone());
             
-            // Check if Border Hit
-            // Convert to Local Point on Panel
-            const localPoint = hud.panel.worldToLocal(hit.point.clone());
-            
-            // Panel Size (0.6 x 0.8)
-            const w = 0.6;
+            // Panel Size (0.6 x 0.8 usually, but dynamic)
+            // Assuming standard size or check geometry?
+            // HUD is 0.6x0.8. Keypad is 0.6x0.8.
+            const w = 0.6; 
             const h = 0.8;
-            const border = 0.04; // Tolerance for border grab
+            const border = 0.04; 
             
-            if (Math.abs(localPoint.x) > w/2 - border || Math.abs(localPoint.y) > h/2 - border) {
-                // START DRAG
-                dragController = controller;
+            // Grab ANYWHERE on Keypad (header) or just border?
+            // HUD logic was border-only. Keypad user wants "click/move functionality from virtual light panels" (which was whole panel?)
+            // Let's allow border grab for consistency.
+            if (Math.abs(localPoint.x) > w/2 - border || Math.abs(localPoint.y) > h/2 - border || targetPanel === keypad.panel) {
+                // Allow grabbing Keypad anywhere if it's the target? Or just border?
+                // User said "move functionality to virtual keypad". 
+                // Let's assume border grab for now, but maybe widen it.
                 
-                // Calculate Offset: Panel Pos relative to Controller
+                dragController = controller;
+                // Store parent of panel (Group) or Panel itself?
+                // HUD moves `hud.panel`. Keypad moves `keypad.group` probably?
+                // Keypad init: `this.group.add(this.panel)`. Moving `panel` inside group is weird. Move group!
+                const objectToMove = (targetPanel === keypad.panel) ? keypad.group : targetPanel;
+                
+                dragController.userData.selected = objectToMove;
+                
                 const cPos = new THREE.Vector3();
                 const cQuat = new THREE.Quaternion();
                 controller.getWorldPosition(cPos);
                 controller.getWorldQuaternion(cQuat);
                 
-                // offset = (panelPos - cPos) applying inverse controller rotation
-                dragOffset.copy(hud.panel.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
+                dragOffset.copy(objectToMove.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
+                dragQuaternion.copy(cQuat.clone().invert()).multiply(objectToMove.quaternion);
                 
-                // rotation offset
-                dragQuaternion.copy(cQuat.clone().invert()).multiply(hud.panel.quaternion);
-                
-                hud.speak("Moving HUD");
-                return; // Consume event
+                hud.speak("Moving Panel");
+                return;
             }
         }
     }
@@ -108,10 +151,26 @@ function onXRSelect(event) {
     // If we were dragging, ignore the click
     if (dragController === controller) return;
 
-    // 2. Check Virtual Lights (Legacy Logic preserved)
-    tempMatrix.identity().extractRotation(controller.matrixWorld);
-    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
     raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+    // 1. Check Keypad Interaction (High Priority)
+    if (keypad.visible && keypad.mesh) {
+        const keypadIntersects = raycaster.intersectObject(keypad.mesh);
+        if (keypadIntersects.length > 0) {
+            const hit = keypadIntersects[0];
+            // UV to 0..1
+            if (hit.uv) {
+                // UV y is inverted in Three.js plane mapping relative to Canvas? 
+                // texture.flipY usually defaults.
+                // Our VirtualKeypad.handleClick expects UV where (0,0) is bottom-left? 
+                // Let's pass raw UV and let handleClick handle it (it does 1-y).
+                keypad.handleClick(hit.uv);
+            }
+            return; // Consume event
+        }
+    }
+
+    // 2. Check Virtual Lights (Legacy Logic preserved)
 
     // Target the hitMesh (invisible plane) for easier clicking
     const meshes = virtualLights.map(vl => vl.hitMesh).filter(m => m);
@@ -142,7 +201,7 @@ import { matterClient } from './matter-client.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
 import { HUDManager } from './hud.js';
-import { DeviceMenu } from './menu.js';
+import { VirtualKeypad } from './menu.js';
 
 // Globals
 const auth = new AuthManager();
@@ -159,7 +218,7 @@ const hud = new HUDManager();
 // Wire up HUD Scan Event
 hud.onScanToggle = () => toggleScan();
 
-const menu = new DeviceMenu();
+const keypad = new VirtualKeypad();
 let videoPlane = null;
 let selectedLight = null; 
 let isScanning = false;
@@ -273,6 +332,8 @@ class VirtualLight2D {
 }
 
 // --- 3D Virtual Light (AR/XR) ---
+// --- 3D Virtual Light (AR/XR) ---
+// --- 3D Virtual Light (AR/XR) ---
 class VirtualLight3D extends xb.Script {
   constructor(geminiData, labelText) {
       super();
@@ -291,7 +352,8 @@ class VirtualLight3D extends xb.Script {
       const width = (geminiData.xmax - geminiData.xmin) * vW;
       const height = (geminiData.ymax - geminiData.ymin) * vH;
       
-      // 2. Create Bounding Box (LineSegments)
+      // 2. Create Bounding Box (LineSegments) - REMOVED per user request
+      /*
       const geometry = new THREE.BoxGeometry(width, height, 0.05); 
       const edges = new THREE.EdgesGeometry(geometry);
       const material = new THREE.LineBasicMaterial({ 
@@ -300,83 +362,235 @@ class VirtualLight3D extends xb.Script {
       });
       
       this.mesh = new THREE.LineSegments(edges, material);
+      */
       
-      // Hit Mesh
+      // Hit Mesh (Invisible, for easier raycasting if needed)
+      // Keep detection area for legacy interaction logic if needed
+      // Hit Mesh (Invisible, for easier raycasting if needed)
       const hitGeo = new THREE.PlaneGeometry(width, height);
       const hitMat = new THREE.MeshBasicMaterial({ visible: false });
       this.hitMesh = new THREE.Mesh(hitGeo, hitMat);
-      this.mesh.add(this.hitMesh); 
       
-      this.add(this.mesh);
+      // CRITICAL: Lock the Hit Mesh too
+      this.hitMesh.isDraggable = false;
+      this.hitMesh.isRotatable = false;
       
-      // 3. Label + Icon
-      this.labelSprite = this.createLabelSprite(labelText, "⚙️", "#FFFF00");
-      this.labelSprite.position.set(0, -height/2 - 0.15, 0); 
-      this.mesh.add(this.labelSprite);
+      this.add(this.hitMesh);
       
-      // Restore needed properties for compatibility/logic
+      // 3. Label + Interface (Spatial Panel)
+      this.panel = new xb.SpatialPanel({
+          width: 1.2, 
+          height: 0.4, 
+          backgroundColor: '#00000000', // Transparent
+          showEdge: true,               // Same border as HUD
+          edgeColor: 'white',
+          edgeWidth: 0.02,
+          isDraggable: false,           // Not Movable
+          fontColor: '#ffffff'
+      });
+      
+      this.panel.isInteractive = false;
+      this.panel.mesh.isDraggable = false;
+      this.panel.isDraggable = false;
+      
+      // Recursively disable dragging on EVERYTHING
+      this.panel.traverse(c => {
+          c.isDraggable = false;
+          c.userData = c.userData || {};
+          c.userData.isDraggable = false;
+      });
+      
+      this.hitMesh.isDraggable = false;
+      this.hitMesh.userData = { isDraggable: false };
+
+      // Positioned below the box
+      this.panel.position.set(0, -height/2 - 0.25, 0);
+      this.add(this.panel);
+
+      this.rebuildPanel();
+      
       this.xmin = geminiData.xmin;
       this.xmax = geminiData.xmax;
       this.ymin = geminiData.ymin;
       this.ymax = geminiData.ymax;
   }
   
-  createLabelSprite(text, icon, color) {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      canvas.width = 512;
-      canvas.height = 128;
+  rebuildPanel() {
+      if (!this.panel) return;
       
-      ctx.font = 'bold 48px monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
+      if (!this.mainGrid) {
+           this.mainGrid = this.panel.addGrid();
+      }
+      this.mainGrid.clear(); 
+
+      // Locked Interaction
+      this.panel.isInteractive = true;
+      this.panel.isDraggable = false;
+      this.panel.isRotatable = false;
+      this.panel.userData.isVirtualLight = true; // Flag for strict ignore
       
-      ctx.shadowColor = 'black';
-      ctx.shadowBlur = 4;
-      ctx.fillStyle = color;
+      // Force Color (Manual Material Override) to Transparent
+      if (this.panel.mesh && this.panel.mesh.material) {
+          this.panel.mesh.material.transparent = true;
+          this.panel.mesh.material.opacity = 0.0;
+          this.panel.mesh.material.needsUpdate = true;
+      }
       
-      // "Name  [Icon]"
-      const fullText = `${text}  ${icon}`;
-      ctx.fillText(fullText, 256, 64);
+      // Update Edge Color dynamically based on state
+      const targetEdgeColor = this.edgeColorHex !== undefined ? this.edgeColorHex : 0xFFFF00;
+      this.panel.traverse(c => {
+          if (c.isLineSegments || c.isLine || c.type === 'LineSegments') {
+              if (c.material && c.material.color) {
+                  c.material.color.setHex(targetEdgeColor);
+              }
+          }
+      });
       
-      const texture = new THREE.CanvasTexture(canvas);
-      const material = new THREE.SpriteMaterial({ map: texture });
-      const sprite = new THREE.Sprite(material);
-      sprite.scale.set(0.8, 0.2, 1.0);
-      return sprite;
+      // Ensure the newly rebuilt panel and its edge are strictly not draggable or rotatable
+      this.panel.traverse(c => {
+          c.isDraggable = false;
+          c.isRotatable = false;
+          c.userData = c.userData || {};
+          c.userData.isDraggable = false;
+          c.userData.isRotatable = false;
+      });
+      
+      const isPaired = !!(this.realDevice || this.linkedNodeId);
+      const isOn = this.isOn;
+      
+      // ROW 1: Label
+      const rowLabel = this.mainGrid.addRow({ weight: 0.4 });
+      rowLabel.addText({ 
+          text: this.labelText, 
+          fontSize: 0.08, // Smaller (was 0.10)
+          fontColor: isPaired && isOn ? '#00FF00' : '#ffffff',
+          textAlign: 'center'
+      });
+      
+      // ROW 2: Control Button
+      const rowBtn = this.mainGrid.addRow({ weight: 0.6 });
+      
+      if (!isPaired) {
+          // --- UNPAIRED UI ---
+          // Use FULL WIDTH Button (like Start Scan)
+          const btn = rowBtn.addTextButton({ 
+              text: 'ADD DEVICE',  
+              fontSize: 0.20, // HUGE (was 0.14)
+              // height: 0.15, // Let grid handle height
+              backgroundColor: '#00AA00', 
+              fontColor: '#FFFFFF',
+              borderRadius: 0.05
+          });
+          // HUD uses onTriggered, not onClick
+          btn.onTriggered = () => this.handleConfigClick();
+          
+      } else {
+          // --- PAIRED UI ---
+          // Split Row for Toggle / Unpair
+          const toggleBtn = rowBtn.addCol({weight: 0.5}).addTextButton({
+              text: isOn ? "TURN OFF" : "TURN ON",
+              fontSize: 0.20, // Match "ADD DEVICE" size (huge)
+              backgroundColor: isOn ? '#FFFFFF' : '#333333',
+              fontColor: isOn ? '#000000' : '#FFFFFF',
+              borderRadius: 0.05
+          });
+          toggleBtn.onTriggered = () => this.toggle();
+
+          const unpairBtn = rowBtn.addCol({weight: 0.5}).addTextButton({ 
+              text: 'UNPAIR', 
+              fontSize: 0.20, // Match "ADD DEVICE" size (huge)
+              backgroundColor: '#CC0000', 
+              fontColor: '#FFFFFF',
+              borderRadius: 0.05
+          });
+          unpairBtn.onTriggered = () => this.handleConfigClick();
+      }
   }
-  
+
+  handleConfigClick() {
+      // Logic from `hud.checkClick` handler in main.js
+      const vl = this;
+      console.log("3D Config Clicked:", vl.label, vl);
+      
+      if (vl.realDevice) {
+            // UNPAIR
+            hud.speak("Unpairing device...");
+            hud.log(`Unpairing ${vl.realDevice.id}...`, '#FFFF00');
+            
+            smartHome.unpairDevice(vl.realDevice.id).then(success => {
+                if (success) {
+                    hud.speak("Device Unpaired.");
+                    hud.log("Unpaired & Removed.", '#00FF00');
+                    
+                    vl.realDevice = null;
+                    vl.linkedNodeId = null; 
+                    vl.isOn = false;        
+                    
+                    vl.updateVisuals();
+                    setTimeout(refreshRealDevices, 500);
+                } else {
+                    hud.speak("Unpair Failed.");
+                }
+            });
+      } else {
+            // PAIR
+            if (!keypad.visible) {
+                 if (!keypad.mesh) keypad.init(xb.scene);
+                 
+                 hud.speak("Enter Pairing Code.");
+                 
+                 // Position keypad near the light
+                 const lightPos = new THREE.Vector3();
+                 
+                 // FIX: use 'vl' (Group) - Fixed Crash
+                 vl.getWorldPosition(lightPos);
+                 keypad.group.position.copy(lightPos).add(new THREE.Vector3(0.6, 0, 0.5));
+                 
+                 let cam = xb.camera || (xb.renderer && xb.renderer.xr ? xb.renderer.xr.getCamera() : null);
+                 if (cam) keypad.group.lookAt(cam.position); 
+
+                 keypad.open("", (code) => {
+                      if (code) {
+                          hud.speak("Pairing device...");
+                          hud.log("Pairing...", '#FFFF00');
+                          
+                          smartHome.commissionDevice(code, vl.label).then(res => {
+                               if (res.success) {
+                                  hud.speak("Success! Paired.");
+                                  hud.log("Paired!", '#00FF00');
+                                  vl.linkedNodeId = res.nodeId;
+                                  vl.updateVisuals(); // Instantly swap UI state
+                                  refreshRealDevices();
+                              } else {
+                                  hud.speak("Pairing Failed.");
+                                  hud.log("Error: " + (res.error?.message || "Unknown"), '#FF0000');
+                              }
+                          });
+                      } else {
+                          hud.speak("Pairing cancelled.");
+                      }
+                 }, () => {
+                     hud.speak("Cancelled.");
+                 });
+             }
+      }
+  }
+
   updateVisuals() {
-      if (!this.mesh) return;
+      // if (!this.mesh) return; // Mesh removed
       
       const isPaired = !!(this.realDevice || this.linkedNodeId);
       const isOn = this.isOn;
       
       let colorHex = 0xFFFF00; // Yellow (Unpaired)
-      let icon = "⚙️"; // Gear
-      
       if (isPaired) {
-          if (isOn) {
-              colorHex = 0xFFFFFF; // White (On)
-              icon = "✕"; 
-          } else {
-              colorHex = 0x00FF00; // Green (Off)
-              icon = "✕";
-          }
+          colorHex = isOn ? 0xFFFFFF : 0x00FF00;
       }
       
-      if (this.mesh.material) {
-          this.mesh.material.color.setHex(colorHex);
-      }
+      this.edgeColorHex = colorHex;
       
-      const oldSprite = this.labelSprite;
-      this.labelSprite = this.createLabelSprite(this.labelText, icon, isPaired ? (isOn ? '#FFFFFF' : '#00FF00') : '#FFFF00');
-      this.labelSprite.position.copy(oldSprite.position);
-      
-      this.mesh.remove(oldSprite);
-      this.mesh.add(this.labelSprite);
-      
-      if (oldSprite.material.map) oldSprite.material.map.dispose();
+      // Rebuild Panel to update Text/Icon
+      this.rebuildPanel();
   }
 
   toggle() {
@@ -385,6 +599,11 @@ class VirtualLight3D extends xb.Script {
       
       if (this.realDevice && smartHome) {
           console.log(`[Toggle] 3D Light ${this.labelText} -> ${this.isOn}`);
+          
+          const stateStr = this.isOn ? "ON" : "OFF";
+          const colorStr = this.isOn ? '#FFFFFF' : '#00FF00';
+          hud.log(`${this.labelText} turned ${stateStr}`, colorStr);
+          
           smartHome.toggleLight(this.realDevice.id, this.isOn).then(() => {
               hud.speak(this.isOn ? "Turning On" : "Turning Off");
           });
@@ -398,14 +617,21 @@ class VirtualLight3D extends xb.Script {
       }
   }
   
-  // Legacy checkClick for 3D? Not used, handled by Raycaster
   checkClick() { return false; }
 }
 
 
 // --- Main App Logic ---
 
+let isAppInitialized = false;
+
 async function initApp() {
+    if (isAppInitialized) {
+        console.warn("initApp called multiple times. Ignoring.");
+        return;
+    }
+    isAppInitialized = true;
+
     console.log("Initializing XRHome...");
     
     // smartHome is now the matterClient singleton
@@ -431,6 +657,9 @@ async function initApp() {
     // 3. Init XRBlocks
     await RAPIER.init(); // Fix: No arguments
     const o = new xb.Options();
+    // Enable Ray Visualization to fix "invisible pointer" issue
+    o.controllers.visualizeRays = true;
+
     if (isARSupported) {
         o.enableUI(); // Only show "Enter AR" if supported
     } else {
@@ -485,8 +714,8 @@ async function initApp() {
         hud.init(document.body, '2D');
         console.log("HUD: 2D Overlay Attached to Body");
         
-        // 6b. Init Menu (2D)
-        menu.init(document.body, '2D');
+        // 6b. Menu (2D) - Uses standard browser prompts, no class needed
+        // menu.init(document.body, '2D'); // REMOVED
         
     } else {
         // XR: 3D Plane
@@ -508,8 +737,10 @@ async function initApp() {
                 hud.init(parent, '3D');
                 console.log("HUD: 3D Plane Attached to Scene/Camera");
                 
-                // 6b. Init Menu (3D)
-                menu.init(xb.scene || parent); // Attach to scene usually
+                console.log("HUD: 3D Plane Attached to Scene/Camera");
+                
+                // 6b. Keypad Init only on demand
+                // menu.init(xb.scene || parent); // REMOVED
              } else {
                 console.warn("Could not find Camera or Scene for 3D HUD");
              }
@@ -536,29 +767,78 @@ function startVisionLoop() {
         }
     };
 
-    vision.onLightsFound = (lights) => {
-        // Update HUD Bounding Boxes (Desktop)
-        hud.drawLights(lights);
-        
+    vision.onLightsFound = (lights, cameraMatrix) => {
+        // Critical: If user stopped scanning, IGNORE result to prevent clearing lights
+        if (!isScanning) {
+            console.log("Scan stopped. Ignoring late result.");
+            return;
+        }
+
+        // hud.drawLights(lights); // Removed to prevent index mismatch (Wait for spawnVirtualLights -> link -> draw)
         hud.speak(`Found ${lights.length} lights.`);
-        spawnVirtualLights(lights);
+        spawnVirtualLights(lights, cameraMatrix);
     };
 
     hud.log("Vision System Started");
     hud.speak("Vision System Ready. Say 'Scan' or click button.");
     hud.log("Ready. Click Scan to Start.");
     
-    // Auto-Loop (Active only when isScanning is true)
+    // Decoupled Scanning Logic:
+    // 1. Fast Capture Loop (300ms) - Keeps frame buffer fresh / "Live"
+    // 2. Slow Analysis Loop (5000ms) - Sends latest frame to API
+
+    // Buffers are now global
+
+    // Fast Capture Loop
+    let isCapturing = false;
+
     setInterval(async () => {
         if (!isScanning) return;
+        if (isCapturing) return; // SKIP if previous capture is still running
+        
+        isCapturing = true;
         
         const canvas = document.getElementById('process-canvas');
-        if (!camera.videoElement || camera.videoElement.readyState < 2) return;
         
-        const blob = await camera.captureFrame(canvas);
-        if (blob) {
-            hud.log("Scanning...", '#888888');
-            vision.analyzeFrame(blob);
+        try {
+            // Reverted: Use Auto-Detect Logic in CameraManager (ImageCapture if available)
+            const blob = await camera.captureFrame(canvas); 
+            
+            if (blob) {
+                latestFrameBlob = blob;
+                // Debug: Log frame capture
+                // console.log(`[FastLoop] Captured Frame: ${blob.size} bytes at ${Date.now()}`);
+                
+                // Capture Camera Matrix at exact moment of frame grab
+                let cam = null;
+                if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                     cam = xb.renderer.xr.getCamera();
+                } else {
+                     cam = xb.camera;
+                }
+                
+                if (cam) {
+                    latestCameraMatrix = cam.matrixWorld.clone();
+                }
+            } else {
+                // console.warn("[FastLoop] No Frame Captured");
+            }
+        } catch (e) {
+            console.warn("Fast Capture Loop Error:", e);
+        } finally {
+            isCapturing = false; // RELEASE lock
+        }
+    }, 300); // 300ms Interval (Staggered > 250ms Timeout) to prevent conflict
+
+    // Slow Analysis Loop
+    setInterval(() => {
+        if (!isScanning) return;
+        
+        if (latestFrameBlob) {
+            console.log("Scanning (using latest frame)..."); 
+            vision.analyzeFrame(latestFrameBlob, latestCameraMatrix);
+            latestFrameBlob = null; 
+            latestCameraMatrix = null;
         }
     }, 5000); // 5s Interval
 
@@ -600,25 +880,55 @@ function startVisionLoop() {
     setupVoiceCommand();
 }
 
-function toggleScan() {
-    isScanning = !isScanning;
+// Re-entry Guard
+let isToggling = false;
+
+async function toggleScan() {
+    if (isToggling) return;
+    isToggling = true;
+
+    // Determine target state based on current state
+    const targetState = !isScanning;
     
-    // Update HUD Button State
-    if (hud && hud.setScanState) {
-        hud.setScanState(isScanning);
-    }
-    
-    if (isScanning) {
-        // START
+    if (targetState) {
+        // --- STARTING SCAN ---
+        hud.log("Starting Camera...", '#FFFF00');
+        
+        // 1. Flush Logic (Before setting isScanning = true)
+        // This prevents the fast loop from grabbing a stale frame while we flush
+        latestFrameBlob = null;
+        latestCameraMatrix = null;
+        
+        try {
+            const canvas = document.getElementById('process-canvas');
+            // Force a capture to clear any buffered frame in ImageCapture
+            // Wait for it to complete
+            await camera.captureFrame(canvas); 
+            console.log("Camera Flushed. ready to start.");
+        } catch(e) {
+            console.warn("Camera Flush failed", e);
+        }
+
+        // 2. Enable Scanning (Now safe)
+        isScanning = true;
+        
+        // Update UI
+        if (hud && hud.setScanState) hud.setScanState(true);
         hud.speak("Scanning started. Please pan around.");
         hud.log("Scanning Active...", '#00FF00');
+
     } else {
-        // STOP (PAUSE)
+        // --- STOPPING SCAN ---
+        isScanning = false;
+        
+        // Update UI
+        if (hud && hud.setScanState) hud.setScanState(false);
+        hud.speak("Scanning paused. Configure lights.");
         hud.speak("Scanning paused. Configure lights.");
         hud.log("Scanning Paused", '#FFFF00');
-        
-        // Ensure we don't clear lights, so they persist for picking
     }
+    
+    isToggling = false;
 }
 
 async function startAssignmentFlow() {
@@ -856,13 +1166,16 @@ function setupVoiceCommand() {
     }
 }
 
-function spawnVirtualLights(lights) {
-    console.log("Rebuilding Lights:", lights);
+
+// Updated spawnVirtualLights to use Historical Matrix
+async function spawnVirtualLights(lights, cameraMatrix) {
+    if (!lights) return;
     
+    console.log("[Spawn] Update Virtual Lights", lights);
+
     // Check Mode
     const is3D = (hud.mode === '3D');
-    
-    // 1. Separate tracked vs untracked
+
     const keptLights = [];
     const newCandidates = [];
     
@@ -872,14 +1185,25 @@ function spawnVirtualLights(lights) {
             keptLights.push(vl);
         } else {
             // Remove unlinked ones from scene to be replaced
-            // Only if it's a 3D light with a mesh
+            // FIXED: Remove regardless of vl.mesh existence (since we removed mesh from 3D lights)
+            if (vl.parent) vl.parent.remove(vl); // Standard Three.js remove
+            else {
+                // Try xb.remove if available, or scene remove
+                try { xb.remove(vl); } catch(e) { 
+                    if (xb.scene) xb.scene.remove(vl);
+                }
+            }
+            
+            // Dispose if possible
             if (vl.mesh) {
-                // Remove from scene/parent
-                if (vl.parent) vl.parent.remove(vl); // If added via xb.add
-                else xb.scene.remove(vl.mesh);       // Direct scene remove fallback
-                
                 if (vl.mesh.geometry) vl.mesh.geometry.dispose();
                 if (vl.mesh.material) vl.mesh.material.dispose();
+            }
+            
+            // Dispose Panel if exists
+            if (vl.panel) {
+                 // xb.SpatialPanel might have dispose?
+                 if (vl.panel.dispose) vl.panel.dispose();
             }
         }
     }
@@ -909,19 +1233,81 @@ function spawnVirtualLights(lights) {
             const cx = (l.xmin + l.xmax) / 2;
             const cy = (l.ymin + l.ymax) / 2;
     
-            // Map to Video Plane (3.2 x 1.8)
-            const x = (cx - 0.5) * 3.2; 
-            const y = -(cy - 0.5) * 1.8 + 1.6;
+
+            // Default Depth (In Front of User)
+            // OpenGL: -Z is Forward. 
             const z = -4.8; 
             
-            if (vLight.mesh) {
-                 vLight.mesh.position.set(x, y, z);
-                 // Default New/Unpaired = Yellow
-                 vLight.mesh.material.color.setHex(0xFFFF00); 
+            // Get Camera
+            let cam = null;
+            try {
+                if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                    cam = xb.renderer.xr.getCamera();
+                }
+            } catch (err) { console.warn("[Spawn] XR Camera error:", err); }
+            
+            if (!cam) {
+                cam = xb.camera; // Fallback to main camera
+            }
+            // Force a valid camera object if missing? 
+            // If xb.camera is also null, we are in trouble.
+
+            let vH = 1.8; 
+            let vW = 3.2; 
+            
+            if (cam && cam.isPerspectiveCamera) {
+                vH = 2 * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * Math.abs(z);
+                vW = vH * cam.aspect;
+            }
+
+            const x = (cx - 0.5) * vW; 
+            const y = -(cy - 0.5) * vH; 
+            
+            // POSITIONING FIX: Use Vector Math (Cam Pos + Cam Dir * Distance)
+            
+            if (cam) {
+                 const camPos = new THREE.Vector3();
+                 const camDir = new THREE.Vector3();
+                 cam.getWorldPosition(camPos);
+                 cam.getWorldDirection(camDir);
+                 
+                 // Base Position: Camera + Forward * Distance
+                 const basePos = camPos.clone().add(camDir.multiplyScalar(4.8)); // 4.8m away
+                 
+                 vLight.position.copy(basePos);
+                 vLight.lookAt(camPos); // Look back at user
+                 
+                 console.log(`[Spawn] Placed '${label}' via Vector Math at`, vLight.position);
+            } else {
+                 console.warn(`[Spawn] No Camera! Using Safe Center with Offset.`);
+                 // Fallback: If no camera, assume user is at 0,0,0 looking -Z.
+                 // We MUST rely on 'x' and 'y' derived from bounding box to prevent overlap.
+                 // Since 'vW' and 'vH' are defaults (3.2, 1.8) if cam is null, 'x' and 'y' ARE valid relative to a 16:9 plane.
+                 
+                 // Just place them at Depth -4.0 using the calculated x/y.
+                 vLight.position.set(x, 1.6 + y, z); // 1.6m up + y offset, Depth z
+            }
+            
+            // CRITICAL: Interaction Logic
+            // Disable interaction on the container group to prevent drag
+            vLight.isInteractive = false; 
+            vLight.isDraggable = false;
+            vLight.isRotatable = false;
+            
+            // Re-enable interaction on Panel ONLY (handled in class)
+            // But explicitly disable drag there too.
+            if (vLight.traverse) {
+                vLight.traverse(child => {
+                     // Don't disable isInteractive on children, or buttons break!
+                     // But do disable drag.
+                    child.isDraggable = false;
+                    child.isRotatable = false;
+                });
             }
             
             virtualLights.push(vLight);
-            xb.add(vLight.mesh); 
+            xb.add(vLight); 
+            console.log(`[Spawn] Added 3D Light '${label}' at ${vLight.position.x.toFixed(2)}, ${vLight.position.y.toFixed(2)}, ${vLight.position.z.toFixed(2)}`);
         } else {
             // --- 2D MODE ---
             const vLight = new VirtualLight2D(l, label);
@@ -1053,39 +1439,67 @@ class GestureSystem {
             // 1. Pinch Detection
             const pinchDist = indexTip.distanceTo(thumbTip);
             const isPinching = pinchDist < 0.02; // 2cm
+            const pinchCenter = new THREE.Vector3().addVectors(indexTip, thumbTip).multiplyScalar(0.5);
 
-            // Check against lights
-            for (const vl of virtualLights) {
-                // Distance from Hand Query Center (e.g. midpoint of pinch) to Light Object
-                const pinchCenter = new THREE.Vector3().addVectors(indexTip, thumbTip).multiplyScalar(0.5);
+            // A0. Check Keypad Interaction (Highest Priority)
+            if (keypad.visible && keypad.mesh) {
+                const keypadPos = new THREE.Vector3();
+                keypad.mesh.getWorldPosition(keypadPos);
                 
+                // Distance check (Assume 0.8x0.8 plane)
+                if (Math.abs(pinchCenter.z - keypadPos.z) < 0.1 && 
+                    Math.abs(pinchCenter.x - keypadPos.x) < 0.4 && 
+                    Math.abs(pinchCenter.y - keypadPos.y) < 0.4) {
+                    
+                    if (isPinching && !keypad.lastPinch) {
+                         const localX = pinchCenter.x - (keypadPos.x - 0.4); 
+                         const localY = pinchCenter.y - (keypadPos.y - 0.4);
+                         
+                         // Map to 0..1 (Width/Height is 0.8)
+                         const u = Math.max(0, Math.min(1, localX / 0.8));
+                         const v = Math.max(0, Math.min(1, localY / 0.8));
+                         
+                         keypad.handleClick({x: u, y: v});
+                    }
+                    keypad.lastPinch = isPinching;
+                    continue; 
+                }
+            }
+            
+            // Menu Interaction Removed (Direct Keypad used)
+
+            // B. Check against lights
+            for (const vl of virtualLights) {
                 // Get world position of light mesh
                 const lightPos = new THREE.Vector3();
                 vl.mesh.getWorldPosition(lightPos);
                 
+                // 1. Check Icon Hit (Pairing)
+                let iconHit = false;
+                if (vl.iconHitMesh) {
+                     const iconPos = new THREE.Vector3();
+                     vl.iconHitMesh.getWorldPosition(iconPos);
+                     if (pinchCenter.distanceTo(iconPos) < 0.15) { // 15cm radius around icon
+                          iconHit = true;
+                          if (isPinching && !vl.lastPinch) {
+                              console.log("Pinch Icon -> Configure");
+                              startAssignmentFlow(vl);
+                          }
+                     }
+                }
+                
+                if (iconHit) {
+                    vl.lastPinch = isPinching;
+                    continue; 
+                }
+
+                // 2. Check Main Mesh Hit (Toggle)
                 const distToLight = pinchCenter.distanceTo(lightPos);
                 
-                if (distToLight < 0.2) { // 20cm interaction radius
+                if (distToLight < 0.3) { // 30cm interaction radius (Box)
                     if (isPinching && !vl.lastPinch) {
                         // Pinch Start -> Toggle
                         vl.toggle();
-                    }
-                    
-                    // 2. Rotation (Brightness)
-                    if (isPinching) {
-                        // Use Hand Rotation (Wrist Roll)
-                        // If palm is facing Up vs Down? Or Twist?
-                        // "Rotating thumbs up / thumbs down"
-                        // Heuristic: Check angle of Thumb-Index vector relative to Horizon?
-                        // Or just hand.rotation.z
-                        
-                        // Simple: Twist wrist.
-                        // We need previous rotation to calculate delta.
-                        // Let's just use absolute orientation for "Thumbs Up" (Bright) vs "Thumbs Down" (Dim)?
-                        // Or continuous roll.
-                        
-                        // Let's try: Wrist roll.
-                        // Assuming hand.quaternion is valid.
                     }
                 }
                 vl.lastPinch = isPinching;
@@ -1098,6 +1512,7 @@ class GestureSystem {
 // xb.registerSystem(new GestureSystem()); // If XRBlocks has system registry
 // Or just hook into a global loop or behavior.
 // For simplicity, let's attach this logic to the VirtualLight behavior or a Global Manager Behavior.
+
 class GlobalManager extends xb.Script {
     onStart() {
         this.gestureSystem = new GestureSystem();
@@ -1115,7 +1530,7 @@ xb.add(new GlobalManager());
 const mouse = new THREE.Vector2();
 
 window.addEventListener('pointerdown', (event) => {
-    if (menu.visible) return;
+    // if (menu.visible) return; // REMOVED: menu is undefined
 
     // Aspect Ratio Correction for object-fit: cover
     const video = camera.videoElement;
@@ -1154,64 +1569,102 @@ window.addEventListener('pointerdown', (event) => {
             console.log("HUD Config Clicked:", l.label, vl);
             
             if (vl.realDevice) {
-                // UNPAIR FLOW
-                if (confirm(`Unpair from ${vl.realDevice.name || "Device"}?`)) {
-                    hud.speak("Unpairing device...");
-                    hud.log(`Unpairing ${vl.realDevice.id}...`, '#FFFF00');
-                    
-                    smartHome.unpairDevice(vl.realDevice.id).then(success => {
-                        if (success) {
-                            hud.speak("Device Unpaired.");
-                            hud.log("Unpaired & Removed.", '#00FF00');
-                            hud.log("Unpaired & Removed.", '#00FF00');
-                            
-                            // Reset State fully
-                            vl.realDevice = null;
-                            vl.linkedNodeId = null; // Important: Clear explicit link
-                            vl.isOn = false;        // Reset state so it doesn't think it's ON
-                            
-                            // Visuals: Back to Yellow (Unpaired)
-                            if (vl.mesh) {
-                                vl.mesh.material.color.setHex(0xFFFF00); 
-                                vl.mesh.material.emissive.setHex(0xFFFF00);
-                                vl.mesh.material.emissiveIntensity = 0.2; // Low glow
-                            }
-                            
-                            // 2D HUD Refresh
-                            if (hud && hud.drawLights) hud.drawLights(virtualLights);
-                            
-                            // Refresh logic to clear stale references
-                            setTimeout(refreshRealDevices, 500);
-                        } else {
-                            hud.speak("Unpair Failed.");
-                        }
-                    });
-                }
+                // --- UNPAIR FLOW ---
+                hud.speak("Unpairing device...");
+                hud.log(`Unpairing ${vl.realDevice.id}...`, '#FFFF00');
+                
+                smartHome.unpairDevice(vl.realDevice.id).then(success => {
+                    if (success) {
+                        hud.speak("Device Unpaired.");
+                        hud.log("Unpaired & Removed.", '#00FF00');
+                        
+                        // Reset State fully
+                        vl.realDevice = null;
+                        vl.linkedNodeId = null; 
+                        vl.isOn = false;        
+                        
+                        if (vl.updateVisuals) vl.updateVisuals();
+                        if (hud && hud.drawLights) hud.drawLights(virtualLights);
+                        setTimeout(refreshRealDevices, 500);
+                    } else {
+                        hud.speak("Unpair Failed.");
+                    }
+                });
             } else {
-                // PAIR FLOW
-                const code = prompt("Enter 11 or 21-digit Matter Pairing Code:");
-                if (code) {
-                    hud.speak("Pairing device...");
-                    hud.log("Pairing...", '#FFFF00');
-                    
-                    // Pass the Label from the Virtual Light (e.g. "Lamp") so server can use it
-                    smartHome.commissionDevice(code, vl.label).then(res => {
-                         if (res.success) {
-                            hud.speak("Success! Logic Pairing Complete.");
-                            hud.log("Paired!", '#00FF00');
-                            
-                            // EXPLICIT LINKING
-                            // Store the NodeID on this specific Virtual Light
-                            vl.linkedNodeId = res.nodeId;
-                            console.log(`[Pair] Explicitly linked ${vl.labelText} to Node ${res.nodeId}`);
-                            
-                            // Refresh immediately to link
-                            refreshRealDevices();
-                        } else {
-                            hud.speak("Pairing Failed. Check console.");
-                            hud.log("Error: " + (res.error?.message || "Unknown"), '#FF0000');
-                        }
-                    });
+                // --- PAIR FLOW ---
+                if (hud.mode === '3D') {
+                     // 3D MODE: Direct Keypad (No Menu)
+                     if (!keypad.visible) {
+                         // Initialize if needed
+                         if (!keypad.mesh) keypad.init(xb.scene);
+                         
+                         hud.speak("Enter Pairing Code.");
+                         
+                         // Position keypad near the light
+                         if (vl.mesh) {
+                             const lightPos = new THREE.Vector3();
+                             vl.mesh.getWorldPosition(lightPos);
+                             // Spawn closer: Midpoint between Light and Camera, slightly right
+                             // Lerp 30% towards camera? Or fixed offset?
+                             // User wants it "close to me". 
+                             // Let's spawn it 0.8m in front of the camera, regardless of light distance.
+                             // Or better: Light Pos + offset towards camera.
+                             
+                             const camPos = xb.camera.position.clone();
+                             const dir = new THREE.Vector3().subVectors(camPos, lightPos).normalize();
+                             
+                             // Position: 0.5m in front of Light towards camera, shifted right
+                             // keypad.group.position.copy(lightPos).add(dir.multiplyScalar(0.5)).add(new THREE.Vector3(0.3, 0, 0));
+                             
+                             // Simplest: Spawn 1m in front of user (HUD style) but angled?
+                             // No, keep context of light.
+                             // 0.4m Right of Light, 0.4m Toward Camera
+                             keypad.group.position.copy(lightPos).add(new THREE.Vector3(0.4, 0, 0.4));
+                             keypad.group.lookAt(xb.camera.position); 
+                         }
+
+                         keypad.open("", (code) => {
+                              if (code) {
+                                  hud.speak("Pairing device...");
+                                  hud.log("Pairing...", '#FFFF00');
+                                  
+                                  smartHome.commissionDevice(code, vl.label).then(res => {
+                                       if (res.success) {
+                                          hud.speak("Success! Paired and Linked.");
+                                          hud.log("Paired!", '#00FF00');
+                                          vl.linkedNodeId = res.nodeId;
+                                          refreshRealDevices();
+                                      } else {
+                                          hud.speak("Pairing Failed.");
+                                          hud.log("Error: " + (res.error?.message || "Unknown"), '#FF0000');
+                                      }
+                                  });
+                              } else {
+                                  hud.speak("Pairing cancelled.");
+                              }
+                         }, () => {
+                             hud.speak("Cancelled.");
+                         });
+                     }
+                } else {
+                    // 2D MODE: Prompt
+                    const code = prompt("Enter 11 or 21-digit Matter Pairing Code:");
+                    if (code) {
+                        hud.speak("Pairing device...");
+                        hud.log("Pairing...", '#FFFF00');
+                        
+                        smartHome.commissionDevice(code, vl.label).then(res => {
+                             if (res.success) {
+                                hud.speak("Success! Logic Pairing Complete.");
+                                hud.log("Paired!", '#00FF00');
+                                vl.linkedNodeId = res.nodeId;
+                                refreshRealDevices();
+                            } else {
+                                hud.speak("Pairing Failed.");
+                                hud.log("Error: " + (res.error?.message || "Unknown"), '#FF0000');
+                            }
+                        });
+                    }
                 }
             }
         }
