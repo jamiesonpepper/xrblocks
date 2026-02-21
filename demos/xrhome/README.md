@@ -38,25 +38,51 @@ The virtual boxes indicate the status of the device:
 
 ### 4. Interactions
 
-Use your XR Controller (Laser Pointer) to interact.
+You can interact with the detected smart lights differently depending on your platform.
 
 #### Pairing a Device
 
+**In Desktop (2D) Mode:**
+
 1.  Locate a **Yellow** box.
-2.  Point at the **Gear Icon (⚙️)** and click (Trigger).
-3.  A **Virtual Keypad** will appear.
+2.  Point at the **Gear Icon (⚙️)** and click.
+3.  A standard browser prompt will appear.
 4.  Enter the 11-digit Matter Pairing Code.
 5.  The system will commission the device (this may take 10-30 seconds).
 6.  Upon success, the box turns **Green/White** and the icon changes to an **X**.
 
+**In Immersive AR (3D) Mode:**
+
+1. Locate a Spatial Panel with **Yellow** text indicating an unpaired light.
+2. Use your XR controller to point and click the **"ADD DEVICE"** button/text.
+3. A **Virtual Keypad** will spawn in 3D space.
+4. Use your controller to enter in the Matter Pairing Code on the virtual buttons.
+5. Click **"OK"** to submit and commission the device (this may take 10-30 seconds).
+
 #### Controlling a Light
 
-- **Toggle On/Off**: Point at the **Main Box** (not the icon) and click/pinch. The box color will toggle between White and Green.
+**In Desktop (2D) Mode:**
+
+- **Toggle On/Off**: Point at the **Main Box** (not the icon) and click. The box color will toggle between White and Green.
+
+**In Immersive AR (3D) Mode:**
+
+1. Locate a paired spatial panel (indicated by White or Green text).
+2. Point at the **"TURN ON"** or **"TURN OFF"** (Grey) button/text with your XR controller and click/trigger.
+3. The physical light state will update, and the panel text will toggle between White (ON) and Green (OFF).
 
 #### Unpairing
 
+**In Desktop (2D) Mode:**
+
 1.  Point at the **Red X Icon** on a paired device.
 2.  Click to unpair. The box returns to **Yellow**.
+
+**In Immersive AR (3D) Mode:**
+
+1. Locate a paired spatial panel.
+2. Point at the **"UNPAIR"** (Red) button with your XR controller and click/trigger.
+3. The device will be removed from the local Matter fabric, and the text label will return to the Yellow state.
 
 ## Technical Setup (Developers)
 

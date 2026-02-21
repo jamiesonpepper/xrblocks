@@ -44,16 +44,25 @@ export class CameraManager {
         }
     }
 
-    captureFrame(canvasElement) {
-        if (!this.stream || !this.videoElement) return null;
+    async captureFrame(canvasElement) {
+        if (!this.stream) return null;
 
         const ctx = canvasElement.getContext('2d');
-        // Downscale to 640px width for bandwidth efficiency / API preferred size
-        const scale = 640 / this.videoElement.videoWidth;
-        canvasElement.width = 640;
-        canvasElement.height = this.videoElement.videoHeight * scale;
-        
-        ctx.drawImage(this.videoElement, 0, 0, canvasElement.width, canvasElement.height);
+        let width = 640;
+        let height = 480;
+
+        if (this.videoElement && this.videoElement.readyState >= 2) {
+            // We ONLY use Video Element fallback for 2D Desktop compatibility
+            const scale = 640 / this.videoElement.videoWidth;
+            width = 640;
+            height = this.videoElement.videoHeight * scale;
+            
+            canvasElement.width = width;
+            canvasElement.height = height;
+            ctx.drawImage(this.videoElement, 0, 0, canvasElement.width, canvasElement.height);
+        } else {
+            return null;
+        }
         
         // Return Blob for API upload
         return new Promise(resolve => {

@@ -462,9 +462,10 @@ class VirtualLight3D extends THREE.Group {
           const btn = rowBtn.addTextButton({ 
               text: 'ADD DEVICE',  
               fontSize: 0.20,
+              mode: 'center', // Fix jumping text
               backgroundColor: '#00AA00', 
               fontColor: '#FFFFFF',
-              hoverColor: '#FFFFFF', // Prevent dark hover
+              hoverColor: '#CCCCCC', // Light grey on hover
               selectedFontColor: '#FFFFFF',
               borderRadius: 0.05
           });
@@ -475,9 +476,10 @@ class VirtualLight3D extends THREE.Group {
           const toggleBtn = rowBtn.addCol({weight: 0.5}).addTextButton({
               text: isOn ? "TURN OFF" : "TURN ON",
               fontSize: 0.20,
+              mode: 'center', // Fix jumping text
               backgroundColor: '#333333', // Uniform button color
               fontColor: '#FFFFFF', // Always white to be readable
-              hoverColor: '#FFFFFF', // Prevent dark hover
+              hoverColor: '#CCCCCC', // Light grey on hover
               selectedFontColor: '#FFFFFF',
               borderRadius: 0.05
           });
@@ -486,9 +488,10 @@ class VirtualLight3D extends THREE.Group {
           const unpairBtn = rowBtn.addCol({weight: 0.5}).addTextButton({ 
               text: 'UNPAIR', 
               fontSize: 0.20,
+              mode: 'center', // Fix jumping text
               backgroundColor: '#CC0000', 
               fontColor: '#FFFFFF',
-              hoverColor: '#FFFFFF', // Prevent dark hover
+              hoverColor: '#CCCCCC', // Light grey on hover
               selectedFontColor: '#FFFFFF',
               borderRadius: 0.05
           });
@@ -535,8 +538,19 @@ class VirtualLight3D extends THREE.Group {
                  vl.getWorldPosition(lightPos);
                  keypad.group.position.copy(lightPos).add(new THREE.Vector3(0.6, 0, 0.5));
                  
-                 let cam = xb.camera || (xb.renderer && xb.renderer.xr ? xb.renderer.xr.getCamera() : null);
-                 if (cam) keypad.group.lookAt(cam.position); 
+                 let cam = xb.camera;
+                 if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                     cam = xb.renderer.xr.getCamera();
+                 }
+                 
+                 if (cam) {
+                     const camPos = new THREE.Vector3();
+                     cam.getWorldPosition(camPos);
+                     keypad.group.lookAt(camPos);
+                     
+                     // Console log for debugging the exact coordinates
+                     console.log(`[Keypad Debug] Spawning at ${keypad.group.position.toArray().map(n=>Math.round(n*100)/100).join(',')}, looking at camera at ${camPos.toArray().map(n=>Math.round(n*100)/100).join(',')}`);
+                 }
 
                  keypad.open("", (code) => {
                       if (code) {
@@ -787,55 +801,92 @@ function startVisionLoop() {
     // Fast Capture Loop
     let isCapturing = false;
 
+    // --- XR 3D CAPTURE LOOP ---
+    // Fast capture to freeze camera matrix for precise 3D placement
     setInterval(async () => {
-        if (!isScanning) return;
+        if (!isScanning || hud.mode === '2D') return;
         if (isCapturing) return; // SKIP if previous capture is still running
         
         isCapturing = true;
-        
         const canvas = document.getElementById('process-canvas');
         
         try {
-            // Reverted: Use Auto-Detect Logic in CameraManager (ImageCapture if available)
-            const blob = await camera.captureFrame(canvas); 
+            let blob = null;
+            
+            try {
+                const app = xb.core;
+                if (app && app.screenshotSynthesizer) {
+                    if (!app.deviceCamera || !app.deviceCamera.loaded) {
+                         // console.log("[FastLoop] Waiting for deviceCamera to finish loading...");
+                    } else {
+                        // Attempting XR native screenshot. Note: The background may be frozen if the browser paused the getUserMedia video track.
+                        // However, on many browsers (like Chrome Android), `deviceCamera.texture` still receives frames naturally.
+                        const dataUri = await app.screenshotSynthesizer.getScreenshot(true);
+                        if (dataUri && dataUri.length > 50) { // Check that it's not a tiny empty base64
+                            const res = await fetch(dataUri);
+                            blob = await res.blob();
+                        }
+                    } 
+                }
+            } catch (xrError) {
+                console.warn("[FastLoop] XR Screenshot Synthesizer failed:", xrError);
+            }
+            
+            // Fallback just in case, though the 2D loop handles non-XR normally
+            if (!blob && camera.videoElement && camera.videoElement.readyState >= 2) {
+                 blob = await camera.captureFrame(canvas, false); 
+            }
             
             if (blob) {
                 latestFrameBlob = blob;
-                // Debug: Log frame capture
-                // console.log(`[FastLoop] Captured Frame: ${blob.size} bytes at ${Date.now()}`);
                 
-                // Capture Camera Matrix at exact moment of frame grab
                 let cam = null;
                 if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
                      cam = xb.renderer.xr.getCamera();
                 } else {
-                     cam = xb.camera;
+                     try { cam = xb.core?.camera || xb.camera; } catch(e) {}
                 }
                 
                 if (cam) {
+                    cam.updateMatrixWorld(true);
                     latestCameraMatrix = cam.matrixWorld.clone();
                 }
-            } else {
-                // console.warn("[FastLoop] No Frame Captured");
             }
         } catch (e) {
             console.warn("Fast Capture Loop Error:", e);
         } finally {
-            isCapturing = false; // RELEASE lock
+            isCapturing = false;
         }
-    }, 300); // 300ms Interval (Staggered > 250ms Timeout) to prevent conflict
+    }, 300);
 
-    // Slow Analysis Loop
+    // --- XR 3D ANALYSIS LOOP ---
     setInterval(() => {
-        if (!isScanning) return;
+        if (!isScanning || hud.mode === '2D') return;
         
-        if (latestFrameBlob) {
-            console.log("Scanning (using latest frame)..."); 
-            vision.analyzeFrame(latestFrameBlob, latestCameraMatrix);
+        if (latestFrameBlob && latestCameraMatrix) {
+            console.log("Scanning 3D (using latest frame & matrix)..."); 
+            const matrixToPass = latestCameraMatrix.clone();
+            vision.analyzeFrame(latestFrameBlob, matrixToPass);
+            
             latestFrameBlob = null; 
-            latestCameraMatrix = null;
         }
-    }, 5000); // 5s Interval
+    }, 5000);
+
+    // --- 2D DESKTOP CAPTURE & ANALYSIS LOOP ---
+    // Matches exact behavior of commit 3d289675a
+    setInterval(async () => {
+        if (!isScanning || hud.mode !== '2D') return;
+        
+        const canvas = document.getElementById('process-canvas');
+        if (!camera.videoElement || camera.videoElement.readyState < 2) return;
+        
+        const blob = await camera.captureFrame(canvas, false); 
+        if (blob) {
+            console.log("Scanning 2D...");
+            hud.log("Scanning...", '#888888');
+            vision.analyzeFrame(blob);
+        }
+    }, 5000);
 
     // Manual Trigger Setup
     const scanBtn = document.getElementById('scan-now-btn');
@@ -895,10 +946,20 @@ async function toggleScan() {
         latestCameraMatrix = null;
         
         try {
-            const canvas = document.getElementById('process-canvas');
-            // Force a capture to clear any buffered frame in ImageCapture
-            // Wait for it to complete
-            await camera.captureFrame(canvas); 
+            if (hud.mode !== '2D') {
+                // Pre-warm / Flush XR Synthesizer
+                const app = xb.core;
+                if (app && app.screenshotSynthesizer) {
+                    if (app.deviceCamera && app.deviceCamera.loaded) {
+                         console.log("Flushing XR Screenshot Synthesizer...");
+                         await app.screenshotSynthesizer.getScreenshot(true);
+                         console.log("XR Screenshot Synthesizer Flushed.");
+                    }
+                }
+            } else {
+                const canvas = document.getElementById('process-canvas');
+                await camera.captureFrame(canvas, false); 
+            }
             console.log("Camera Flushed. ready to start.");
         } catch(e) {
             console.warn("Camera Flush failed", e);
@@ -1615,23 +1676,23 @@ window.addEventListener('pointerdown', (event) => {
                          if (vl.mesh) {
                              const lightPos = new THREE.Vector3();
                              vl.mesh.getWorldPosition(lightPos);
-                             // Spawn closer: Midpoint between Light and Camera, slightly right
-                             // Lerp 30% towards camera? Or fixed offset?
-                             // User wants it "close to me". 
-                             // Let's spawn it 0.8m in front of the camera, regardless of light distance.
-                             // Or better: Light Pos + offset towards camera.
                              
-                             const camPos = xb.camera.position.clone();
+                             const camPos = new THREE.Vector3();
+                             let cam = xb.camera;
+                             if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                                 cam = xb.renderer.xr.getCamera();
+                             }
+                             cam.getWorldPosition(camPos);
+                             
+                             // Spawn 0.4m right, 0.4m towards camera
                              const dir = new THREE.Vector3().subVectors(camPos, lightPos).normalize();
+                             dir.y = 0; // Keep horizontal offset
+                             keypad.group.position.copy(lightPos).add(dir.multiplyScalar(0.4)).add(new THREE.Vector3(0.4, 0, 0));
                              
-                             // Position: 0.5m in front of Light towards camera, shifted right
-                             // keypad.group.position.copy(lightPos).add(dir.multiplyScalar(0.5)).add(new THREE.Vector3(0.3, 0, 0));
+                             // Face the user's headset perfectly
+                             keypad.group.lookAt(camPos); 
                              
-                             // Simplest: Spawn 1m in front of user (HUD style) but angled?
-                             // No, keep context of light.
-                             // 0.4m Right of Light, 0.4m Toward Camera
-                             keypad.group.position.copy(lightPos).add(new THREE.Vector3(0.4, 0, 0.4));
-                             keypad.group.lookAt(xb.camera.position); 
+                             console.log(`[Keypad Legacy] Spawned at ${keypad.group.position.toArray().map(n=>n.toFixed(2))} facing headset at ${camPos.toArray().map(n=>n.toFixed(2))}`);
                          }
 
                          keypad.open("", (code) => {
