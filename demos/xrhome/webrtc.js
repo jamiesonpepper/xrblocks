@@ -7,7 +7,6 @@ export class CameraManager {
     constructor(videoElementId) {
         this.videoElement = document.getElementById(videoElementId);
         this.stream = null;
-        this.imageCapture = null; // New: ImageCapture API support
         this.audioContext = null;
         this.processor = null;
         this.source = null;
@@ -17,6 +16,10 @@ export class CameraManager {
     async startCamera() {
         try {
             // Request camera (back facing if available, else user)
+            // Ideally 'environment' for AR, but 'user' for "Front Facing" as requested?
+            // "front facing camera(s) in an XR headset" usually means the world-facing cameras.
+            // On a phone, that's 'environment'. On a laptop, it's 'user'.
+            // Let's try 'environment' first, fall back to 'user'.
             const constraints = {
                 video: {
                     facingMode: 'environment', // prioritized
@@ -29,16 +32,9 @@ export class CameraManager {
             this.stream = await navigator.mediaDevices.getUserMedia(constraints);
             this.videoElement.srcObject = this.stream;
             
-            // Setup ImageCapture for robust frame grabbing (works even if video paused in XR)
-            const track = this.stream.getVideoTracks()[0];
-            if (track && window.ImageCapture) {
-                this.imageCapture = new ImageCapture(track);
-                console.log("CameraManager: ImageCapture API initialized.");
-            }
-            
             return new Promise((resolve) => {
                 this.videoElement.onloadedmetadata = () => {
-                    this.videoElement.play(); // Play for 2D/Debug visibility
+                    this.videoElement.play(); // Explicitly play to ensure frames are rendering
                     resolve();
                 };
             });
@@ -47,58 +43,17 @@ export class CameraManager {
             throw e;
         }
     }
-    async captureFrame(canvasElement) {
-        let bitmap = null;
-        
-        // Method 1: ImageCapture (Preferred for XR/Background)
-        // Check availability automatically
-        if (this.imageCapture) {
-            try {
-                // Timeout set to 250ms, interleaved with main loop (300ms) to allow cooldown
-                const grabPromise = this.imageCapture.grabFrame();
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 250));
-                
-                bitmap = await Promise.race([grabPromise, timeoutPromise]);
-                // console.log("[Cam] ImageCapture Success");
-            } catch (e) {
-                 const msg = e ? (e.message || e) : "Unknown Error";
-                 console.warn(`[Cam] ImageCapture Failed/Timeout: ${msg}`);
-                 // Fallback to Video Element below
-            }
-        }
+
+    captureFrame(canvasElement) {
+        if (!this.stream || !this.videoElement) return null;
 
         const ctx = canvasElement.getContext('2d');
-        let source = bitmap;
-        let originalWidth = bitmap ? bitmap.width : 0;
-        let originalHeight = bitmap ? bitmap.height : 0;
-
-        // Method 2: Fallback to Video Element
-        if (!source) {
-            if (!this.stream || !this.videoElement) return null;
-            
-            const vid = this.videoElement;
-
-            // Simple check: Is video ready?
-            if (vid.readyState < 2) return null;
-            
-            // NOTE: We don't force .play() here anymore to avoid conflicts with XR Session
-            source = vid;
-            originalWidth = vid.videoWidth;
-            originalHeight = vid.videoHeight;
-        }
-
-        if (!originalWidth) return null;
-
-        // Up-scale to 1024px width for better detection
-        const targetWidth = 1024;
-        const scale = targetWidth / originalWidth;
+        // Downscale to 640px width for bandwidth efficiency / API preferred size
+        const scale = 640 / this.videoElement.videoWidth;
+        canvasElement.width = 640;
+        canvasElement.height = this.videoElement.videoHeight * scale;
         
-        canvasElement.width = targetWidth;
-        canvasElement.height = originalHeight * scale;
-        
-        // Clear before draw
-        ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        ctx.drawImage(source, 0, 0, canvasElement.width, canvasElement.height);
+        ctx.drawImage(this.videoElement, 0, 0, canvasElement.width, canvasElement.height);
         
         // Return Blob for API upload
         return new Promise(resolve => {
