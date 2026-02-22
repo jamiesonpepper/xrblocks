@@ -60,22 +60,14 @@ export class VirtualKeypad {
         // FIX: Use addGrid() like HUD
         const grid = this.panel.addGrid();
         
-        // ROW 0: Header & Close
+        // ROW 0: Header
         const headerRow = grid.addRow({ weight: 0.15 });
         headerRow.addText({
             text: "ENTER CODE",
             fontSize: 0.08, // Reduced size
             fontColor: '#aaaaaa',
-            textAlign: 'left'
+            textAlign: 'center'
         });
-        const closeBtn = headerRow.addCol({ weight: 0.3 }).addTextButton({
-            text: "X",
-            fontSize: 0.12,
-            backgroundColor: '#cc0000',
-            fontColor: '#ffffff',
-            borderRadius: 0.05
-        });
-        closeBtn.onTriggered = () => this.cancel();
 
         // ROW 1: Display
         const displayRow = grid.addRow({ weight: 0.15 });

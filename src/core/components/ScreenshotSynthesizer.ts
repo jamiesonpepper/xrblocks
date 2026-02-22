@@ -212,24 +212,12 @@ export class ScreenshotSynthesizer {
     const renderTarget = this.virtualRealRenderTarget;
     renderer.setRenderTarget(renderTarget);
     const xrIsPresenting = renderer.xr.isPresenting;
-    
-    // If we are in WebXR AR, the browser's compositor merges the camera stream and the WebGL scene.
-    // The deviceCamera.texture (from getUserMedia) is likely frozen. 
-    // We can try to just render the scene normally and then grab the canvas pixels 
-    // (though WebXR sometimes makes the base canvas opaque black, it's worth trying).
-    if (xrIsPresenting) {
-        // Just render the scene as usual to the current render target (or screen)
-        renderSceneFn();
-    } else {
-        // Fallback for non-XR or simulator: compose manually using the video texture
-        renderer.xr.isPresenting = false;
-        const quad = this.getFullScreenQuad();
-        (quad.material as THREE.MeshBasicMaterial).map = deviceCamera.texture;
-        quad.render(renderer);
-        renderSceneFn();
-        renderer.xr.isPresenting = xrIsPresenting;
-    }
-    
+    renderer.xr.isPresenting = false;
+    const quad = this.getFullScreenQuad();
+    (quad.material as THREE.MeshBasicMaterial).map = deviceCamera.texture;
+    quad.render(renderer);
+    renderSceneFn();
+    renderer.xr.isPresenting = xrIsPresenting;
     renderer.setRenderTarget(mainRenderTarget);
 
     if (

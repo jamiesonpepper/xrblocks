@@ -475,7 +475,7 @@ class VirtualLight3D extends THREE.Group {
           // --- PAIRED UI ---
           const toggleBtn = rowBtn.addCol({weight: 0.5}).addTextButton({
               text: isOn ? "TURN OFF" : "TURN ON",
-              fontSize: 0.20,
+              fontSize: 0.12, // Reduced to fit inside half-column
               mode: 'center', // Fix jumping text
               backgroundColor: '#333333', // Uniform button color
               fontColor: '#FFFFFF', // Always white to be readable
@@ -487,7 +487,7 @@ class VirtualLight3D extends THREE.Group {
 
           const unpairBtn = rowBtn.addCol({weight: 0.5}).addTextButton({ 
               text: 'UNPAIR', 
-              fontSize: 0.20,
+              fontSize: 0.12, // Reduced to fit inside half-column
               mode: 'center', // Fix jumping text
               backgroundColor: '#CC0000', 
               fontColor: '#FFFFFF',
@@ -683,8 +683,6 @@ async function initApp() {
         }
     }
     
-    // (Removed experimental raw camera access as SDK was reverted)
-    
     o.physics.RAPIER = RAPIER;
     o.physics.useEventQueue = true;
     o.physics.worldStep = true;
@@ -714,8 +712,7 @@ async function initApp() {
         }
     }
     
-    // 6. Init HUD
-    // 6. Init HUD
+    // 5. Init HUD
     if (!isARSupported) {
         // Desktop: 2D Overlay
         // Ensure HUD handles string mode correctly
@@ -746,17 +743,14 @@ async function initApp() {
                 hud.init(parent, '3D');
                 console.log("HUD: 3D Plane Attached to Scene/Camera");
                 
-                console.log("HUD: 3D Plane Attached to Scene/Camera");
-                
-                // 6b. Keypad Init only on demand
-                // menu.init(xb.scene || parent); // REMOVED
+                // Keypad Init only occurs on demand later in startAssignmentFlow
              } else {
                 console.warn("Could not find Camera or Scene for 3D HUD");
              }
         }, 500);
     }
     
-    // 7. Init Vision
+    // 6. Init Vision Loop
     vision.init(auth.config.geminiKey);
     startVisionLoop();
 }
@@ -916,6 +910,9 @@ function startVisionLoop() {
     setupVoiceCommand();
 }
 
+// Keep-alive reference for AR Video frames
+let hiddenCameraKeepalive = null;
+
 // Re-entry Guard
 let isToggling = false;
 
@@ -935,22 +932,28 @@ async function toggleScan() {
         latestFrameBlob = null;
         latestCameraMatrix = null;
         
-        try {
-            if (hud.mode !== '2D') {
-                // Pre-warm / Flush camera
-                const app = xb.core;
-                if (app && app.deviceCamera && app.deviceCamera.loaded) {
-                     console.log("Flushing deviceCamera...");
-                     await app.deviceCamera.getSnapshot({ outputFormat: 'blob' });
-                     console.log("deviceCamera Flushed.");
+        // 1b. Lifecycle: Inject hidden VideoView to force WebGL to poll AR frames
+        if (hud.mode !== '2D') {
+            const app = xb.core;
+            if (app && app.deviceCamera && app.deviceCamera.loaded) {
+                if (!hiddenCameraKeepalive) {
+                    hiddenCameraKeepalive = new xb.VideoView();
+                    hiddenCameraKeepalive.visible = true;
+                    hiddenCameraKeepalive.scale.set(0.001, 0.001, 0.001);
+                    hiddenCameraKeepalive.frustumCulled = false;
+                    hiddenCameraKeepalive.load(app.deviceCamera);
+                    xb.add(hiddenCameraKeepalive);
+                    console.log("[Scan] Injected VideoView Keep-alive.");
                 }
-            } else {
-                const canvas = document.getElementById('process-canvas');
-                await camera.captureFrame(canvas, false); 
+                
+                // Flush once the stream is active
+                console.log("Flushing deviceCamera...");
+                await app.deviceCamera.getSnapshot({ outputFormat: 'blob' });
+                console.log("deviceCamera Flushed.");
             }
-            console.log("Camera Flushed. ready to start.");
-        } catch(e) {
-            console.warn("Camera Flush failed", e);
+        } else {
+            const canvas = document.getElementById('process-canvas');
+            await camera.captureFrame(canvas, false); 
         }
 
         // 2. Enable Scanning (Now safe)
@@ -965,9 +968,16 @@ async function toggleScan() {
         // --- STOPPING SCAN ---
         isScanning = false;
         
-        // Update UI
+        // 3. Clean up Keep-alive
+        if (hiddenCameraKeepalive) {
+             xb.remove(hiddenCameraKeepalive);
+             hiddenCameraKeepalive.destroy();
+             hiddenCameraKeepalive = null;
+             console.log("[Scan] Removed VideoView Keep-alive.");
+        }
+        
+        // 4. Update UI
         if (hud && hud.setScanState) hud.setScanState(false);
-        hud.speak("Scanning paused. Configure lights.");
         hud.speak("Scanning paused. Configure lights.");
         hud.log("Scanning Paused", '#FFFF00');
     }
