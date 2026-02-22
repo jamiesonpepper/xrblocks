@@ -31,6 +31,9 @@ export class VisionManager {
             // Convert Blob to Base64
             const base64Data = await this.blobToBase64(imageBlob);
             console.log(`[Vision] Encoded Frame Size: ${base64Data.length} chars (~${Math.round(base64Data.length/1024)} KB)`);
+            console.log('[Vision] RAW_BASE64_IMAGE_START');
+            console.log(base64Data);
+            console.log('[Vision] RAW_BASE64_IMAGE_END');
 
             // Switching to Gemini 2.0 Flash (Stable)
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`;

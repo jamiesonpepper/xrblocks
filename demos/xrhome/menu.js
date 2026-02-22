@@ -8,7 +8,8 @@ import * as xb from 'xrblocks';
  */
 export class VirtualKeypad {
     constructor() {
-        this.group = new THREE.Group();
+        // We no longer use a wrapper THREE.Group. We use SpatialPanel directly as the root.
+        this.group = null; 
         this.panel = null;
         this.value = "";
         this.onEnter = null; // Callback(code)
@@ -51,9 +52,8 @@ export class VirtualKeypad {
             }
         });
 
-        // Add to local group
-        // FIX: Add the PANEL itself (Group), not just the mesh, to include edges!
-        this.group.add(this.panel);
+        // The panel is the root group. This fixes DragManager math!
+        this.group = this.panel;
         this.group.visible = false;
 
         // --- Build UI ---
@@ -95,7 +95,8 @@ export class VirtualKeypad {
             ['1', '2', '3'],
             ['4', '5', '6'],
             ['7', '8', '9'],
-            ['DEL', '0', 'OK']
+            ['DEL', '0', 'OK'],
+            ['CANCEL'] // Added explicit cancel mechanism
         ];
         
         // Create sub-rows for buttons
@@ -110,6 +111,8 @@ export class VirtualKeypad {
                     bgColor = '#00aa00';
                 } else if (char === 'DEL') {
                     bgColor = '#aa0000';
+                } else if (char === 'CANCEL') {
+                    bgColor = '#cc0000';
                 }
                 
                 const col = btnRow.addCol({ weight: 1.0 / rowChars.length });
@@ -158,6 +161,8 @@ export class VirtualKeypad {
         if (char === 'OK') {
             if (this.onEnter) this.onEnter(this.value);
             this.close();
+        } else if (char === 'CANCEL') {
+            this.cancel();
         } else if (char === 'DEL') {
             this.value = this.value.slice(0, -1);
             this.updateDisplay();

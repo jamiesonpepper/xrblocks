@@ -547,6 +547,7 @@ class VirtualLight3D extends THREE.Group {
                      const camPos = new THREE.Vector3();
                      cam.getWorldPosition(camPos);
                      keypad.group.lookAt(camPos);
+                     keypad.group.rotateY(Math.PI); // Flipped so +Z faces camera, matching DragManager's turnToFaceCamera logic natively.
                      
                      // Console log for debugging the exact coordinates
                      console.log(`[Keypad Debug] Spawning at ${keypad.group.position.toArray().map(n=>Math.round(n*100)/100).join(',')}, looking at camera at ${camPos.toArray().map(n=>Math.round(n*100)/100).join(',')}`);
@@ -680,10 +681,9 @@ async function initApp() {
             const gl = o.canvas.getContext('webgl2', { alpha: true, antialias: true }) 
                     || o.canvas.getContext('webgl', { alpha: true, antialias: true });
         }
-        
-        // Ensure CSS transparency
-        o.canvas.style.background = 'transparent';
     }
+    
+    // (Removed experimental raw camera access as SDK was reverted)
     
     o.physics.RAPIER = RAPIER;
     o.physics.useEventQueue = true;
@@ -815,21 +815,11 @@ function startVisionLoop() {
             
             try {
                 const app = xb.core;
-                if (app && app.screenshotSynthesizer) {
-                    if (!app.deviceCamera || !app.deviceCamera.loaded) {
-                         // console.log("[FastLoop] Waiting for deviceCamera to finish loading...");
-                    } else {
-                        // Attempting XR native screenshot. Note: The background may be frozen if the browser paused the getUserMedia video track.
-                        // However, on many browsers (like Chrome Android), `deviceCamera.texture` still receives frames naturally.
-                        const dataUri = await app.screenshotSynthesizer.getScreenshot(true);
-                        if (dataUri && dataUri.length > 50) { // Check that it's not a tiny empty base64
-                            const res = await fetch(dataUri);
-                            blob = await res.blob();
-                        }
-                    } 
+                if (app && app.deviceCamera && app.deviceCamera.loaded) {
+                    blob = await app.deviceCamera.getSnapshot({ outputFormat: 'blob' });
                 }
-            } catch (xrError) {
-                console.warn("[FastLoop] XR Screenshot Synthesizer failed:", xrError);
+            } catch (err) {
+                console.warn("[FastLoop] deviceCamera.getSnapshot failed:", err);
             }
             
             // Fallback just in case, though the 2D loop handles non-XR normally
@@ -947,14 +937,12 @@ async function toggleScan() {
         
         try {
             if (hud.mode !== '2D') {
-                // Pre-warm / Flush XR Synthesizer
+                // Pre-warm / Flush camera
                 const app = xb.core;
-                if (app && app.screenshotSynthesizer) {
-                    if (app.deviceCamera && app.deviceCamera.loaded) {
-                         console.log("Flushing XR Screenshot Synthesizer...");
-                         await app.screenshotSynthesizer.getScreenshot(true);
-                         console.log("XR Screenshot Synthesizer Flushed.");
-                    }
+                if (app && app.deviceCamera && app.deviceCamera.loaded) {
+                     console.log("Flushing deviceCamera...");
+                     await app.deviceCamera.getSnapshot({ outputFormat: 'blob' });
+                     console.log("deviceCamera Flushed.");
                 }
             } else {
                 const canvas = document.getElementById('process-canvas');
@@ -1691,6 +1679,7 @@ window.addEventListener('pointerdown', (event) => {
                              
                              // Face the user's headset perfectly
                              keypad.group.lookAt(camPos); 
+                             keypad.group.rotateY(Math.PI); // Flipped so +Z faces camera natively.
                              
                              console.log(`[Keypad Legacy] Spawned at ${keypad.group.position.toArray().map(n=>n.toFixed(2))} facing headset at ${camPos.toArray().map(n=>n.toFixed(2))}`);
                          }
