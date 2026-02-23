@@ -146,6 +146,7 @@ export class TextView extends View<TextViewEventMap> {
   /** The total number of lines after text wrapping. */
   lineCount = 0;
 
+  private _onSyncCompleteBound = this.onSyncComplete.bind(this);
   private _initializeTextCalled = false;
   private _text = 'TextView';
   set text(text) {
@@ -372,7 +373,7 @@ export class TextView extends View<TextViewEventMap> {
       this.textObj.addEventListener(
         // @ts-expect-error Missing type in Troika
         'synccomplete',
-        this.onSyncComplete.bind(this)
+        this._onSyncCompleteBound
       );
 
       if (this.imageOverlay) {
@@ -413,7 +414,7 @@ export class TextView extends View<TextViewEventMap> {
       this.textObj.removeEventListener(
         // @ts-expect-error Missing type in Troika
         'synccomplete',
-        this.onSyncComplete.bind(this)
+        this._onSyncCompleteBound
       );
     }
     super.dispose();
