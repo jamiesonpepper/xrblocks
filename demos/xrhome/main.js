@@ -379,6 +379,8 @@ class VirtualLight3D extends THREE.Group {
       this.add(this.hitMesh);
       
       // 3. Label + Interface (Spatial Panel)
+      this.panelWidth = width;
+      this.panelHeight = height;
       this.panel = new xb.SpatialPanel({
           width: width, 
           height: height, 
@@ -413,12 +415,23 @@ class VirtualLight3D extends THREE.Group {
   }
   
   rebuildPanel() {
-      if (!this.panel) return;
-      
-      if (!this.mainGrid) {
-           this.mainGrid = this.panel.addGrid();
+      // Recreate SpatialPanel completely to prevent layout bounding box accumulation bugs
+      if (this.panel) {
+           this.remove(this.panel);
       }
-      this.mainGrid.clear(); 
+      
+      this.panel = new xb.SpatialPanel({
+          width: this.panelWidth,
+          height: this.panelHeight,
+          backgroundColor: '#00000033', // Black with 20% opacity
+          draggable: false,             // Disables XRBlocks native dragging
+      });
+      
+      // Positioned below the box
+      this.panel.position.set(0, -this.panelHeight/2 - 0.25, 0);
+      this.add(this.panel);
+      
+      this.mainGrid = this.panel.addGrid();
 
       // Locked Interaction
       this.panel.isInteractive = true;
@@ -459,41 +472,32 @@ class VirtualLight3D extends THREE.Group {
       
       if (!isPaired) {
           // --- UNPAIRED UI ---
-          const btn = rowBtn.addTextButton({ 
-              text: 'ADD DEVICE',  
+          const btn = rowBtn.addIconButton({ 
+              text: 'add_circle',  
               fontSize: 0.20,
-              mode: 'center', // Fix jumping text
+              mode: 'center', 
               backgroundColor: '#00AA00', 
-              fontColor: '#FFFFFF',
-              hoverColor: '#CCCCCC', // Light grey on hover
-              selectedFontColor: '#FFFFFF',
-              borderRadius: 0.05
+              fontColor: '#FFFFFF'
           });
           btn.onTriggered = () => this.handleConfigClick();
           
       } else {
           // --- PAIRED UI ---
-          const toggleBtn = rowBtn.addCol({weight: 0.5}).addTextButton({
-              text: isOn ? "TURN OFF" : "TURN ON",
-              fontSize: 0.12, // Reduced to fit inside half-column
-              mode: 'center', // Fix jumping text
-              backgroundColor: '#333333', // Uniform button color
-              fontColor: '#FFFFFF', // Always white to be readable
-              hoverColor: '#CCCCCC', // Light grey on hover
-              selectedFontColor: '#FFFFFF',
-              borderRadius: 0.05
+          const toggleBtn = rowBtn.addCol({weight: 0.5}).addIconButton({
+              text: 'power_settings_new',
+              fontSize: 0.20, // Icon size
+              mode: 'center', 
+              backgroundColor: isOn ? '#FFFFFF' : '#333333', 
+              fontColor: isOn ? '#333333' : '#FFFFFF' 
           });
           toggleBtn.onTriggered = () => this.toggle();
 
-          const unpairBtn = rowBtn.addCol({weight: 0.5}).addTextButton({ 
-              text: 'UNPAIR', 
-              fontSize: 0.12, // Reduced to fit inside half-column
-              mode: 'center', // Fix jumping text
+          const unpairBtn = rowBtn.addCol({weight: 0.5}).addIconButton({ 
+              text: 'link_off', 
+              fontSize: 0.20, 
+              mode: 'center', 
               backgroundColor: '#CC0000', 
-              fontColor: '#FFFFFF',
-              hoverColor: '#CCCCCC', // Light grey on hover
-              selectedFontColor: '#FFFFFF',
-              borderRadius: 0.05
+              fontColor: '#FFFFFF'
           });
           unpairBtn.onTriggered = () => this.handleConfigClick();
       }
@@ -1471,6 +1475,7 @@ async function spawnVirtualLights(lights, cameraMatrix) {
  }
 
 
+// --- Global Helpers ---
 function createPassthrough() {
     // In WebXR AR, the browser handles passthrough naturally.
     // Creating a plane with the webcam feed (videoTex) often shows the "User Facing" camera 

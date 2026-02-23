@@ -108,15 +108,30 @@ export class VirtualKeypad {
                 }
                 
                 const col = btnRow.addCol({ weight: 1.0 / rowChars.length });
-                const btn = col.addTextButton({
-                    text: char,
-                    fontSize: 0.28, // Increased by 25% from 0.225
-                    backgroundColor: bgColor,
-                    fontColor: fgColor,
-                    borderRadius: 0.05
-                });
-                
-                btn.onTriggered = () => this.handleInput(char);
+                if (char === 'OK' || char === 'DEL' || char === 'CANCEL') {
+                    // Use IconButton for actions to gain native hover styling
+                    let iconName = 'check_circle';
+                    if (char === 'DEL') iconName = 'backspace';
+                    if (char === 'CANCEL') iconName = 'cancel';
+                    
+                    const btn = col.addIconButton({
+                        text: iconName,
+                        fontSize: 0.28,
+                        backgroundColor: bgColor,
+                        fontColor: fgColor
+                    });
+                    btn.onTriggered = () => this.handleInput(char);
+                } else {
+                    // Use TextButton for Digits
+                    const btn = col.addTextButton({
+                        text: char,
+                        fontSize: 0.28, // Increased by 25% from 0.225
+                        backgroundColor: bgColor,
+                        fontColor: fgColor,
+                        borderRadius: 0.05
+                    });
+                    btn.onTriggered = () => this.handleInput(char);
+                }
             }
         }
 

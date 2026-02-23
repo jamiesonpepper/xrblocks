@@ -71,93 +71,146 @@ export class HUDManager {
     }
 
     init3D(scene) {
-        // Vertical Panel, Draggable via Border
-        // Based on BalloonPop menu pattern
+        this.scene = scene;
+        this.isMenuExpanded = true;
+        this.menuPos = new THREE.Vector3(0, 1.5, -1.5);
+        this.menuRot = new THREE.Euler(0, 0, 0);
+        this.renderMenu();
+        console.log("HUD initialized in 3D Mode (SpatialPanel) with Collapsible Design");
+    }
+
+    renderMenu() {
+        if (this.panel) {
+            this.menuPos.copy(this.panel.position);
+            this.menuRot.copy(this.panel.rotation);
+            if (this.scene) {
+                this.scene.remove(this.panel);
+            } else if (this.panel.parent) {
+                this.panel.parent.remove(this.panel);
+            }
+        }
+
+        const H_TOGGLE = 0.1;
+        const H_HEADER = 0.15;
+        const H_LINE = 0.08;
+        const H_SPACE = 0.05;
+        const H_BUTTON = 0.25;
+
+        // Collapsed shows only 2 lines, Expanded shows 5 (or max active)
+        const maxLines = this.isMenuExpanded ? 5 : 2;
+        const dynamicHistoryHeight = maxLines * H_LINE;
         
-        const width = 0.6;
-        const height = 0.8;
-        
+        const menuHeight = H_TOGGLE + H_HEADER + dynamicHistoryHeight + H_SPACE + H_BUTTON + H_SPACE;
+        const getW = (h) => h / menuHeight;
+
         this.panel = new xb.SpatialPanel({
-             width: width,
-             height: height,
+             width: 0.6,
+             height: menuHeight,
              backgroundColor: '#2b2b2baa',
              showEdge: true,
              edgeColor: 'white',
-             edgeWidth: 0.02, // Thick border for grabbing
-             fontColor: '#ffffff'
+             edgeWidth: 0.02,
         });
+        this.panel.position.copy(this.menuPos);
+        this.panel.rotation.copy(this.menuRot);
         
-        // Initial Position ( Floating in front of user )
-        this.panel.position.set(0, 1.5, -1.5);
-        
-        if (scene) {
-            scene.add(this.panel);
+        if (this.scene) {
+            this.scene.add(this.panel);
+        } else {
+            // Revert to global add if no parent cached
+            xb.add(this.panel);
         }
-        
-        // Layout
+
         const grid = this.panel.addGrid();
         
-        // 1. Header
-        grid.addRow({ weight: 0.15 }).addText({
+        // 1. Top Right Karat Toggle
+        const toggleRow = grid.addRow({ weight: getW(H_TOGGLE) });
+        toggleRow.addCol({ weight: 0.8 }); // Left Spacer pushing karat right
+        toggleRow.addCol({ weight: 0.2 }).addTextButton({
+             text: this.isMenuExpanded ? '\u25B2' : '\u25BC', // Up/Down Triangles
+             fontColor: '#ffffff',
+             backgroundColor: '#444444',
+             fontSize: 0.5,
+        }).onTriggered = () => {
+             this.isMenuExpanded = !this.isMenuExpanded;
+             this.renderMenu();
+        };
+
+        // 2. Header
+        grid.addRow({ weight: getW(H_HEADER) }).addText({
              text: "XR Home Control",
-             fontSize: 0.08, // Increased
+             fontSize: 0.08,
              textAlign: 'center',
              fontColor: '#4285f4'
         });
-        
-        // 2. Status / Log Area
-        // We'll use a vertical stack of text lines
+
+        // 3. Dynamic Status / Log Area
         this.logLines3D = [];
-        for(let i=0; i<5; i++) {
-             const row = grid.addRow({ weight: 0.1 });
+        for(let i = 0; i < maxLines; i++) {
+             const row = grid.addRow({ weight: getW(H_LINE) });
              const txt = row.addText({
                  text: "",
-                 fontSize: 0.05, // Increased
+                 fontSize: 0.05,
                  textAlign: 'left',
-                 fontColor: '#cccccc'
+                 fontColor: '#ffffff',
+                 paddingX: 0.05
              });
              this.logLines3D.push(txt);
         }
         
-        // Spacer
-        grid.addRow({ weight: 0.1 });
+        // Safely sync historical text limits strictly up to current view max
+        this.sync3DLogs();
+
+        grid.addRow({ weight: getW(H_SPACE) });
         
-        // 3. Scan Button
-        const rowBtn = grid.addRow({ weight: 0.5 }); // Increased Weight for Taller Button
-        this.scanButton = rowBtn.addTextButton({
-             text: "START SCAN",
-             fontSize: 0.08,
-             backgroundColor: '#22aa33', // Green from samples/ui
-             fontColor: '#ffffff',
-             borderRadius: 0.05
+        // 4. Scan Button Row (Centered, Constrained Circle)
+        const btnRow = grid.addRow({ weight: getW(H_BUTTON) });
+        btnRow.addCol({ weight: 0.35 }); // Left Spacer
+        this.scanButton = btnRow.addCol({ weight: 0.3 }).addIconButton({
+             text: this.isScanning ? "stop" : "play_arrow", 
+             fontSize: 0.45, // Matches the sample size nicely inside a constrained weight
+             backgroundColor: this.isScanning ? '#cc0000' : '#00aa00', 
+             fontColor: '#ffffff'
         });
+        btnRow.addCol({ weight: 0.35 }); // Right Spacer
         
-        // Wire up event
         this.scanButton.onTriggered = () => {
              if (this.onScanToggle) this.onScanToggle();
         };
         
-        console.log("HUD initialized in 3D Mode (SpatialPanel) with Larger Fonts");
+        grid.addRow({ weight: getW(H_SPACE) });
+        
+        // Force the spatial engine to respect math bounding box changes
+        if (this.panel.updateLayouts) {
+             this.panel.updateLayouts();
+        }
+    }
+    
+    sync3DLogs() {
+        if (!this.logLines3D) return;
+        const maxDisplayed = this.logLines3D.length;
+        const startIdx = Math.max(0, this.lines.length - maxDisplayed);
+        for(let i=0; i < maxDisplayed; i++) {
+             const lineData = this.lines[startIdx + i];
+             if (this.logLines3D[i]) {
+                  this.logLines3D[i].text = lineData ? lineData.text : "";
+                  this.logLines3D[i].fontColor = '#ffffff';
+             }
+        }
     }
 
     drawLights(lights) {
         this.currentLights = lights;
         if (this.mode === '2D') this.draw2D();
-        // 3D lights are handled by spawning objects in main.js, 
-        // HUD doesn't need to draw 2D boxes for them in 3D mode.
     }
     
     setScanState(scanning) {
         this.isScanning = scanning;
         if (this.mode === '2D') {
             this.draw2D();
-        } else if (this.scanButton) {
-            this.scanButton.text = scanning ? "STOP SCAN" : "START SCAN";
-            this.scanButton.backgroundColor = scanning ? '#CC0000' : '#22aa33'; // Red vs Green
-            
-            // Explicitly force update if needed (SpatialPanel usually handles setter)
-            // But let's log to be sure
-            console.log("HUD 3D Scan State:", scanning);
+        } else {
+            this.renderMenu();
+            console.log("HUD 3D Scan State Render Menu:", scanning);
         }
     }
 
@@ -177,7 +230,7 @@ export class HUDManager {
             const y = 100 + i * 35;
             ctx.fillStyle = 'black';
             ctx.fillText(line.text, 22, y + 2);
-            ctx.fillStyle = line.color;
+            ctx.fillStyle = '#ffffff';
             ctx.fillText(line.text, 20, y);
         });
 
@@ -314,21 +367,14 @@ export class HUDManager {
     }
 
     log(text, color = '#FFFFFF') {
-        this.lines.push({ text, color, time: Date.now() });
+        this.lines.push({ text, color: '#ffffff', time: Date.now() });
         if (this.lines.length > 5) this.lines.shift();
         
         if (this.mode === '2D') {
             this.draw2D();
         } else if (this.panel) {
-            // Update 3D Text Lines
-            // Map last 5 lines to the 5 text rows
-            for(let i=0; i<5; i++) {
-                if (this.logLines3D[i]) {
-                    const lineData = this.lines[i]; // might be undefined if < 5 lines
-                    this.logLines3D[i].text = lineData ? lineData.text : "";
-                    this.logLines3D[i].fontColor = lineData ? (lineData.color || '#ffffff') : '#ffffff';
-                }
-            }
+            // Re-sync with the current grid view length
+            this.sync3DLogs();
         }
         console.log(`[HUD] ${text}`);
     }
