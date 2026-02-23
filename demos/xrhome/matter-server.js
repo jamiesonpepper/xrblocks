@@ -9,7 +9,7 @@ const bodyParser = require('body-parser');
 const { CommissioningController, MatterServer } = require('@project-chip/matter-node.js');
 
 const { StorageBackendDisk, StorageManager } = require('@project-chip/matter-node.js/storage');
-const { OnOff } = require('@project-chip/matter.js/cluster');
+const { OnOff, LevelControl, ColorControl } = require('@project-chip/matter.js/cluster');
 const { Logger } = require('@project-chip/matter-node.js/log');
 Logger.defaultLogLevel = 'debug';
 
@@ -467,6 +467,93 @@ app.post('/light/:id/toggle', async (req, res) => {
     } catch (e) {
         console.error("Control failed:", e);
         if (e.stack) console.error(e.stack);
+        res.status(500).json({ error: e.toString() });
+    }
+});
+
+// 3b. Set Brightness
+app.post('/light/:id/brightness', async (req, res) => {
+    const { id } = req.params;
+    const { level } = req.body; // 0-254
+
+    if (id === '[object Object]' || id.includes('object')) {
+         return res.status(400).json({ error: "Invalid Node ID" });
+    }
+
+    try {
+        const node = await commissioningController.connectNode(BigInt(id));
+        const devices = node.getDevices();
+        let levelCluster = null;
+
+        for (const device of devices) {
+            const client = device.getClusterClient(LevelControl.Cluster);
+            if (client) {
+                levelCluster = client;
+                break;
+            }
+        }
+        
+        if (!levelCluster) {
+             console.error("LevelControl Cluster not found on any endpoint");
+             return res.status(404).json({ error: "LevelControl Cluster not found on device" });
+        }
+        
+        console.log(`[Control] Setting Node ${id} Brightness to ${level}`);
+        
+        await levelCluster.moveToLevel({
+            level: level,
+            transitionTime: 0,
+            optionsMask: {},
+            optionsOverride: {}
+        });
+
+        res.json({ success: true });
+    } catch (e) {
+        console.error("Brightness control failed:", e);
+        res.status(500).json({ error: e.toString() });
+    }
+});
+
+// 3c. Set Color (Hue & Saturation)
+app.post('/light/:id/color', async (req, res) => {
+    const { id } = req.params;
+    const { hue, saturation } = req.body; // 0-254 based
+
+    if (id === '[object Object]' || id.includes('object')) {
+         return res.status(400).json({ error: "Invalid Node ID" });
+    }
+
+    try {
+        const node = await commissioningController.connectNode(BigInt(id));
+        const devices = node.getDevices();
+        let colorCluster = null;
+
+        for (const device of devices) {
+            const client = device.getClusterClient(ColorControl.Cluster);
+            if (client) {
+                colorCluster = client;
+                break;
+            }
+        }
+        
+        if (!colorCluster) {
+             console.error("ColorControl Cluster not found on any endpoint");
+             return res.status(404).json({ error: "ColorControl Cluster not found on device" });
+        }
+        
+        console.log(`[Control] Setting Node ${id} Color Hue: ${hue}, Saturation: ${saturation}`);
+        
+        await colorCluster.moveToHueAndSaturation({
+            hue,
+            saturation,
+            transitionTime: 0,
+            optionsMask: {},
+            optionsOverride: {}
+        });
+
+        res.json({ success: true });
+    } catch (e) {
+        console.error("Color control failed:", e);
         res.status(500).json({ error: e.toString() });
     }
 });

@@ -3,6 +3,8 @@
  * Entry point for XRHome.
  */
 
+import { EasterEggManager } from './managers.js';
+
 // XR Interaction Logic
 // XR Interaction Logic
 const raycaster = new THREE.Raycaster();
@@ -694,6 +696,10 @@ async function initApp() {
     o.simulator.defaultMode = xb.SimulatorMode.POSE; // Or generic
 
     xb.init(o);
+
+    // Mount custom heuristic Easter Egg
+    const getDeps = () => ({ virtualLights, smartHome, hud, VirtualLight3D });
+    xb.add(new EasterEggManager(getDeps));
 
     // REMOVED: Desktop Camera Eye-Level workaround (caused crash with xb.get)
     // 2D HUD does not require this.
