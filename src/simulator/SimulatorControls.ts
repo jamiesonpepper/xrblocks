@@ -45,6 +45,7 @@ export class SimulatorControls {
   private _onKeyDown = this.onKeyDown.bind(this);
   private _onKeyUp = this.onKeyUp.bind(this);
   private _onPointerMove = this.onPointerMove.bind(this);
+  private _onBlur = this.onBlur.bind(this);
 
   /**
    * Create the simulator controls.
@@ -122,6 +123,8 @@ export class SimulatorControls {
     domElement.addEventListener('pointerdown', this._onPointerDown);
     domElement.addEventListener('pointerup', this._onPointerUp);
     domElement.addEventListener('contextmenu', preventDefault);
+    window.addEventListener('blur', this._onBlur);
+    document.addEventListener('visibilitychange', this._onBlur);
   }
 
   update() {
@@ -143,6 +146,16 @@ export class SimulatorControls {
   }
 
   onKeyDown(event: KeyboardEvent) {
+    // On macOS, keyup events are not fired for keys held when Command (Meta)
+    // is pressed. Clear all keys to prevent stuck movement.
+    if (
+      event.metaKey ||
+      event.code === 'MetaLeft' ||
+      event.code === 'MetaRight'
+    ) {
+      this.downKeys.clear();
+      return;
+    }
     this.downKeys.add(event.code as Keycodes);
     if (event.code == Keycodes.LEFT_SHIFT_CODE) {
       this.setSimulatorMode(NEXT_SIMULATOR_MODE[this.simulatorMode]);
@@ -152,6 +165,10 @@ export class SimulatorControls {
 
   onKeyUp(event: KeyboardEvent) {
     this.downKeys.delete(event.code as Keycodes);
+  }
+
+  onBlur() {
+    this.downKeys.clear();
   }
 
   setSimulatorMode(mode: SimulatorMode) {
