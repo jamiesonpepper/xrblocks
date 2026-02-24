@@ -23,8 +23,8 @@ export class DepthMesh extends MeshScript {
   private minDepthPrev = 8;
   private maxDepthPrev = 0;
 
-  private downsampledGeometry?: THREE.BufferGeometry;
-  private downsampledMesh?: THREE.Mesh;
+  downsampledGeometry?: THREE.BufferGeometry;
+  downsampledMesh?: THREE.Mesh;
 
   private collider?: RAPIER_NS.Collider;
   private colliders: RAPIER_NS.Collider[] = [];
@@ -130,7 +130,6 @@ export class DepthMesh extends MeshScript {
       }
       this.downsampledMesh = new THREE.Mesh(this.downsampledGeometry, material);
       this.downsampledMesh.visible = false;
-      this.add(this.downsampledMesh);
     }
   }
 
@@ -190,6 +189,16 @@ export class DepthMesh extends MeshScript {
     }
 
     this.updateColliderIfNeeded();
+  }
+
+  updatePose(translation: THREE.Vector3, quaternion: THREE.Quaternion) {
+    this.position.copy(translation);
+    this.quaternion.copy(quaternion);
+    if (this.downsampledMesh) {
+      this.downsampledMesh.position.copy(translation);
+      this.downsampledMesh.quaternion.copy(quaternion);
+      this.downsampledMesh.updateMatrixWorld();
+    }
   }
 
   updateGPUDepth(
