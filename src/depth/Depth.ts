@@ -235,8 +235,10 @@ export class Depth {
         depthData,
         this.depthProjectionInverseMatrices[0]
       );
-      this.depthMesh.position.copy(this.depthCameraPositions[0]);
-      this.depthMesh.quaternion.copy(this.depthCameraRotations[0]);
+      this.depthMesh.updatePose(
+        this.depthCameraPositions[0],
+        this.depthCameraRotations[0]
+      );
     }
   }
 
@@ -285,8 +287,10 @@ export class Depth {
           this.depthProjectionInverseMatrices[0]
         );
       }
-      this.depthMesh.position.copy(this.depthCameraPositions[0]);
-      this.depthMesh.quaternion.copy(this.depthCameraRotations[0]);
+      this.depthMesh.updatePose(
+        this.depthCameraPositions[0],
+        this.depthCameraRotations[0]
+      );
     }
   }
 
