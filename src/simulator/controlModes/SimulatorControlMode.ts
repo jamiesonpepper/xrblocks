@@ -81,7 +81,7 @@ export class SimulatorControlMode {
 
   updateControllerPositions() {
     this.camera.updateMatrixWorld();
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 2 && i < this.input.controllers.length; i++) {
       const controller = this.input.controllers[i];
       controller.position
         .copy(this.simulatorControllerState.localControllerPositions[i])
