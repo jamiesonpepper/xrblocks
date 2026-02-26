@@ -6,7 +6,7 @@ A WebXR Proof of Concept that combines **XRBlocks**, **Vertex Vision API**, and 
 
 - **Room-Scale Scanning**: Detects lights using the device camera and Gemini Vision API.
 - **Matter Integration**: Pairs with and controls real Matter smart lights over local WiFi/Thread.
-- **3D Interaction**: Use XR controllers to point, click, and interact with virtual overlays.
+- **3D Interaction**: Use XR controllers or hand gestures to point, click, and interact with virtual overlays.
 
 ## Usage Guide
 
