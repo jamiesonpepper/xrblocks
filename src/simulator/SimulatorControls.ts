@@ -13,11 +13,7 @@ import {SimulatorRenderMode} from './SimulatorConstants';
 import {SimulatorControllerState} from './SimulatorControllerState';
 import {SimulatorHands} from './SimulatorHands';
 import {SimulatorInterface} from './SimulatorInterface';
-import {
-  NEXT_SIMULATOR_MODE,
-  SimulatorMode,
-  SimulatorOptions,
-} from './SimulatorOptions';
+import {SimulatorMode, SimulatorOptions} from './SimulatorOptions';
 
 function preventDefault(event: Event) {
   event.preventDefault();
@@ -39,6 +35,7 @@ export class SimulatorControls {
   simulatorModeControls: SimulatorControlMode;
   simulatorModes: {[key: string]: SimulatorControlMode};
   renderer!: THREE.WebGLRenderer;
+  private simulatorOptions?: SimulatorOptions;
 
   private _onPointerDown = this.onPointerDown.bind(this);
   private _onPointerUp = this.onPointerUp.bind(this);
@@ -112,6 +109,7 @@ export class SimulatorControls {
     this.setSimulatorMode(simulatorOptions.defaultMode);
     this.simulatorControllerState.currentControllerIndex =
       simulatorOptions.defaultHand === Handedness.LEFT ? 0 : 1;
+    this.simulatorOptions = simulatorOptions;
     this.connect();
   }
 
@@ -157,8 +155,13 @@ export class SimulatorControls {
       return;
     }
     this.downKeys.add(event.code as Keycodes);
-    if (event.code == Keycodes.LEFT_SHIFT_CODE) {
-      this.setSimulatorMode(NEXT_SIMULATOR_MODE[this.simulatorMode]);
+    if (
+      this.simulatorOptions &&
+      event.code === this.simulatorOptions.modeToggle.toggleKey
+    ) {
+      this.setSimulatorMode(
+        this.simulatorOptions.modeToggle.toggleOrder[this.simulatorMode]
+      );
     }
     this.simulatorModeControls.onKeyDown(event);
   }

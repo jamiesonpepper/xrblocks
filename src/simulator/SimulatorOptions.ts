@@ -4,6 +4,7 @@ import {XR_BLOCKS_ASSETS_PATH} from '../constants';
 import {Handedness} from '../input/Hands';
 import {deepMerge} from '../utils/OptionsUtils';
 import {DeepPartial, DeepReadonly} from '../utils/Types';
+import {Keycodes} from '../utils/Keycodes';
 
 export enum SimulatorMode {
   USER = 'User',
@@ -11,7 +12,7 @@ export enum SimulatorMode {
   CONTROLLER = 'Hands',
 }
 
-export const NEXT_SIMULATOR_MODE = {
+const DEFAULT_MODE_TOGGLE_ORDER = {
   [SimulatorMode.USER]: SimulatorMode.POSE,
   [SimulatorMode.POSE]: SimulatorMode.CONTROLLER,
   [SimulatorMode.CONTROLLER]: SimulatorMode.USER,
@@ -34,6 +35,10 @@ export class SimulatorOptions {
   initialScenePosition = {x: -1.6, y: 0.3, z: 0};
   defaultMode = SimulatorMode.USER;
   defaultHand = Handedness.LEFT;
+  modeToggle = {
+    toggleKey: Keycodes.LEFT_SHIFT_CODE as Keycodes | null,
+    toggleOrder: DEFAULT_MODE_TOGGLE_ORDER,
+  };
   modeIndicator = {
     enabled: true,
     element: 'xrblocks-simulator-mode-indicator',
