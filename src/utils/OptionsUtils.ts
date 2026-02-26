@@ -40,8 +40,14 @@ export function deepMerge<T extends object, U extends object>(
   const merged = obj1 as Record<string, unknown>;
 
   for (const key in obj2) {
-    // Ensure the key is actually on obj2, not its prototype chain.
-    if (Object.prototype.hasOwnProperty.call(obj2, key)) {
+    // Ensure the key is actually on obj2, not its prototype chain,
+    // and skip dangerous keys to prevent prototype pollution.
+    if (
+      Object.hasOwn(obj2, key) &&
+      key !== '__proto__' &&
+      key !== 'constructor' &&
+      key !== 'prototype'
+    ) {
       const val1 = merged[key];
       const val2 = obj2[key];
 
