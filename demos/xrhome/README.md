@@ -28,13 +28,13 @@ The scanning system uses a decoupled loop for performance:
 
 ### 3. Visual Feedback (Color Coding)
 
-The virtual boxes indicate the status of the device:
+The virtual boxes or device labels indicate the status of the device:
 
-| Color         | Meaning            | Interaction                                |
-| :------------ | :----------------- | :----------------------------------------- |
-| 🟨 **Yellow** | **Unpaired / New** | Needs pairing. Shows a **Gear Icon (⚙️)**. |
-| ⬜ **White**  | **Paired (ON)**    | Device is controlled and currently ON.     |
-| 🟩 **Green**  | **Paired (OFF)**   | Device is controlled and currently OFF.    |
+| Color         | Meaning            | Interaction                                                                                                             |
+| :------------ | :----------------- | :---------------------------------------------------------------------------------------------------------------------- |
+| 🟨 **Yellow** | **Unpaired / New** | Needs pairing. Shows a **Gear Icon (⚙️)** or a + icon.                                                                  |
+| ⬜ **White**  | **Paired (ON)**    | Device is controlled and currently ON. In 2D shows a red X to unpair and in 3D shows a power button and unpair button.  |
+| 🟩 **Green**  | **Paired (OFF)**   | Device is controlled and currently OFF. In 2D shows a red X to unpair and in 3D shows a power button and unpair button. |
 
 ### 4. Interactions
 
@@ -54,9 +54,9 @@ You can interact with the detected smart lights differently depending on your pl
 **In Immersive AR (3D) Mode:**
 
 1. Locate a Spatial Panel with **Yellow** text indicating an unpaired light.
-2. Use your XR controller to point and click the **"ADD DEVICE"** button/text.
+2. Use your XR controller or hand/pinch gesture to point to and click the **"Plus"** icon.
 3. A **Virtual Keypad** will spawn in 3D space.
-4. Use your controller to enter in the Matter Pairing Code on the virtual buttons.
+4. Use your controller or hand/pinch to enter in the Matter Pairing Code on the virtual buttons.
 5. Click **"OK"** to submit and commission the device (this may take 10-30 seconds).
 
 #### Controlling a Light
@@ -68,7 +68,7 @@ You can interact with the detected smart lights differently depending on your pl
 **In Immersive AR (3D) Mode:**
 
 1. Locate a paired spatial panel (indicated by White or Green text).
-2. Point at the **"TURN ON"** or **"TURN OFF"** (Grey) button/text with your XR controller and click/trigger.
+2. Point at the **"Power/Toggle"** (Grey hover) button with your XR controller or hand/pinch gesture and click/trigger.
 3. The physical light state will update, and the panel text will toggle between White (ON) and Green (OFF).
 
 #### Unpairing
@@ -81,7 +81,7 @@ You can interact with the detected smart lights differently depending on your pl
 **In Immersive AR (3D) Mode:**
 
 1. Locate a paired spatial panel.
-2. Point at the **"UNPAIR"** (Red) button with your XR controller and click/trigger.
+2. Point at the **"UNPAIR"** (Red hover) button with your XR controller and click/trigger.
 3. The device will be removed from the local Matter fabric, and the text label will return to the Yellow state.
 
 ## Technical Setup (Developers)
@@ -95,7 +95,7 @@ docker build -t xrhome-demo .
 docker run --name xrhome --network host -it --rm -p 8080:8080 xrhome-demo
 ```
 
-frontend: `http://localhost:8080/demos/xrhome/index.html`
+frontend: `https://<hostname>:8080/demos/xrhome/index.html`
 
 ### Local Node.js (Windows/Mac)
 
@@ -106,4 +106,4 @@ npm install
 npm run dev
 ```
 
-Access at `https://localhost:8080` (Accept self-signed cert).
+Access at `https://<hostname>:8080/demos/xrhome/index.html` (Accept self-signed cert).
