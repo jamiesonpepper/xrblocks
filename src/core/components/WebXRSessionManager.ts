@@ -1,8 +1,5 @@
 import * as THREE from 'three';
 
-export const IMMERSIVE_AR = 'immersive-ar';
-export const IMMERSIVE_VR = 'immersive-vr';
-
 declare global {
   interface XRSystem {
     offerSession?: (

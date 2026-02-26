@@ -25,9 +25,9 @@ export interface SimulatorCustomInstruction {
 
 export class SimulatorOptions {
   initialCameraPosition = {x: 0, y: 1.5, z: 0};
-  scenePath?: string =
+  scenePath: string | null =
     XR_BLOCKS_ASSETS_PATH + 'simulator/scenes/XREmulatorsceneV5_livingRoom.glb';
-  scenePlanesPath?: string =
+  scenePlanesPath: string | null =
     XR_BLOCKS_ASSETS_PATH +
     'simulator/scenes/XREmulatorsceneV5_livingRoom_planes.json';
   videoPath?: string = undefined;
