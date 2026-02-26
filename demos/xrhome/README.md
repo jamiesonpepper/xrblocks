@@ -14,27 +14,26 @@ A WebXR Proof of Concept that combines **XRBlocks**, **Vertex Vision API**, and 
 
 1.  **Gemini API Key**: Enter your key in the HUD when prompted.
 2.  **Matter Pairing Code**:
-    - For new devices, use the QR code sticker.
-    - For existing devices (already in Google Home), go to _Device Settings > Linked Matter Apps > Link Apps_ to get a new pairing code.
+    - For existing devices (already in Google Home), go to _Device Settings > Linked Matter apps & services > Link apps & services > Use Pairing_ to get a new pairing code.
 
-### 2. Scanning (New Paradigm)
+### 2. Scanning
 
 The scanning system uses a decoupled loop for performance:
 
 - **Live Capture (500ms)**: The camera continuously buffers the latest frame.
 - **Analysis (5s)**: Every 5 seconds, the _latest_ frame is sent to Vertex Vision for analysis.
-- **Action**: Click **"Start Scan"** in the HUD (or use voice command "Scan").
-- **Result**: Detected lights appear as **Yellow Wireframe Boxes** in 3D space.
+- **Action**: Click **"Start Scan"** in the 2D HUD or the Start/Play button in the 3D HUD.
+- **Result**: Scanned lights appear as **Yellow Wireframe Boxes** in 2D space or as XR Blocks spatial panels with **Yellow** text labels in 3D space.
 
 ### 3. Visual Feedback (Color Coding)
 
 The virtual boxes or device labels indicate the status of the device:
 
-| Color         | Meaning            | Interaction                                                                                                             |
-| :------------ | :----------------- | :---------------------------------------------------------------------------------------------------------------------- |
-| 🟨 **Yellow** | **Unpaired / New** | Needs pairing. Shows a **Gear Icon (⚙️)** or a + icon.                                                                  |
-| ⬜ **White**  | **Paired (ON)**    | Device is controlled and currently ON. In 2D shows a red X to unpair and in 3D shows a power button and unpair button.  |
-| 🟩 **Green**  | **Paired (OFF)**   | Device is controlled and currently OFF. In 2D shows a red X to unpair and in 3D shows a power button and unpair button. |
+| Color         | Meaning            | Interaction                                                                                                         |
+| :------------ | :----------------- | :------------------------------------------------------------------------------------------------------------------ |
+| 🟨 **Yellow** | **Unpaired / New** | Needs pairing. Shows a **Gear Icon (⚙️)** or a "**+**" icon.                                                        |
+| ⬜ **White**  | **Paired (ON)**    | Device is paired and currently ON. In 2D shows a red X to unpair and in 3D shows a power button and unpair button.  |
+| 🟩 **Green**  | **Paired (OFF)**   | Device is paired and currently OFF. In 2D shows a red X to unpair and in 3D shows a power button and unpair button. |
 
 ### 4. Interactions
 
@@ -47,14 +46,14 @@ You can interact with the detected smart lights differently depending on your pl
 1.  Locate a **Yellow** box.
 2.  Point at the **Gear Icon (⚙️)** and click.
 3.  A standard browser prompt will appear.
-4.  Enter the 11-digit Matter Pairing Code.
+4.  Enter the 11-digit Matter Pairing Code from Google Home. (see above pairing instructions)
 5.  The system will commission the device (this may take 10-30 seconds).
-6.  Upon success, the box turns **Green/White** and the icon changes to an **X**.
+6.  Upon success, the box turns **Green/White** and the icon changes to a red **X**.
 
 **In Immersive AR (3D) Mode:**
 
-1. Locate a Spatial Panel with **Yellow** text indicating an unpaired light.
-2. Use your XR controller or hand/pinch gesture to point to and click the **"Plus"** icon.
+1. Locate a Spatial Panel with a **Yellow** text label indicating an unpaired light.
+2. Use your XR controller or hand/pinch gesture to point to and click the **"+"** icon.
 3. A **Virtual Keypad** will spawn in 3D space.
 4. Use your controller or hand/pinch to enter in the Matter Pairing Code on the virtual buttons.
 5. Click **"OK"** to submit and commission the device (this may take 10-30 seconds).
