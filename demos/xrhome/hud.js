@@ -41,7 +41,6 @@ export class HUDManager {
         } else {
             this.init3D(parent);
         }
-        this.log("HUD Initialized");
     }
 
     init2D(parent) {
@@ -96,8 +95,8 @@ export class HUDManager {
         const H_SPACE = 0.05;
         const H_BUTTON = 0.25;
 
-        // Collapsed shows only 2 lines, Expanded shows 5 (or max active)
-        const maxLines = this.isMenuExpanded ? 5 : 2;
+        // Collapsed shows only 1 line, Expanded shows 3
+        const maxLines = this.isMenuExpanded ? 3 : 1;
         const dynamicHistoryHeight = maxLines * H_LINE;
         
         const menuHeight = H_TOGGLE + H_HEADER + dynamicHistoryHeight + H_SPACE + H_BUTTON + H_SPACE;
@@ -184,6 +183,32 @@ export class HUDManager {
         if (this.panel.updateLayouts) {
              this.panel.updateLayouts();
         }
+        
+        // Ensure Troika texts that generate asynchronously receive depth enforcement
+        this.enforceDepth();
+    }
+    
+    enforceDepth() {
+        const doEnforce = () => {
+            if (!this.panel) return;
+            this.panel.traverse(child => {
+                child.renderOrder = 601;
+                if (child === this.panel.mesh) child.renderOrder = 600;
+
+                if (child.material) {
+                    const mats = Array.isArray(child.material) ? child.material : [child.material];
+                    mats.forEach(m => {
+                        m.depthTest = false;
+                        m.depthWrite = false;
+                        m.needsUpdate = true;
+                    });
+                }
+            });
+        };
+        
+        doEnforce();
+        setTimeout(doEnforce, 50);
+        setTimeout(doEnforce, 150);
     }
     
     sync3DLogs() {

@@ -7,10 +7,8 @@ export class CameraManager {
     constructor(videoElementId) {
         this.videoElement = document.getElementById(videoElementId);
         this.stream = null;
-        this.audioContext = null;
         this.processor = null;
         this.source = null;
-        this.onAudioData = null; // Callback
     }
 
     async startCamera() {
@@ -26,7 +24,7 @@ export class CameraManager {
                     width: { ideal: 1280 },
                     height: { ideal: 720 }
                 },
-                audio: true
+                audio: false // Disabled per user request
             };
 
             this.stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -71,71 +69,5 @@ export class CameraManager {
     }
 
 
-    // Start capturing raw PCM audio for Live API
-    async startAudioStream(callback) {
-        if (!this.stream) return;
-        this.onAudioData = callback;
-
-        this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-        
-        try {
-            await this.audioContext.audioWorklet.addModule('audio-processor.js');
-        } catch (e) {
-            console.error("Failed to load audio worklet", e);
-            return;
-        }
-
-        this.source = this.audioContext.createMediaStreamSource(this.stream);
-        this.processor = new AudioWorkletNode(this.audioContext, 'metrics-processor');
-
-        this.processor.port.onmessage = (e) => {
-            const inputData = e.data;
-             // Convert Float32 to Int16 PCM
-            const pcmData = this.floatTo16BitPCM(inputData);
-            
-            // Convert to Base64 for Gemini
-            const base64 = this.arrayBufferToBase64(pcmData);
-            if (this.onAudioData) this.onAudioData(base64);
-        };
-
-        this.source.connect(this.processor);
-        this.processor.connect(this.audioContext.destination);
-    }
-
-    stopAudioStream() {
-        if (this.processor) {
-            this.processor.disconnect();
-            this.processor = null;
-        }
-        if (this.source) {
-            this.source.disconnect();
-            this.source = null;
-        }
-        if (this.audioContext) {
-            this.audioContext.close();
-            this.audioContext = null;
-        }
-    }
-
-    floatTo16BitPCM(output) {
-        const buffer = new ArrayBuffer(output.length * 2);
-        const view = new DataView(buffer);
-        for (let i = 0; i < output.length; i++) {
-            let s = Math.max(-1, Math.min(1, output[i]));
-            // s = s < 0 ? s * 0x8000 : s * 0x7FFF;
-             s = s < 0 ? s * 0x8000 : s * 0x7FFF;
-            view.setInt16(i * 2, s, true); // Little Endian
-        }
-        return buffer;
-    }
-
-    arrayBufferToBase64(buffer) {
-        let binary = '';
-        const bytes = new Uint8Array(buffer);
-        const len = bytes.byteLength;
-        for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        return window.btoa(binary);
-    }
+        // Removed Audio Processing completely per user request
 }

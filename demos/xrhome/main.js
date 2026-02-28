@@ -58,10 +58,9 @@ class HUDInteraction extends xb.Script {
 function onXRSelectStart(event) {
     const controller = event.target;
     
-    // Define draggables: HUD and Keypad ONLY
+    // Define draggables: HUD ONLY
     const draggables = [];
     if (hud.panel) draggables.push(hud.panel);
-    if (keypad.visible && keypad.panel && keypad.panel.mesh) draggables.push(keypad.panel); 
 
     // STRICT: Do NOT add Virtual Lights to draggables list.
     // However, if Raycaster hits them via other means (global scene check?), we must ignore.
@@ -93,7 +92,6 @@ function onXRSelectStart(event) {
         // Find root draggable (Panel)
         let targetPanel = null;
         if (hud.panel && (hit.object === hud.panel || hud.panel.children.includes(hit.object))) targetPanel = hud.panel;
-        else if (keypad.panel && (hit.object === keypad.panel || keypad.panel.children.includes(hit.object) || hit.object.parent === keypad.panel)) targetPanel = keypad.panel;
         
         // Check explicit lock
         if (targetPanel && (targetPanel.isDraggable === false || targetPanel.userData?.isDraggable === false)) return;
@@ -118,10 +116,8 @@ function onXRSelectStart(event) {
                 // Let's assume border grab for now, but maybe widen it.
                 
                 dragController = controller;
-                // Store parent of panel (Group) or Panel itself?
-                // HUD moves `hud.panel`. Keypad moves `keypad.group` probably?
-                // Keypad init: `this.group.add(this.panel)`. Moving `panel` inside group is weird. Move group!
-                const objectToMove = (targetPanel === keypad.panel) ? keypad.group : targetPanel;
+                // HUD moves `hud.panel`.
+                const objectToMove = targetPanel;
                 
                 dragController.userData.selected = objectToMove;
                 
@@ -454,6 +450,25 @@ class VirtualLight3D extends THREE.Group {
           c.userData.isRotatable = false;
           c.userData.isGrabbable = false;
       });
+
+      // Force Light Panel to Layer 300 (Lowest Tier)
+      const enforceRenderOrder = (panel, baseOrder) => {
+          if (!panel) return;
+          panel.traverse(child => {
+              child.renderOrder = baseOrder + 1;
+              if (child === panel.mesh) child.renderOrder = baseOrder;
+
+              if (child.material) {
+                  const mats = Array.isArray(child.material) ? child.material : [child.material];
+                  mats.forEach(m => {
+                      m.depthTest = false;
+                      m.depthWrite = false;
+                      m.needsUpdate = true;
+                  });
+              }
+          });
+      };
+      enforceRenderOrder(this.panel, 300);
       
       const isPaired = !!(this.realDevice || this.linkedNodeId);
       const isOn = this.isOn;
@@ -552,8 +567,14 @@ class VirtualLight3D extends THREE.Group {
                  if (cam) {
                      const camPos = new THREE.Vector3();
                      cam.getWorldPosition(camPos);
-                     keypad.group.lookAt(camPos);
-                     keypad.group.rotateY(Math.PI); // Flipped so +Z faces camera, matching DragManager's turnToFaceCamera logic natively.
+                     
+                     // Use precise DragManager internal orientation math to spawn natively facing user
+                     // The (3 * PI / 2) - atan2(dz, dx) formula explicitly calculates SpatialPanel forward view
+                     const v = new THREE.Vector3().subVectors(keypad.group.position, camPos);
+                     keypad.group.quaternion.setFromAxisAngle(
+                         new THREE.Vector3(0, 1, 0),
+                         (3 * Math.PI) / 2 - Math.atan2(v.z, v.x)
+                     );
                      
                      // Console log for debugging the exact coordinates
                      console.log(`[Keypad Debug] Spawning at ${keypad.group.position.toArray().map(n=>Math.round(n*100)/100).join(',')}, looking at camera at ${camPos.toArray().map(n=>Math.round(n*100)/100).join(',')}`);
@@ -792,9 +813,7 @@ function startVisionLoop() {
         spawnVirtualLights(lights, cameraMatrix);
     };
 
-    hud.log("Vision System Started");
-    hud.speak("Vision System Ready. Say 'Scan' or click button.");
-    hud.log("Ready. Click Scan to Start.");
+    hud.speak("Vision System Ready. Click button to scan.");
     
     // Decoupled Scanning Logic:
     // 1. Fast Capture Loop (300ms) - Keeps frame buffer fresh / "Live"
@@ -1176,59 +1195,7 @@ function configureNextLight() {
     }, (text) => hud.speak(text));
 }
 
-// Deprecated: triggerScan, openSearchMenu (Replaced by flow)
-
-function setupVoiceCommand() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-        console.warn("Speech Recognition not supported");
-        return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true; // Keep listening
-    recognition.lang = 'en-US';
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-
-    recognition.onresult = (event) => {
-        const last = event.results.length - 1;
-        const text = event.results[last][0].transcript.trim().toLowerCase();
-        console.log("Speech Heard:", text);
-        
-        if (text.includes("scan") || text.includes("computer")) {
-            if (!isScanning && !isConfiguring) toggleScan();
-        }
-        else if (text.includes("stop")) {
-             if (isScanning) toggleScan();
-        }
-        else if (menu.visible) {
-            // Pass content to menu search
-            // Strip "search for"?
-            let query = text.replace("search for", "").replace("find", "").trim();
-            menu.setQuery(query);
-        }
-    };
-
-    recognition.onerror = (e) => {
-        console.error("Speech Recognition Error", e.error);
-    };
-    
-    // Auto-restart if it stops (simple keep-alive)
-    recognition.onend = () => {
-         // recognition.start(); 
-         // Optional: Don't force restart if user stopped it? 
-         // For a demo, let's try to keep it alive or just let them click button if it dies.
-         console.log("Speech Loop Ended");
-    };
-
-    try {
-        recognition.start();
-        console.log("Voice Command Listening...");
-    } catch(e) {
-        console.error("Failed to start speech", e);
-    }
-}
+// Removed Voice Command and Speech Recognition logic completely per user request
 
 
 // Updated spawnVirtualLights to use Historical Matrix
