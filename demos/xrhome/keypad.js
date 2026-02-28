@@ -37,7 +37,7 @@ export class VirtualKeypad {
 
     // Ensure mesh is interactive
     this.panel.isInteractive = true;
-    this.panel.mesh.isDraggable = true;
+    // Removed this.panel.mesh.isDraggable = true; to allow Panel group drag behavior instead of mesh decoupling
 
     // The root group is the panel
     // Depth forcing is now handled dynamically in updateDisplay() to combat async Troika generation
@@ -51,9 +51,9 @@ export class VirtualKeypad {
     const grid = this.panel.addGrid();
 
     // ROW 0: Header
-    const headerRow = grid.addRow({weight: 0.15});
+    const headerRow = grid.addRow({weight: 0.05});
     headerRow.addText({
-      text: 'ENTER CODE',
+      text: 'ENTER PAIRING CODE',
       fontSize: 0.08, // Reduced size
       fontColor: '#aaaaaa',
       textAlign: 'center',
@@ -124,6 +124,9 @@ export class VirtualKeypad {
         btn.onTriggered = () => this.handleInput(char);
       }
     }
+
+    // ROW 3: Bottom Spacer to secure Cancel bounding box hover circle limits
+    grid.addRow({weight: 0.25});
 
     // Add to Parent
     if (parent && parent.add) {

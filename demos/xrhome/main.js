@@ -199,7 +199,7 @@ import { matterClient } from './matter-client.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
 import { HUDManager } from './hud.js';
-import { VirtualKeypad } from './menu.js';
+import { VirtualKeypad } from './keypad.js';
 
 // Globals
 const auth = new AuthManager();
@@ -568,8 +568,7 @@ class VirtualLight3D extends THREE.Group {
                      const camPos = new THREE.Vector3();
                      cam.getWorldPosition(camPos);
                      
-                     // Use precise DragManager internal orientation math to spawn natively facing user
-                     // The (3 * PI / 2) - atan2(dz, dx) formula explicitly calculates SpatialPanel forward view
+                     // Use exact DragManager turnPanelToFaceTheCamera math to prevent snap-correction on interaction
                      const v = new THREE.Vector3().subVectors(keypad.group.position, camPos);
                      keypad.group.quaternion.setFromAxisAngle(
                          new THREE.Vector3(0, 1, 0),
