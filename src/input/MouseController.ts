@@ -40,7 +40,7 @@ export class MouseController
   forwardVector = new THREE.Vector3(0, 0, -1);
 
   /** A reference to the main scene camera. */
-  camera!: THREE.Camera;
+  camera?: THREE.Camera;
 
   constructor() {
     super();
@@ -63,7 +63,7 @@ export class MouseController
     if (!this.userData.connected) {
       return;
     }
-    this.position.copy(this.camera.position);
+    this.position.copy(this.camera!.position);
   }
 
   /**
@@ -73,6 +73,9 @@ export class MouseController
    * @param event - The mouse event containing clientX and clientY coordinates.
    */
   updateMousePositionFromEvent(event: MouseEvent) {
+    if (this.camera === undefined) {
+      return;
+    }
     // The controller's origin point is always the camera's position.
     this.position.copy(this.camera.position);
 

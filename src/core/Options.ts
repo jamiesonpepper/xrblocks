@@ -14,6 +14,7 @@ import {SoundOptions} from '../sound/SoundOptions';
 import {deepMerge} from '../utils/OptionsUtils';
 import {DeepPartial, DeepReadonly} from '../utils/Types';
 import {WorldOptions} from '../world/WorldOptions';
+import {getUrlParameter} from '../utils/utils';
 
 /**
  * Default options for XR controllers, which encompass hands by default in
@@ -52,6 +53,9 @@ export class XRTransitionOptions {
   /** The default background color for VR transitions. */
   defaultBackgroundColor = 0xffffff;
 }
+
+const FORM_FACTORS = ['auto', 'xr', 'hud', 'vr', 'desktop', 'mobile'] as const;
+export type FormFactor = (typeof FORM_FACTORS)[number];
 
 /**
  * A central configuration class for the entire XR Blocks system. It aggregates
@@ -140,6 +144,31 @@ export class Options {
     microphone: false,
   };
 
+  xrSessionMode: XRSessionMode = 'immersive-ar';
+
+  private _formFactor: FormFactor = 'auto';
+
+  get formFactor() {
+    return this._formFactor;
+  }
+
+  /**
+   * Form factor is a preset that configures the experience for a specific
+   * device type. Currently it only controls whether the simulator is enabled
+   * and should always be autostarted.
+   */
+  set formFactor(formFactor: FormFactor) {
+    this._formFactor = formFactor;
+    this.enableSimulator =
+      formFactor === 'desktop' ||
+      formFactor === 'auto' ||
+      formFactor === 'mobile';
+    this.xrButton.alwaysAutostartSimulator = formFactor === 'desktop';
+    if (formFactor === 'vr') {
+      this.enableVR();
+    }
+  }
+
   /**
    * Constructs the Options object by merging default values with provided
    * custom options.
@@ -147,6 +176,27 @@ export class Options {
    */
   constructor(options?: DeepReadonly<DeepPartial<Options>>) {
     deepMerge(this, options);
+    this.parseUrlParams();
+  }
+
+  protected parseUrlParams() {
+    const formFactorUrlParam = getUrlParameter('formFactor');
+    if (
+      formFactorUrlParam &&
+      FORM_FACTORS.includes(formFactorUrlParam as FormFactor)
+    ) {
+      this.formFactor = formFactorUrlParam as FormFactor;
+    }
+  }
+
+  /**
+   * Sets the session mode to VR and disables the simulator passthrough scene.
+   */
+  enableVR() {
+    this.xrSessionMode = 'immersive-vr';
+    this.simulator.scenePath = null;
+    this.simulator.scenePlanesPath = null;
+    return this;
   }
 
   /**

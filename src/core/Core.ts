@@ -30,7 +30,6 @@ import {ScreenshotSynthesizer} from './components/ScreenshotSynthesizer';
 import {ScriptsManager} from './components/ScriptsManager';
 import {WaitFrame} from './components/WaitFrame';
 import {
-  IMMERSIVE_AR,
   WebXRSessionEventType,
   WebXRSessionManager,
 } from './components/WebXRSessionManager';
@@ -318,7 +317,7 @@ export class Core {
     this.webXRSessionManager = new WebXRSessionManager(
       this.renderer,
       this.webXRSettings,
-      IMMERSIVE_AR
+      options.xrSessionMode
     );
     this.webXRSessionManager.addEventListener(
       WebXRSessionEventType.SESSION_START,

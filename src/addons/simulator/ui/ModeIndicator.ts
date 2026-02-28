@@ -38,7 +38,9 @@ export class SimulatorModeIndicator extends LitElement {
   }
 
   onClick() {
-    this.setSimulatorMode(xb.NEXT_SIMULATOR_MODE[this.simulatorMode]);
+    this.setSimulatorMode(
+      xb.core.options.simulator.modeToggle.toggleOrder[this.simulatorMode]
+    );
     this.blur(); // Removes focus from the button after click
   }
 
