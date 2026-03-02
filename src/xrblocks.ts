@@ -109,6 +109,7 @@ export * from './utils/ModelLoader';
 export * from './utils/ObjectPlacement';
 export * from './utils/RotationUtils';
 export * from './utils/SceneGraphUtils';
+export * from './utils/SparkRendererHolder';
 export * from './utils/Types';
 export * from './utils/utils';
 export * from './ux/DragManager';

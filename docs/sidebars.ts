@@ -84,6 +84,7 @@ const sidebars: SidebarsConfig = {
         'samples/Math-Tutor',
         'samples/AI-Simulator',
         'samples/Virtual-Screens',
+        'samples/3DGS-Walkthrough',
       ],
     },
   ],
