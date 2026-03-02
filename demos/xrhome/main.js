@@ -933,9 +933,7 @@ function startVisionLoop() {
             }
         }
     });
-
-    // Voice Command Setup
-    setupVoiceCommand();
+    // Voice Command Setup removed
 }
 
 // Keep-alive reference for AR Video frames
@@ -970,12 +968,24 @@ async function toggleScan() {
                     hiddenCameraKeepalive.scale.set(0.001, 0.001, 0.001);
                     hiddenCameraKeepalive.frustumCulled = false;
                     hiddenCameraKeepalive.load(app.deviceCamera);
+                    
+                    // CRITICAL: We also disable depth write to prevent any artifacts, just in case
+                    hiddenCameraKeepalive.traverse(c => {
+                        if (c.material) {
+                            c.material.depthTest = false;
+                            c.material.depthWrite = false;
+                            c.material.transparent = true;
+                            c.material.opacity = 0.01;
+                        }
+                    });
+
                     xb.add(hiddenCameraKeepalive);
-                    console.log("[Scan] Injected VideoView Keep-alive.");
+                    console.log("[Scan] Injected VideoView Keep-alive natively.");
                 }
                 
-                // Flush once the stream is active
+                // Flush once the stream is active, allow 150ms for WebGL to poll video frame
                 console.log("Flushing deviceCamera...");
+                await new Promise(r => setTimeout(r, 150));
                 await app.deviceCamera.getSnapshot({ outputFormat: 'blob' });
                 console.log("deviceCamera Flushed.");
             }
@@ -996,13 +1006,8 @@ async function toggleScan() {
         // --- STOPPING SCAN ---
         isScanning = false;
         
-        // 3. Clean up Keep-alive
-        if (hiddenCameraKeepalive) {
-             xb.remove(hiddenCameraKeepalive);
-             hiddenCameraKeepalive.destroy();
-             hiddenCameraKeepalive = null;
-             console.log("[Scan] Removed VideoView Keep-alive.");
-        }
+        // We leave the keep-alive active permanently to prevent video freezing
+        // Only logging scanning pause now.
         
         // 4. Update UI
         if (hud && hud.setScanState) hud.setScanState(false);
@@ -1185,6 +1190,17 @@ function configureNextLight() {
         vl.realDevice = device;
         if (vl.mesh) vl.mesh.material.color.setHex(0x00FF00); // Green (Done)
         hud.speak(`Linked Light to ${device.traits?.["sdm.devices.traits.Info"]?.customName || "Device"}`);
+        
+        // Fetch current state and update immediately
+        if (typeof smartHome !== 'undefined') {
+            smartHome.getLightState(device.id).then(isOn => {
+                if (isOn !== null) {
+                    vl.isOn = isOn;
+                    if (vl.updateVisuals) vl.updateVisuals();
+                    if (typeof hud !== 'undefined' && hud.drawLights) hud.drawLights(virtualLights);
+                }
+            });
+        }
         
         // Next
         configIndex++;
@@ -1435,6 +1451,11 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                          vl.mesh.material.emissive.setHex(color);
                          vl.mesh.material.emissiveIntensity = vl.isOn ? 1.0 : 0.2;
                      }
+                     // For 3D panel update, we should call updateVisuals()
+                     if (vl.updateVisuals) {
+                          vl.updateVisuals();
+                     }
+                     
                      // Force HUD Refresh (2D) to reflect color change immediately
                      if (hud && hud.drawLights) hud.drawLights(virtualLights);
                  }
