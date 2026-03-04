@@ -40,6 +40,7 @@ import {Options} from './Options';
 import {Script} from './Script';
 import {User} from './User';
 import {PermissionsManager} from './components/PermissionsManager';
+import {XRSystems} from './components/XRSystems';
 
 /**
  * Core is the central engine of the XR Blocks framework, acting as a
@@ -84,6 +85,9 @@ export class Core {
 
   /** Manages all (spatial) audio playback. */
   sound = new CoreSound();
+
+  /** A container to hold all the systems in the scene hierarchy. */
+  xrSystemsGroup = new XRSystems();
 
   private renderSceneBound = this.renderScene.bind(this);
 
@@ -143,14 +147,14 @@ export class Core {
 
     this.scene.name = 'XR Blocks Scene';
 
-    // Separate calls because spark hijacks THREE.Scene.add and only supports
-    // adding objects one at a time. See
-    // https://github.com/sparkjsdev/spark/blob/0edfc8d9232b8f6eb036d27af57dc40daf94e1f3/src/SparkRenderer.ts#L63
-    this.scene.add(this.user);
-    this.scene.add(this.dragManager);
-    this.scene.add(this.ui);
-    this.scene.add(this.sound);
-    this.scene.add(this.world);
+    this.scene.add(this.xrSystemsGroup);
+    this.xrSystemsGroup.add(
+      this.user,
+      this.dragManager,
+      this.ui,
+      this.sound,
+      this.world
+    );
 
     this.registry.register(this.registry);
     this.registry.register(this.waitFrame);
@@ -166,6 +170,7 @@ export class Core {
     this.registry.register(this.scriptsManager);
     this.registry.register(this.depth);
     this.registry.register(this.world);
+    this.registry.register(this.xrSystemsGroup);
   }
 
   /**
@@ -231,6 +236,7 @@ export class Core {
     if (options.controllers.enabled) {
       this.input.init({
         scene: this.scene,
+        systemsGroup: this.xrSystemsGroup,
         options: options,
         renderer: this.renderer,
       });
@@ -277,7 +283,7 @@ export class Core {
       this.user.hands = new Hands(this.input.hands);
       if (options.gestures.enabled) {
         this.gestureRecognition = new GestureRecognition();
-        this.scene.add(this.gestureRecognition);
+        this.xrSystemsGroup.add(this.gestureRecognition);
         this.registry.register(this.gestureRecognition);
       }
     }
@@ -369,7 +375,7 @@ export class Core {
     // Sets up AI services.
     if (options.ai.enabled) {
       this.registry.register(this.ai);
-      this.scene.add(this.ai);
+      this.xrSystemsGroup.add(this.ai);
       // Manually init the script in case other scripts rely on it.
       await this.scriptsManager.initScript(this.ai);
     }
@@ -492,7 +498,7 @@ export class Core {
 
   private async startSimulator() {
     this.xrButton?.domElement.remove();
-    this.scene.add(this.simulator);
+    this.xrSystemsGroup.add(this.simulator);
     await this.scriptsManager.initScript(this.simulator);
     this.onSimulatorStarted();
   }

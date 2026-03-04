@@ -14,6 +14,7 @@ export class Reticle extends THREE.Mesh<
 > {
   /** Text description of the PanelMesh */
   name = 'Reticle';
+  editorIcon = 'target';
 
   /** Prevents the reticle itself from being a target for raycasting. */
   ignoreReticleRaycast = true;

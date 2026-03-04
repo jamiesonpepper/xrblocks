@@ -7,6 +7,7 @@ import {SimulatorUserAction} from './userActions/SimulatorUserAction.js';
 
 export class SimulatorUser extends Script {
   static dependencies = {waitFrame: WaitFrame, registry: Registry};
+  name = 'Simulator User';
   journeyId = 0;
   waitFrame!: WaitFrame;
   registry!: Registry;

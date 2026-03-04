@@ -26,6 +26,9 @@ export class MouseController
   static dependencies = {
     camera: THREE.Camera,
   };
+  type = 'MouseController';
+  name = 'Mouse Controller';
+  editorIcon = 'mouse';
 
   /**
    * User data for the controller, including its connection status, unique ID,

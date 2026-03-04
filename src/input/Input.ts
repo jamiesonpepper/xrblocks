@@ -16,8 +16,17 @@ import type {
 } from './Controller';
 import {GazeController} from './GazeController';
 import {MouseController} from './MouseController';
+import {XRSystems} from '../core/components/XRSystems';
 
-export class ActiveControllers extends THREE.Object3D {}
+export class ActiveControllers extends THREE.Group {
+  type = 'ActiveControllers';
+  name = 'Active Controllers';
+}
+
+export class Reticles extends THREE.Group {
+  type = 'Reticles';
+  name = 'Reticles';
+}
 
 export type HasIgnoreReticleRaycast = {
   ignoreReticleRaycast: boolean;
@@ -48,7 +57,8 @@ export class Input {
   activeControllers = new ActiveControllers();
   leftController?: Controller;
   rightController?: Controller;
-  scene!: THREE.Scene;
+  reticles = new Reticles();
+  scene?: THREE.Scene;
 
   /**
    * Initializes an instance with XR controllers, grips, hands, raycaster, and
@@ -56,19 +66,21 @@ export class Input {
    */
   init({
     scene,
+    systemsGroup,
     options,
     renderer,
   }: {
     scene: THREE.Scene;
+    systemsGroup: XRSystems;
     options: Options;
     renderer: THREE.WebGLRenderer;
   }) {
-    scene.add(this.activeControllers);
+    this.scene = scene;
+    systemsGroup.add(this.activeControllers, this.reticles);
 
     this.controllersEnabled = options.controllers.enabled;
 
     this.options = options;
-    this.scene = scene;
 
     const controllers = this.controllers;
     const controllerGrips = this.controllerGrips;
@@ -198,7 +210,7 @@ export class Input {
         ++id;
       }
       controller.reticle.visible = false;
-      this.scene.add(controller.reticle);
+      this.reticles.add(controller.reticle);
     }
   }
 
@@ -518,6 +530,7 @@ export class Input {
 
   // Performs the raycast assuming the raycaster is already set up.
   performRaycastOnScene(controller: Controller) {
+    if (!this.scene) return;
     if (!this.intersectionsForController.has(controller)) {
       this.intersectionsForController.set(controller, []);
     }

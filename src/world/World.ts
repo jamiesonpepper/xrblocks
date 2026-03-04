@@ -24,6 +24,8 @@ export class World extends Script {
     camera: THREE.Camera,
   };
 
+  editorIcon = 'sensors';
+
   /**
    * Configuration options for all world-sensing features.
    */
