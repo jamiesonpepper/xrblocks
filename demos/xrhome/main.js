@@ -418,15 +418,18 @@ class VirtualLight3D extends THREE.Group {
            this.remove(this.panel);
       }
       
+      const isPaired = !!(this.realDevice || this.linkedNodeId);
+      const dynamicHeight = isPaired ? 0.6 : this.panelHeight;
+      
       this.panel = new xb.SpatialPanel({
           width: this.panelWidth,
-          height: this.panelHeight,
+          height: dynamicHeight,
           backgroundColor: '#00000033', // Black with 20% opacity
           draggable: false,             // Disables XRBlocks native dragging
       });
       
       // Positioned below the box
-      this.panel.position.set(0, -this.panelHeight/2 - 0.25, 0);
+      this.panel.position.set(0, -dynamicHeight/2 - 0.25, 0);
       this.add(this.panel);
       
       this.mainGrid = this.panel.addGrid();
@@ -470,7 +473,6 @@ class VirtualLight3D extends THREE.Group {
       };
       enforceRenderOrder(this.panel, 300);
       
-      const isPaired = !!(this.realDevice || this.linkedNodeId);
       const isOn = this.isOn;
       
       const stateColor = this.stateColor !== undefined ? this.stateColor : '#FFFF00';
@@ -517,6 +519,27 @@ class VirtualLight3D extends THREE.Group {
               fontColor: '#FFFFFF'
           });
           unpairBtn.onTriggered = () => this.handleConfigClick();
+          
+          // ROW 3: Brightness Controls
+          const rowBrightness = this.mainGrid.addRow({ weight: 0.6 });
+          
+          const decBtn = rowBrightness.addCol({weight: 0.5}).addIconButton({
+              text: 'remove',
+              fontSize: 0.20,
+              mode: 'center',
+              backgroundColor: '#333333',
+              fontColor: '#FFFFFF'
+          });
+          decBtn.onTriggered = () => this.setBrightness(this.brightness - 10);
+          
+          const incBtn = rowBrightness.addCol({weight: 0.5}).addIconButton({
+              text: 'add',
+              fontSize: 0.20,
+              mode: 'center',
+              backgroundColor: '#333333',
+              fontColor: '#FFFFFF'
+          });
+          incBtn.onTriggered = () => this.setBrightness(this.brightness + 10);
       }
   }
 
@@ -649,7 +672,7 @@ class VirtualLight3D extends THREE.Group {
   setBrightness(val) {
       this.brightness = Math.max(0, Math.min(100, val));
       if (this.realDevice && smartHome) {
-          smartHome.setBrightness(this.realDevice.name, this.brightness);
+          smartHome.setBrightness(this.realDevice.id, this.brightness);
       }
   }
   
@@ -966,27 +989,6 @@ async function toggleScan() {
         if (hud.mode !== '2D') {
             const app = xb.core;
             if (app && app.deviceCamera && app.deviceCamera.loaded) {
-                if (!hiddenCameraKeepalive) {
-                    hiddenCameraKeepalive = new xb.VideoView();
-                    hiddenCameraKeepalive.visible = true;
-                    hiddenCameraKeepalive.scale.set(0.001, 0.001, 0.001);
-                    hiddenCameraKeepalive.frustumCulled = false;
-                    hiddenCameraKeepalive.load(app.deviceCamera);
-                    
-                    // CRITICAL: We also disable depth write to prevent any artifacts, just in case
-                    hiddenCameraKeepalive.traverse(c => {
-                        if (c.material) {
-                            c.material.depthTest = false;
-                            c.material.depthWrite = false;
-                            c.material.transparent = true;
-                            c.material.opacity = 0.01;
-                        }
-                    });
-
-                    xb.add(hiddenCameraKeepalive);
-                    console.log("[Scan] Injected VideoView Keep-alive natively.");
-                }
-                
                 // Flush using ScreenshotSynthesizer to guarantee the WebGL render loop has ticked.
                 console.log("Flushing camera via ScreenshotSynthesizer...");
                 await app.screenshotSynthesizer.getScreenshot(true);
