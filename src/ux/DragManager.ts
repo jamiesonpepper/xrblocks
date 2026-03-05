@@ -50,6 +50,9 @@ export class DragManager extends Script {
   private draggableObject?: Draggable;
   private input!: Input;
   private camera!: THREE.Camera;
+  type = 'DragManager';
+  name = 'Drag Manager';
+  editorIcon = 'drag_pan';
 
   init({input, camera}: {input: Input; camera: THREE.Camera}) {
     this.input = input;

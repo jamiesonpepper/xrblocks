@@ -52,7 +52,7 @@ const SUPPORTED_MODELS = {
  */
 export class AI extends Script {
   static dependencies = {aiOptions: AIOptions};
-
+  editorIcon = 'network_intelligence';
   model?: ModelClass;
   lock = false;
   options!: AIOptions;

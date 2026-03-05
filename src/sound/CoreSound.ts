@@ -14,7 +14,8 @@ import {SpeechSynthesizer} from './SpeechSynthesizer';
 
 export class CoreSound extends Script {
   static dependencies = {camera: THREE.Camera, soundOptions: SoundOptions};
-
+  type = 'CoreSound';
+  name = 'Core Sound';
   categoryVolumes = new CategoryVolumes();
   soundSynthesizer = new SoundSynthesizer();
   listener = new THREE.AudioListener();

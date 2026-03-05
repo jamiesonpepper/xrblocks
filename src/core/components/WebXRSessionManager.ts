@@ -1,14 +1,5 @@
 import * as THREE from 'three';
 
-declare global {
-  interface XRSystem {
-    offerSession?: (
-      mode: XRSessionMode,
-      sessionInit?: XRSessionInit
-    ) => Promise<XRSession>;
-  }
-}
-
 // Event type definitions for clarity
 export enum WebXRSessionEventType {
   UNSUPPORTED = 'unsupported',

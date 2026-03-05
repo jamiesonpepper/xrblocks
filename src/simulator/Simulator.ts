@@ -37,7 +37,7 @@ export class Simulator extends Script {
     depth: Depth,
     world: World,
   };
-
+  editorIcon = 'simulation';
   simulatorScene = new SimulatorScene();
   simulatorWorld = new SimulatorWorld();
   depth = new SimulatorDepth(this.simulatorScene);

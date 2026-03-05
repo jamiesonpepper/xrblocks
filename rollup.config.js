@@ -102,15 +102,7 @@ export default [
       format: 'esm',
       banner: bannerText,
     },
-    plugins: [
-      typescript({
-        compilerOptions: {
-          composite: false,
-          declaration: false,
-        },
-      }),
-      dts(),
-    ],
+    plugins: [dts()],
   },
   {
     input: 'src/xrblocks.ts',
