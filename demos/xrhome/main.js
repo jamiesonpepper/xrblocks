@@ -699,10 +699,7 @@ async function initApp() {
     // 1. Fetch Real Devices
     await refreshRealDevices();
 
-    // 2. Start Camera
-    await camera.startCamera();
-
-    // Check for AR Support
+    // Check for AR Support FIRST before starting any cameras
     let isARSupported = false;
     if (navigator.xr) {
         try {
@@ -713,6 +710,12 @@ async function initApp() {
     }
     console.log("AR Supported:", isARSupported);
 
+    // 2. Start Camera (Only use webrtc.js if NOT in AR)
+    if (!isARSupported) {
+        console.log("Starting 2D Desktop Camera (webrtc.js)...");
+        await camera.startCamera();
+    }
+
     // 3. Init XRBlocks
     await RAPIER.init(); // Fix: No arguments
     const o = new xb.Options();
@@ -721,6 +724,8 @@ async function initApp() {
 
     if (isARSupported) {
         o.enableUI(); // Only show "Enter AR" if supported
+        o.enableCamera('environment'); // natively mount deviceCamera via XRBlocks
+        console.log("Enabled XRBlocks Native Camera for 3D processing.");
     } else {
         // Desktop Mode: Create a transparent canvas manually
         if (!o.canvas) {
@@ -860,15 +865,28 @@ function startVisionLoop() {
             
             try {
                 const app = xb.core;
-                if (app && app.deviceCamera && app.deviceCamera.loaded) {
-                    // Use ScreenshotSynthesizer to get the latest rendered WebGL frame overlaying the camera
-                    const dataUrl = await app.screenshotSynthesizer.getScreenshot(true);
-                    if (dataUrl) {
-                        blob = await (await fetch(dataUrl)).blob();
+                if (app && app.deviceCamera && app.deviceCamera.loaded && app.deviceCamera.video) {
+                    const video = app.deviceCamera.video;
+                    if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+                        try {
+                            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                            // Calculate scale to maintain aspect ratio within 640px width
+                            const scale = 640 / video.videoWidth;
+                            canvas.width = 640;
+                            canvas.height = video.videoHeight * scale;
+                            
+                            // Draw the raw, un-3D-rendered video straight to the canvas
+                            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                            
+                            // Convert directly to Blob for the Vision API
+                            blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+                        } catch (drawErr) {
+                            console.warn("[FastLoop] Native Video to Canvas draw failed:", drawErr);
+                        }
                     }
                 }
             } catch (err) {
-                console.warn("[FastLoop] ScreenshotSynthesizer failed:", err);
+                console.warn("[FastLoop] DeviceCamera direct capture failed:", err);
             }
             
             // Fallback just in case, though the 2D loop handles non-XR normally
@@ -989,12 +1007,60 @@ async function toggleScan() {
         if (hud.mode !== '2D') {
             const app = xb.core;
             if (app && app.deviceCamera && app.deviceCamera.loaded) {
-                // Flush using ScreenshotSynthesizer to guarantee the WebGL render loop has ticked.
-                console.log("Flushing camera via ScreenshotSynthesizer...");
-                await app.screenshotSynthesizer.getScreenshot(true);
-                // Optionally wait an extra frame to be absolutely certain the AR session is piping live data
-                await new Promise(r => requestAnimationFrame(r));
-                console.log("deviceCamera Flushed natively.");
+                const video = app.deviceCamera.video;
+                
+                if (video) {
+                    hud.log("Waking up camera hardware...", '#FFFF00');
+                    
+                    // Force the video element to try playing if it was suspended
+                    video.play().catch(e => console.warn("Video play failed:", e));
+                    
+                    // Attach to DOM invisibly to signal the browser compositor to decode frames
+                    video.style.position = 'absolute';
+                    video.style.opacity = '0.01';
+                    video.style.width = '1px';
+                    video.style.height = '1px';
+                    video.style.pointerEvents = 'none';
+                    if (!video.parentNode) {
+                        document.body.appendChild(video);
+                    }
+                    
+                    console.log("[DEBUG-SCAN] Starting 2-frame hardware wait...");
+                    const hardwareWaitStart = performance.now();
+                    // Wait for 2 freshly decoded hardware frames to prove the pipeline is flushed
+                    await new Promise(resolve => {
+                        let frames = 0;
+                        const onFrame = () => {
+                            frames++;
+                            if (frames >= 2) {
+                                resolve();
+                            } else if (video.requestVideoFrameCallback) {
+                                video.requestVideoFrameCallback(onFrame);
+                            } else {
+                                // Fallback
+                                requestAnimationFrame(onFrame);
+                            }
+                        };
+                        
+                        // Timeout safety just in case
+                        const timeout = setTimeout(resolve, 1500);
+                        
+                        if (video.requestVideoFrameCallback) {
+                            video.requestVideoFrameCallback(onFrame);
+                        } else {
+                            setTimeout(onFrame, 100);
+                        }
+                    });
+                    console.log(`[DEBUG-SCAN] Hardware wait resolved in ${performance.now() - hardwareWaitStart}ms.`);
+                    
+                    if (app.deviceCamera.texture) {
+                        app.deviceCamera.texture.needsUpdate = true;
+                    }
+                }
+
+                // Wait for 1 more frame just to ensure video size is propagated to DOM
+                await new Promise(r => setTimeout(r, 50)); 
+                console.log("[DEBUG-SCAN] deviceCamera hardware is successfully streaming.");
             }
         } else {
             const canvas = document.getElementById('process-canvas');
@@ -1012,6 +1078,15 @@ async function toggleScan() {
     } else {
         // --- STOPPING SCAN ---
         isScanning = false;
+        
+        // Remove video from DOM to let hardware decoder sleep and save battery
+        if (hud.mode !== '2D') {
+            const app = xb.core;
+            if (app && app.deviceCamera && app.deviceCamera.video && app.deviceCamera.video.parentNode) {
+                app.deviceCamera.video.parentNode.removeChild(app.deviceCamera.video);
+                console.log("[Scan] Removed video element from DOM to sleep decoder.");
+            }
+        }
         
         // We leave the keep-alive active permanently to prevent video freezing
         // Only logging scanning pause now.
