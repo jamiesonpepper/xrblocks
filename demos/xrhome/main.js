@@ -838,10 +838,14 @@ function startVisionLoop() {
             try {
                 const app = xb.core;
                 if (app && app.deviceCamera && app.deviceCamera.loaded) {
-                    blob = await app.deviceCamera.getSnapshot({ outputFormat: 'blob' });
+                    // Use ScreenshotSynthesizer to get the latest rendered WebGL frame overlaying the camera
+                    const dataUrl = await app.screenshotSynthesizer.getScreenshot(true);
+                    if (dataUrl) {
+                        blob = await (await fetch(dataUrl)).blob();
+                    }
                 }
             } catch (err) {
-                console.warn("[FastLoop] deviceCamera.getSnapshot failed:", err);
+                console.warn("[FastLoop] ScreenshotSynthesizer failed:", err);
             }
             
             // Fallback just in case, though the 2D loop handles non-XR normally
@@ -983,11 +987,12 @@ async function toggleScan() {
                     console.log("[Scan] Injected VideoView Keep-alive natively.");
                 }
                 
-                // Flush once the stream is active, allow 150ms for WebGL to poll video frame
-                console.log("Flushing deviceCamera...");
-                await new Promise(r => setTimeout(r, 150));
-                await app.deviceCamera.getSnapshot({ outputFormat: 'blob' });
-                console.log("deviceCamera Flushed.");
+                // Flush using ScreenshotSynthesizer to guarantee the WebGL render loop has ticked.
+                console.log("Flushing camera via ScreenshotSynthesizer...");
+                await app.screenshotSynthesizer.getScreenshot(true);
+                // Optionally wait an extra frame to be absolutely certain the AR session is piping live data
+                await new Promise(r => requestAnimationFrame(r));
+                console.log("deviceCamera Flushed natively.");
             }
         } else {
             const canvas = document.getElementById('process-canvas');
