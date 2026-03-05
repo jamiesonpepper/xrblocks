@@ -382,7 +382,7 @@ class VirtualLight3D extends THREE.Group {
       this.panel = new xb.SpatialPanel({
           width: width, 
           height: height, 
-          backgroundColor: '#00000033', // Black with 20% opacity using alpha hex
+          backgroundColor: '#00000000', // Fully transparent
           draggable: false,             // Disables XRBlocks native dragging
       });
       
@@ -424,7 +424,7 @@ class VirtualLight3D extends THREE.Group {
       this.panel = new xb.SpatialPanel({
           width: this.panelWidth,
           height: dynamicHeight,
-          backgroundColor: '#00000033', // Black with 20% opacity
+          backgroundColor: '#00000000', // Fully transparent
           draggable: false,             // Disables XRBlocks native dragging
       });
       
