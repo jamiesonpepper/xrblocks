@@ -533,13 +533,7 @@ class VirtualLight3D extends THREE.Group {
                  
                  hud.speak("Enter Pairing Code.");
                  
-                 // Position keypad near the light
-                 const lightPos = new THREE.Vector3();
-                 
-                 // FIX: use 'vl' (Group) - Fixed Crash
-                 vl.getWorldPosition(lightPos);
-                 keypad.group.position.copy(lightPos).add(new THREE.Vector3(0.6, 0, 0.5));
-                 
+                 // Position keypad centered in front of the camera
                  let cam = xb.camera;
                  if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
                      cam = xb.renderer.xr.getCamera();
@@ -547,7 +541,13 @@ class VirtualLight3D extends THREE.Group {
                  
                  if (cam) {
                      const camPos = new THREE.Vector3();
+                     const camDir = new THREE.Vector3();
                      cam.getWorldPosition(camPos);
+                     cam.getWorldDirection(camDir);
+                     
+                     // Spawn exactly 5.0m in front of the user's view
+                     const spawnPos = camPos.clone().add(camDir.multiplyScalar(5.0));
+                     keypad.group.position.copy(spawnPos);
                      
                      // Use exact DragManager turnPanelToFaceTheCamera math to prevent snap-correction on interaction
                      const v = new THREE.Vector3().subVectors(keypad.group.position, camPos);
@@ -558,6 +558,11 @@ class VirtualLight3D extends THREE.Group {
                      
                      // Console log for debugging the exact coordinates
                      console.log(`[Keypad Debug] Spawning at ${keypad.group.position.toArray().map(n=>Math.round(n*100)/100).join(',')}, looking at camera at ${camPos.toArray().map(n=>Math.round(n*100)/100).join(',')}`);
+                 } else {
+                     // Fallback
+                     const lightPos = new THREE.Vector3();
+                     vl.getWorldPosition(lightPos);
+                     keypad.group.position.copy(lightPos).add(new THREE.Vector3(0.6, 0, 0.5));
                  }
 
                  keypad.open("", (code) => {
@@ -1715,22 +1720,20 @@ window.addEventListener('pointerdown', (event) => {
                          
                          hud.speak("Enter Pairing Code.");
                          
-                         // Position keypad near the light
+                         // Position keypad centered in front of the camera
                          if (vl.mesh) {
-                             const lightPos = new THREE.Vector3();
-                             vl.mesh.getWorldPosition(lightPos);
-                             
                              const camPos = new THREE.Vector3();
+                             const camDir = new THREE.Vector3();
                              let cam = xb.camera;
                              if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
                                  cam = xb.renderer.xr.getCamera();
                              }
                              cam.getWorldPosition(camPos);
+                             cam.getWorldDirection(camDir);
                              
-                             // Spawn 0.4m right, 0.4m towards camera
-                             const dir = new THREE.Vector3().subVectors(camPos, lightPos).normalize();
-                             dir.y = 0; // Keep horizontal offset
-                             keypad.group.position.copy(lightPos).add(dir.multiplyScalar(0.4)).add(new THREE.Vector3(0.4, 0, 0));
+                             // Spawn exactly 5.0m in front of the user's view
+                             const spawnPos = camPos.clone().add(camDir.multiplyScalar(5.0));
+                             keypad.group.position.copy(spawnPos);
                              
                              // Face the user's headset perfectly
                              keypad.group.lookAt(camPos); 
