@@ -293,7 +293,7 @@ class VirtualLight2D {
 // --- 3D Virtual Light (AR/XR) ---
 // --- 3D Virtual Light (AR/XR) ---
 class VirtualLight3D extends THREE.Group {
-  constructor(geminiData, labelText, width = 0.3, height = 0.4) {
+  constructor(geminiData, labelText, width = 0.15, height = 0.20) {
       super();
       this.geminiData = geminiData; // Keep for xmin/xmax/ymin/ymax
       this.labelText = labelText || "Light";
@@ -416,11 +416,11 @@ class VirtualLight3D extends THREE.Group {
       
       // Dynamic Text Sizing for Labels 
       const labelChars = this.labelText.length;
-      let dynamicFontSize = 0.132; // Base increased by ~20%
+      let dynamicFontSize = 0.264; // Doubled to compensate for 50% smaller panel layout
       // If label is very long (e.g. "Ceiling Light" = 13 chars), shrink font size so it fits row bounds linearly.
-      // Panel width is now 0.3. Assumed constraint proportionally smaller.
+      // Panel width is now 0.15. Assumed constraint proportionally smaller.
       if (labelChars > 11) {
-          dynamicFontSize = Math.max(0.066, 0.132 * (11 / labelChars));
+          dynamicFontSize = Math.max(0.132, 0.264 * (11 / labelChars));
       }
       
       // ROW 1: Label
@@ -441,9 +441,9 @@ class VirtualLight3D extends THREE.Group {
           // --- UNPAIRED UI ---
           const btn = rowBtn.addIconButton({ 
               text: 'add_circle',  
-              fontSize: 0.20,
-              width: 0.30,
-              height: 0.30,
+              fontSize: 0.40,
+              width: 0.60,
+              height: 0.60,
               mode: 'center', 
               backgroundColor: '#00AA00', 
               fontColor: '#FFFFFF'
@@ -454,9 +454,9 @@ class VirtualLight3D extends THREE.Group {
           // --- PAIRED UI ---
           const toggleBtn = rowBtn.addCol({weight: 0.5}).addIconButton({
               text: 'power_settings_new',
-              fontSize: 0.20, // Icon size
-              width: 0.30,
-              height: 0.30,
+              fontSize: 0.40, // Icon size
+              width: 0.60,
+              height: 0.60,
               mode: 'center', 
               backgroundColor: isOn ? '#FFFFFF' : '#FFFFFF', 
               fontColor: isOn ? '#333333' : '#FFFFFF' 
@@ -465,9 +465,9 @@ class VirtualLight3D extends THREE.Group {
 
           const unpairBtn = rowBtn.addCol({weight: 0.5}).addIconButton({ 
               text: 'link_off', 
-              fontSize: 0.20, 
-              width: 0.30,
-              height: 0.30,
+              fontSize: 0.40, 
+              width: 0.60,
+              height: 0.60,
               mode: 'center', 
               backgroundColor: '#CC0000', 
               fontColor: '#FFFFFF'
@@ -479,9 +479,9 @@ class VirtualLight3D extends THREE.Group {
           
           const decBtn = rowBrightness.addCol({weight: 0.5}).addIconButton({
               text: 'remove',
-              fontSize: 0.20,
-              width: 0.30,
-              height: 0.30,
+              fontSize: 0.40,
+              width: 0.60,
+              height: 0.60,
               mode: 'center',
               backgroundColor: '#CC0000',
               fontColor: '#FFFFFF'
@@ -490,9 +490,9 @@ class VirtualLight3D extends THREE.Group {
           
           const incBtn = rowBrightness.addCol({weight: 0.5}).addIconButton({
               text: 'add',
-              fontSize: 0.20,
-              width: 0.30,
-              height: 0.30,
+              fontSize: 0.40,
+              width: 0.60,
+              height: 0.60,
               mode: 'center',
               backgroundColor: '#00AA00',
               fontColor: '#FFFFFF'
