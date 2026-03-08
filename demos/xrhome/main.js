@@ -459,7 +459,7 @@ class VirtualLight3D extends THREE.Group {
               height: 0.60,
               mode: 'center', 
               backgroundColor: isOn ? '#FFFFFF' : '#FFFFFF', 
-              fontColor: isOn ? '#333333' : '#FFFFFF' 
+              fontColor: isOn ? '#CC0000' : '#00AA00'
           });
           toggleBtn.onTriggered = () => this.toggle();
 
