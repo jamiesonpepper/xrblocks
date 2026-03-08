@@ -21,24 +21,9 @@ let latestCameraMatrix = null;
 
 class HUDInteraction extends xb.Script {
     onUpdate() {
-        if (dragController && hud.panel) {
-            // Update HUD position ensuring it stays attached to controller relative transform
-            // Simple: Make it follow controller position + offset?
-            // Better: Apply the relative transform captured at start.
+        if (dragController && dragController.userData.selected) {
+            const objectToMove = dragController.userData.selected;
             
-            // For now, simpler "move with controller"
-            // hud.panel.position.copy(dragController.position).add(dragOffset); // Naive
-            
-            // Allow rotation dragging too?
-            // hud.panel.quaternion.copy(dragController.quaternion).multiply(dragQuaternion);
-            
-            // Let's use `attach` logic implicitly by just parenting?
-            // No, re-parenting in XR can be jumpy.
-            
-            // Best: Calculate new world matrix based on controller world matrix * inverse controller start * panel start
-            // Too complex for quick fix.
-            
-            // Simple "stick to hand" logic:
             // Get controller world pos/rot
             const cPos = new THREE.Vector3();
             const cQuat = new THREE.Quaternion();
@@ -47,10 +32,10 @@ class HUDInteraction extends xb.Script {
             
             // Apply local offset stored in dragOffset (rotated)
             const v = dragOffset.clone().applyQuaternion(cQuat);
-            hud.panel.position.copy(cPos).add(v);
+            objectToMove.position.copy(cPos).add(v);
             
             // Lock rotation to face user or keep relative? Keep relative to controller is naturally easiest for "grabbing"
-            hud.panel.quaternion.copy(cQuat).multiply(dragQuaternion);
+            objectToMove.quaternion.copy(cQuat).multiply(dragQuaternion);
         }
     }
 }
@@ -62,23 +47,6 @@ function onXRSelectStart(event) {
     const draggables = [];
     if (hud.panel) draggables.push(hud.panel);
 
-    // STRICT: Do NOT add Virtual Lights to draggables list.
-    // However, if Raycaster hits them via other means (global scene check?), we must ignore.
-    // Pass 'draggables' to intersectObjects limits the check to ONLY these items.
-    // So if Virtual Lights are not in this list, they CANNOT be dragged by this function.
-    // This confirms onXRSelectStart is NOT moving them. 
-    //
-    // UNLESS: 'hud.panel' or 'keypad.panel' somehow includes the lights? (Unlikely)
-    // OR: There is *another* drag handler.
-    //
-    // Let's assume onXRSelectStart is the culprit and maybe my logic for "draggables" included them before?
-    // No, I was using 'hud.panel' explicitly.
-    //
-    // Wait! 'hud.panel' might contain them if they are parented to it?
-    // VirtualLight3D is added to 'scene' or 'world'? 
-    //
-    // Let's verify VirtualLights are NOT children of HUD or Keypad.
-    
     tempMatrix.identity().extractRotation(controller.matrixWorld);
     raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
     raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
@@ -93,30 +61,22 @@ function onXRSelectStart(event) {
         let targetPanel = null;
         if (hud.panel && (hit.object === hud.panel || hud.panel.children.includes(hit.object))) targetPanel = hud.panel;
         
-        // Check explicit lock
-        if (targetPanel && (targetPanel.isDraggable === false || targetPanel.userData?.isDraggable === false)) return;
+        // Check explicit lock for HUD
+        if (targetPanel === hud.panel && (targetPanel.isDraggable === false || targetPanel.userData?.isDraggable === false)) return;
 
         if (targetPanel) {
              // Convert to Local Point on Panel
             const localPoint = targetPanel.worldToLocal(hit.point.clone());
             
-            // Panel Size (0.6 x 0.8 usually, but dynamic)
-            // Assuming standard size or check geometry?
-            // HUD is 0.6x0.8. Keypad is 0.6x0.8.
-            const w = 0.6; 
-            const h = 0.8;
+            // Panel Size
+            const w = targetPanel === hud.panel ? 0.6 : 0.6; 
+            const h = targetPanel === hud.panel ? 0.8 : 0.6;
             const border = 0.04; 
             
-            // Grab ANYWHERE on Keypad (header) or just border?
-            // HUD logic was border-only. Keypad user wants "click/move functionality from virtual light panels" (which was whole panel?)
-            // Let's allow border grab for consistency.
+            // Allow grabbing Keypad anywhere, HUD on border
             if (Math.abs(localPoint.x) > w/2 - border || Math.abs(localPoint.y) > h/2 - border || targetPanel === keypad.panel) {
-                // Allow grabbing Keypad anywhere if it's the target? Or just border?
-                // User said "move functionality to virtual keypad". 
-                // Let's assume border grab for now, but maybe widen it.
                 
                 dragController = controller;
-                // HUD moves `hud.panel`.
                 const objectToMove = targetPanel;
                 
                 dragController.userData.selected = objectToMove;
@@ -333,7 +293,7 @@ class VirtualLight2D {
 // --- 3D Virtual Light (AR/XR) ---
 // --- 3D Virtual Light (AR/XR) ---
 class VirtualLight3D extends THREE.Group {
-  constructor(geminiData, labelText, width = 1.2, height = 0.4) {
+  constructor(geminiData, labelText, width = 0.3, height = 0.4) {
       super();
       this.geminiData = geminiData; // Keep for xmin/xmax/ymin/ymax
       this.labelText = labelText || "Light";
@@ -343,28 +303,6 @@ class VirtualLight3D extends THREE.Group {
       this.realDevice = null;
       this.linkedNodeId = null; 
 
-      // Removed 3D Model logic for simplicity (just using label box)
-      // If we wanted to draw a 3D box, we could do it here.
-      
-      /* Legacy Box
-      const geo = new THREE.BoxGeometry(0.1, 0.1, 0.1);
-      const mat = new THREE.MeshStandardMaterial({ 
-          color: 0x555555,
-          emissive: 0x000000,
-          roughness: 0.2
-      });
-      this.mesh = new THREE.Mesh(geo, mat);
-      this.add(this.mesh);
-      
-      const edges = new THREE.EdgesGeometry(geo);
-      const material = new THREE.LineBasicMaterial({ 
-          color: 0xFFFF00, // Default Yellow
-          linewidth: 2 
-      });
-      */
-      
-      // Hit Mesh (Invisible, for easier raycasting if needed)
-      // Keep detection area for legacy interaction logic if needed
       // Hit Mesh (Invisible, for easier raycasting if needed)
       const hitGeo = new THREE.PlaneGeometry(width, height);
       const hitMat = new THREE.MeshBasicMaterial({ visible: false });
@@ -419,40 +357,39 @@ class VirtualLight3D extends THREE.Group {
       }
       
       const isPaired = !!(this.realDevice || this.linkedNodeId);
-      const dynamicHeight = isPaired ? 0.6 : this.panelHeight;
+      const canDrag = !isPaired && !isScanning;
+      
+      // Make the entire VirtualLight3D group the native drag root!
+      // This prevents the XRBlocks DragManager from applying world coordinates to a nested child panel, which caused spinning logic loops.
+      this.draggable = canDrag;
+      this.draggingMode = 'TRANSLATING';
+      this.dragFacingCamera = false;
       
       this.panel = new xb.SpatialPanel({
-          width: this.panelWidth,
-          height: dynamicHeight,
+          width: this.panelWidth, // Fixed square shape 0.6x0.6
+          height: this.panelHeight,
           backgroundColor: '#00000000', // Fully transparent
-          draggable: false,             // Disables XRBlocks native dragging
+          draggable: false,             // Prevent DragManager from clamping onto the child panel
+          useBorderlessShader: !canDrag, // Maintain native shiny styling logic based on drag state
       });
       
+      // FIX DRAG: We must undefined the internal drawing mode so DragManager propagates to our true root VirtualLight3D group!
+      this.panel.draggingMode = undefined;
+      
       // Positioned below the box
-      this.panel.position.set(0, -dynamicHeight/2 - 0.25, 0);
+      this.panel.position.set(0, -this.panelHeight/2 - 0.25, 0);
       this.add(this.panel);
       
       this.mainGrid = this.panel.addGrid();
 
-      // Locked Interaction
+      // Allow interactions
       this.panel.isInteractive = true;
-      this.panel.isDraggable = false;
-      this.panel.isRotatable = false;
-      this.panel.userData.isVirtualLight = true; // Flag for strict ignore
       
-      // Removed custom borderMesh and manual opacity override. 
-      // Opacity is handled correctly by xrblocks via the #00000033 hex in the constructor.
+      // Do not manually disable dragging here. Let the PanelOptions initialization persist.
+      // We only disable it strictly via the native loop when the panel is paired.
+      this.panel.userData.isVirtualLight = true; 
       
-      // Ensure the newly rebuilt panel and its children are strictly not draggable, rotatable, or grabbable
-      this.panel.traverse(c => {
-          c.isDraggable = false;
-          c.isRotatable = false;
-          c.isGrabbable = false;
-          c.userData = c.userData || {};
-          c.userData.isDraggable = false;
-          c.userData.isRotatable = false;
-          c.userData.isGrabbable = false;
-      });
+      // Removed recursive lockdown of child interaction properties.
 
       // Force Light Panel to Layer 300 (Lowest Tier)
       const enforceRenderOrder = (panel, baseOrder) => {
@@ -477,13 +414,24 @@ class VirtualLight3D extends THREE.Group {
       
       const stateColor = this.stateColor !== undefined ? this.stateColor : '#FFFF00';
       
+      // Dynamic Text Sizing for Labels 
+      const labelChars = this.labelText.length;
+      let dynamicFontSize = 0.132; // Base increased by ~20%
+      // If label is very long (e.g. "Ceiling Light" = 13 chars), shrink font size so it fits row bounds linearly.
+      // Panel width is now 0.3. Assumed constraint proportionally smaller.
+      if (labelChars > 11) {
+          dynamicFontSize = Math.max(0.066, 0.132 * (11 / labelChars));
+      }
+      
       // ROW 1: Label
       const rowLabel = this.mainGrid.addRow({ weight: 0.4 });
       rowLabel.addText({ 
           text: this.labelText, 
-          fontSize: 0.08, 
+          fontSize: dynamicFontSize, 
           fontColor: stateColor, // Label text dynamically matches state
-          textAlign: 'center'
+          textAlign: 'center',
+          mode: 'center', // Explicitly override 'fitWidth' layout intercept!
+          maxWidth: this.panelWidth * 0.9 // Hard limit text wrapping width so it NEVER pushes the Grid bounds outwards
       });
       
       // ROW 2: Control Button
@@ -494,6 +442,8 @@ class VirtualLight3D extends THREE.Group {
           const btn = rowBtn.addIconButton({ 
               text: 'add_circle',  
               fontSize: 0.20,
+              width: 0.30,
+              height: 0.30,
               mode: 'center', 
               backgroundColor: '#00AA00', 
               fontColor: '#FFFFFF'
@@ -505,8 +455,10 @@ class VirtualLight3D extends THREE.Group {
           const toggleBtn = rowBtn.addCol({weight: 0.5}).addIconButton({
               text: 'power_settings_new',
               fontSize: 0.20, // Icon size
+              width: 0.30,
+              height: 0.30,
               mode: 'center', 
-              backgroundColor: isOn ? '#FFFFFF' : '#333333', 
+              backgroundColor: isOn ? '#FFFFFF' : '#FFFFFF', 
               fontColor: isOn ? '#333333' : '#FFFFFF' 
           });
           toggleBtn.onTriggered = () => this.toggle();
@@ -514,6 +466,8 @@ class VirtualLight3D extends THREE.Group {
           const unpairBtn = rowBtn.addCol({weight: 0.5}).addIconButton({ 
               text: 'link_off', 
               fontSize: 0.20, 
+              width: 0.30,
+              height: 0.30,
               mode: 'center', 
               backgroundColor: '#CC0000', 
               fontColor: '#FFFFFF'
@@ -526,8 +480,10 @@ class VirtualLight3D extends THREE.Group {
           const decBtn = rowBrightness.addCol({weight: 0.5}).addIconButton({
               text: 'remove',
               fontSize: 0.20,
+              width: 0.30,
+              height: 0.30,
               mode: 'center',
-              backgroundColor: '#333333',
+              backgroundColor: '#CC0000',
               fontColor: '#FFFFFF'
           });
           decBtn.onTriggered = () => this.setBrightness(this.brightness - 10);
@@ -535,8 +491,10 @@ class VirtualLight3D extends THREE.Group {
           const incBtn = rowBrightness.addCol({weight: 0.5}).addIconButton({
               text: 'add',
               fontSize: 0.20,
+              width: 0.30,
+              height: 0.30,
               mode: 'center',
-              backgroundColor: '#333333',
+              backgroundColor: '#00AA00',
               fontColor: '#FFFFFF'
           });
           incBtn.onTriggered = () => this.setBrightness(this.brightness + 10);
@@ -725,6 +683,8 @@ async function initApp() {
     if (isARSupported) {
         o.enableUI(); // Only show "Enter AR" if supported
         o.enableCamera('environment'); // natively mount deviceCamera via XRBlocks
+        o.referenceSpaceType = 'unbounded';
+        o.webxrRequiredFeatures.push('unbounded');
         console.log("Enabled XRBlocks Native Camera for 3D processing.");
     } else {
         // Desktop Mode: Create a transparent canvas manually
@@ -1070,6 +1030,9 @@ async function toggleScan() {
         // 2. Enable Scanning (Now safe)
         isScanning = true;
         
+        // Update all visual lights to toggle draggability OFF
+        virtualLights.forEach(vl => vl.updateVisuals());
+        
         // Update UI
         if (hud && hud.setScanState) hud.setScanState(true);
         hud.speak("Scanning started. Please pan around.");
@@ -1078,6 +1041,9 @@ async function toggleScan() {
     } else {
         // --- STOPPING SCAN ---
         isScanning = false;
+        
+        // Update all visual lights to toggle draggability ON (if unpaired)
+        virtualLights.forEach(vl => vl.updateVisuals());
         
         // Remove video from DOM to let hardware decoder sleep and save battery
         if (hud.mode !== '2D') {
@@ -1360,9 +1326,16 @@ async function spawnVirtualLights(lights, cameraMatrix) {
             const cy = (l.ymin + l.ymax) / 2;
     
 
-            // Default Depth (In Front of User)
-            // OpenGL: -Z is Forward. 
-            const z = -4.8; 
+            // Estimate depth based on bounding box size using true perspective inversion.
+            // Assuming average physical detected object (lamp, keypad) is ~0.4 meters wide.
+            // Z ≈ true_physical_width / normalized_image_size
+            const boxSize = Math.max(l.xmax - l.xmin, l.ymax - l.ymin);
+            
+            let z = -4.8; 
+            if (boxSize > 0) {
+                 const size = Math.max(0.02, boxSize); // floor at 0.02 to prevent infinite depth
+                 z = -Math.max(0.5, Math.min(6.0, 0.4 / size)); 
+            }
             
             // Get Camera
             let cam = null;
@@ -1389,19 +1362,26 @@ async function spawnVirtualLights(lights, cameraMatrix) {
             const x = (cx - 0.5) * vW; 
             const y = -(cy - 0.5) * vH; 
             
-            // Calculate physical dimensions correctly based on depth and FOV
-            const physicalW = Math.max(0.6, (l.xmax - l.xmin) * vW);
-            const physicalH = Math.max(0.3, (l.ymax - l.ymin) * vH);
-
-            const vLight = new VirtualLight3D(l, label, physicalW, physicalH);
+            // Create a perfectly uniform 3:4 vertically constrained UI panel explicitly
+            const vLight = new VirtualLight3D(l, label);
+            
+            // Restore a dynamically scaled physical size matched to the vision API detection distance!
+            // We apply it uniformly against the 3D Group so the internal UI margins NEVER stretch horizontally!
+            const targetVisibleWidth = Math.max(0.3, (l.xmax - l.xmin) * vW * 1.5);
+            const uniformScale = targetVisibleWidth / 0.3; // Base UI width is locked at 0.3
+            vLight.scale.setScalar(uniformScale);
             
             // POSITIONING FIX: Use Historical Camera Matrix correctly 
             if (cameraMatrix) {
                  // The coordinates (x, y, z) are relative to the camera AT THE TIME OF CAPTURE
-                 vLight.position.set(x, y, z);
+                 // Apply a 2m push-back further into the scene along the camera's line of sight
+                 vLight.position.set(x, y, z - 2.0);
                  
                  // Apply the exact transform the camera had when it took the photo
                  vLight.applyMatrix4(cameraMatrix);
+                 
+                 // Apply exactly 2m vertical offset UP in absolute World coordinates
+                 vLight.position.y += 2.0;
                  
                  // Make the panel face the user's *current* position so they can read it
                  let currentCam = xb.camera;
@@ -1420,7 +1400,8 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                  cam.getWorldPosition(camPos);
                  cam.getWorldDirection(camDir);
                  
-                 const basePos = camPos.clone().add(camDir.multiplyScalar(4.8));
+                 const basePos = camPos.clone().add(camDir.multiplyScalar(-z + 2.0));
+                 basePos.y += 2.0; // Raise 2m higher
                  
                  vLight.position.copy(basePos);
                  vLight.lookAt(camPos); 
@@ -1428,26 +1409,10 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                  console.log(`[Spawn] Placed '${label}' via Fallback Math at`, vLight.position);
             } else {
                  console.warn(`[Spawn] No Camera! Using Safe Center with Offset.`);
-                 vLight.position.set(x, 1.6 + y, z); 
+                 vLight.position.set(x, 1.6 + y + 2.0, z - 2.0); 
             }
             
-            // CRITICAL: Interaction Logic
-            // Disable interaction on the container group to prevent drag
-            vLight.isInteractive = false; 
-            vLight.isDraggable = false;
-            vLight.isRotatable = false;
-            
-            // Re-enable interaction on Panel ONLY (handled in class)
-            // But explicitly disable drag and grab there too.
-            if (vLight.traverse) {
-                vLight.traverse(child => {
-                     // Don't disable isInteractive on children, or buttons break!
-                     // But do disable drag/grab.
-                    child.isDraggable = false;
-                    child.isRotatable = false;
-                    child.isGrabbable = false;
-                });
-            }
+            // Allow Interaction Logic to be governed fully by the internal rebuildPanel state logic natively
             
             virtualLights.push(vLight);
             xb.add(vLight); 

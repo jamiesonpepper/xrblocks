@@ -72,7 +72,7 @@ export class HUDManager {
     init3D(scene) {
         this.scene = scene;
         this.isMenuExpanded = true;
-        this.menuPos = new THREE.Vector3(0, 1.5, -1.5);
+        this.menuPos = new THREE.Vector3(0, 0.3, -1.5);
         this.menuRot = new THREE.Euler(0, 0, 0);
         this.renderMenu();
         console.log("HUD initialized in 3D Mode (SpatialPanel) with Collapsible Design");
