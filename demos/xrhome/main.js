@@ -36,6 +36,9 @@ class HUDInteraction extends xb.Script {
             
             // Lock rotation to face user or keep relative? Keep relative to controller is naturally easiest for "grabbing"
             objectToMove.quaternion.copy(cQuat).multiply(dragQuaternion);
+            
+            // Force Panel Matrix World sync to ensure hitting raycasts align with visible location immediately
+            if (objectToMove.updateMatrixWorld) objectToMove.updateMatrixWorld(true);
         }
     }
 }
@@ -112,8 +115,8 @@ function onXRSelect(event) {
     raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
 
     // 1. Check Keypad Interaction (High Priority)
-    if (keypad.visible && keypad.mesh) {
-        const keypadIntersects = raycaster.intersectObject(keypad.mesh);
+    if (keypad.visible && keypad.panel && keypad.panel.mesh) {
+        const keypadIntersects = raycaster.intersectObject(keypad.panel.mesh);
         if (keypadIntersects.length > 0) {
             const hit = keypadIntersects[0];
             // UV to 0..1
@@ -558,11 +561,15 @@ class VirtualLight3D extends THREE.Group {
                      
                      // Console log for debugging the exact coordinates
                      console.log(`[Keypad Debug] Spawning at ${keypad.group.position.toArray().map(n=>Math.round(n*100)/100).join(',')}, looking at camera at ${camPos.toArray().map(n=>Math.round(n*100)/100).join(',')}`);
+                     
+                     // CRITICAL FIX: Flush matrix calculation to XRBlocks immediately so hit testing align
+                     keypad.group.updateMatrixWorld(true);
                  } else {
                      // Fallback
                      const lightPos = new THREE.Vector3();
                      vl.getWorldPosition(lightPos);
                      keypad.group.position.copy(lightPos).add(new THREE.Vector3(0.6, 0, 0.5));
+                     keypad.group.updateMatrixWorld(true);
                  }
 
                  keypad.open("", (code) => {
@@ -1398,6 +1405,7 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                  if (currentCam) vLight.lookAt(currentCam.position);
                  
                  console.log(`[Spawn] Placed '${label}' via Historical Matrix at`, vLight.position);
+                 vLight.updateMatrixWorld(true);
             } else if (cam) {
                  // Fallback if no matrix was saved during capture (shouldn't happen with the fast loop fix)
                  const camPos = new THREE.Vector3();
@@ -1412,9 +1420,11 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                  vLight.lookAt(camPos); 
                  
                  console.log(`[Spawn] Placed '${label}' via Fallback Math at`, vLight.position);
+                 vLight.updateMatrixWorld(true);
             } else {
                  console.warn(`[Spawn] No Camera! Using Safe Center with Offset.`);
                  vLight.position.set(x, 1.6 + y + 2.0, z - 2.0); 
+                 vLight.updateMatrixWorld(true);
             }
             
             // Allow Interaction Logic to be governed fully by the internal rebuildPanel state logic natively
@@ -1562,9 +1572,9 @@ class GestureSystem {
             const pinchCenter = new THREE.Vector3().addVectors(indexTip, thumbTip).multiplyScalar(0.5);
 
             // A0. Check Keypad Interaction (Highest Priority)
-            if (keypad.visible && keypad.mesh) {
+            if (keypad.visible && keypad.panel && keypad.panel.mesh) {
                 const keypadPos = new THREE.Vector3();
-                keypad.mesh.getWorldPosition(keypadPos);
+                keypad.panel.mesh.getWorldPosition(keypadPos);
                 
                 // Distance check (Assume 0.8x0.8 plane)
                 if (Math.abs(pinchCenter.z - keypadPos.z) < 0.1 && 
@@ -1716,7 +1726,7 @@ window.addEventListener('pointerdown', (event) => {
                      // 3D MODE: Direct Keypad (No Menu)
                      if (!keypad.visible) {
                          // Initialize if needed
-                         if (!keypad.mesh) keypad.init(xb.scene);
+                         if (!keypad.panel) keypad.init(xb.scene);
                          
                          hud.speak("Enter Pairing Code.");
                          
@@ -1738,6 +1748,7 @@ window.addEventListener('pointerdown', (event) => {
                              // Face the user's headset perfectly
                              keypad.group.lookAt(camPos); 
                              keypad.group.rotateY(Math.PI); // Flipped so +Z faces camera natively.
+                             keypad.group.updateMatrixWorld(true);
                              
                              console.log(`[Keypad Legacy] Spawned at ${keypad.group.position.toArray().map(n=>n.toFixed(2))} facing headset at ${camPos.toArray().map(n=>n.toFixed(2))}`);
                          }

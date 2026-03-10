@@ -1,6 +1,6 @@
 /**
  * vision.js
- * Handles interaction with Gemini 1.5 Flash REST API.
+ * Handles interaction with Gemini 2.5 Flash REST API.
  * Uses strict JSON mode for reliable object detection.
  */
 
@@ -35,8 +35,8 @@ export class VisionManager {
             console.log(base64Data);
             console.log('[Vision] RAW_BASE64_IMAGE_END');
 
-            // Switching to Gemini 2.0 Flash (Stable)
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`;
+            // Switching to Gemini 2.5 Flash (Stable)
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.apiKey}`;
             
             console.log(`[Vision] Sending Request to Gemini...`);
             
