@@ -1,3 +1,19 @@
+// Load .env file if present (no external deps needed)
+try {
+  require('fs').readFileSync('.env', 'utf8').split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const idx = trimmed.indexOf('=');
+    if (idx > 0) {
+      const key = trimmed.slice(0, idx).trim();
+      const val = trimmed.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+      if (!process.env[key]) process.env[key] = val;
+    }
+  });
+} catch(e) {}
+
+const fs = require('fs');
+
 // Force IPv4 to avoid Docker IPv6 issues (ENETUNREACH)
 const { Environment } = require('@project-chip/matter.js/environment');
 Environment.default.vars.set('network.ipv6', false);
@@ -19,13 +35,35 @@ const { ManualPairingCodeCodec } = require('@project-chip/matter.js/schema');
 // In a real scenario, storage and detailed interaction clients need careful handling.
 
 const app = express();
-// Serve static files from current directory
+
+// Inject GEMINI_API_KEY into index.html so the client can read it synchronously
+const serveIndex = (req, res) => {
+  try {
+    let html = fs.readFileSync('./index.html', 'utf8');
+    const inject = `<script>window.GEMINI_API_KEY=${JSON.stringify(process.env.GEMINI_API_KEY||'')};</script>`;
+    html = html.replace('</head>', inject + '</head>');
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch(e) {
+    res.status(500).send('Could not read index.html');
+  }
+};
+app.get('/', serveIndex);
+app.get('/index.html', serveIndex);
+app.get('/demos/xrhome/index.html', serveIndex);
+app.get('/demos/xrhome/', serveIndex);
+
 // Serve static files from current directory
 app.use(express.static('.'));
 // Also serve at /demos/xrhome for backward compatibility with existing URLs
 app.use('/demos/xrhome', express.static('.'));
 app.use(cors());
 app.use(bodyParser.json());
+
+// Serve client-side config (e.g. Gemini API key) from environment
+app.get('/config', (req, res) => {
+  res.json({ geminiKey: process.env.GEMINI_API_KEY || '' });
+});
 
 // Request Logging Middleware
 app.use((req, res, next) => {
@@ -612,10 +650,9 @@ app.get('/light/:id/state', async (req, res) => {
     }
 });
 
-const PORT = 8080;
+const PORT = 8443;
 // HTTPS Setup
 const https = require('https');
-const fs = require('fs');
 
 try {
     const options = {

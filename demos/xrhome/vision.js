@@ -35,7 +35,10 @@ export class VisionManager {
             console.log(base64Data);
             console.log('[Vision] RAW_BASE64_IMAGE_END');
 
+<<<<<<< HEAD
             // Switching to Gemini 2.5 Flash (Stable)
+=======
+>>>>>>> c07e4fa (xrhome: load Gemini API key from .env, inject into client, HTTPS on 8443)
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.apiKey}`;
             
             console.log(`[Vision] Sending Request to Gemini...`);
