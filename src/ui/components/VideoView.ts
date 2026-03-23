@@ -73,8 +73,10 @@ export class VideoView extends View {
 
     const videoGeometry = new THREE.PlaneGeometry(1, 1);
     const videoMaterial = new THREE.MeshBasicMaterial({
-      transparent: false, // Testing if WebXR external texture transparent bug is alpha-blending randomly
-      depthWrite: false,
+      transparent: true,
+      blending: THREE.NoBlending,
+      toneMapped: false,
+      depthWrite: true,
       side: THREE.DoubleSide,
       // `map` will be set based on options.texture or during load
     });
