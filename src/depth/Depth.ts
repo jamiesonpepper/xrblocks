@@ -117,6 +117,7 @@ export class Depth {
 
   /**
    * Retrieves the depth at normalized coordinates (u, v).
+   * Note: The UV coordinates are with respect to the user's view, not the depth camera view.
    * @param u - Normalized horizontal coordinate.
    * @param v - Normalized vertical coordinate.
    * @returns Depth value at the specified coordinates.
@@ -155,7 +156,17 @@ export class Depth {
       .applyMatrix4(this.depthProjectionMatrices[0]);
     const u = 0.5 * (clipSpacePosition.x + 1.0);
     const v = 0.5 * (clipSpacePosition.y + 1.0);
-    const depth = this.getDepth(u, v);
+
+    let depth = 0.0;
+    if (this.depthArray[0]) {
+      const depthX = Math.round(clamp(u * this.width, 0, this.width - 1));
+      const depthY = Math.round(
+        clamp((1.0 - v) * this.height, 0, this.height - 1)
+      );
+      const rawDepth = this.depthArray[0][depthY * this.width + depthX];
+      depth = this.rawValueToMeters * rawDepth;
+    }
+
     target.set(2.0 * (u - 0.5), 2.0 * (v - 0.5), -1);
     target.applyMatrix4(this.depthProjectionInverseMatrices[0]);
     target.multiplyScalar(-depth / target.z);
@@ -164,6 +175,7 @@ export class Depth {
 
   /**
    * Retrieves the depth at normalized coordinates (u, v).
+   * Note: The UV coordinates are with respect to the user's view, not the depth camera view.
    * @param u - Normalized horizontal coordinate.
    * @param v - Normalized vertical coordinate.
    * @returns Vertex at (u, v)
