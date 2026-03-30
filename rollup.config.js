@@ -166,7 +166,6 @@ export default [
       'demos/**/node_modules/**',
       'demos/**/build/**',
       // Projects with a custom build system.
-      'demos/drone/**',
     ],
   }).map((file) => ({
     input: file,
