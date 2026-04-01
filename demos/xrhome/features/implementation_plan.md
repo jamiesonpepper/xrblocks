@@ -105,6 +105,15 @@ To ensure the existing `index.html` and `main.js` are untouched, we will create 
   - Integrates `slam-manager.js` for anchor-based scanning.
   - Integrates `google-home-client.js` to populate the `VirtualLight3D` instances with Google Home IDs rather than Matter node IDs.
 
+### 4. UI Component Migration
+
+#### [MODIFY] Button Components
+
+- **Purpose**: Update the application's buttons to use the new `uiblocks` components provided by `xrblocks`.
+- **Details**:
+  - Transition existing button implementations in the UI overlays and spatial panels to use the new `uiblocks` components.
+  - Ensure uniform styling, better ergonomics, and consistent interaction patterns provided by the `xrblocks` component library.
+
 ---
 
 ## Verification Plan
