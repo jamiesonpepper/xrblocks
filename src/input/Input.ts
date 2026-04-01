@@ -482,7 +482,16 @@ export class Input {
         return true;
       });
     if (!intersection) {
-      reticle.visible = false;
+      const fallback = this.options.reticles.defaultDistance;
+      if (fallback > 0) {
+        reticle.visible = true;
+        reticle.position
+          .copy(this.raycaster.ray.origin)
+          .addScaledVector(this.raycaster.ray.direction, fallback);
+        reticle.quaternion.identity();
+      } else {
+        reticle.visible = false;
+      }
       return;
     }
     reticle.visible = true;

@@ -1,19 +1,21 @@
 # XR Blocks
 
 [![NPM Package](https://img.shields.io/npm/v/xrblocks)](https://www.npmjs.com/package/xrblocks)
-[![Build Size](https://badgen.net/bundlephobia/minzip/xrblocks)](https://bundlephobia.com/result?p=xrblocks)
-![jsDelivr hits (GitHub)](https://img.shields.io/jsdelivr/gh/hw/google/xrblocks)
+[![jsDelivr npm hits](<https://img.shields.io/jsdelivr/npm/hw/xrblocks?label=jsdelivr%20(npm)>)](https://www.jsdelivr.com/package/npm/xrblocks)
+[![jsDelivr GitHub hits](<https://img.shields.io/jsdelivr/gh/hw/google/xrblocks?label=jsdelivr%20(GitHub)>)](https://www.jsdelivr.com/package/gh/google/xrblocks)
 [![arXiv](https://img.shields.io/badge/arXiv-2509.25504-b31b1b.svg)](https://arxiv.org/abs/2509.25504)
+[![arXiv](https://img.shields.io/badge/arXiv-2603.24591-b31b1b.svg)](https://arxiv.org/abs/2603.24591)
 
-#### JavaScript library for rapid XR and AI prototyping
+#### JavaScript library for rapid AI + XR prototyping
 
 [Site](https://xrblocks.github.io/) &mdash;
 [Manual](https://xrblocks.github.io/docs/) &mdash;
 [Templates](https://xrblocks.github.io/docs/templates/Basic/) &mdash;
-[Demos](https://xrblocks.github.io/docs/samples/ModelViewer/) &mdash;
+[Demos](https://xrblocks.github.io/docs/samples/) &mdash;
+[Gem](https://xrblocks.github.io/gem) &mdash;
 [YouTube](https://www.youtube.com/watch?v=75QJHTsAoB8) &mdash;
 [arXiv](https://arxiv.org/abs/2509.25504) &mdash;
-[Blog](https://research.google/blog/xr-blocks-accelerating-ai-xr-innovation/)
+[Blog](https://research.google/blog/vibe-coding-xr-accelerating-ai-xr-prototyping-with-xr-blocks-and-gemini)
 
 <p align="center">
   <a href="https://xrblocks.github.io/docs/samples/Ballpit/" target="_blank"><img width="32.3%" src="https://cdn.jsdelivr.net/gh/google/xrblocks@main/assets/ballpit-demo.webp" alt="Ballpit" /></a>
@@ -31,14 +33,15 @@ includes a powerful desktop simulator for development. The framework emphasizes
 a user-centric, developer-friendly SDK designed to simplify the creation of
 immersive applications with features like:
 
-- **Hand Tracking & Gestures:** Access advanced hand tracking, custom
-  gestures with TensorFlow Lite / PyTorch models, and interaction events.
+- **Hand Tracking & Gestures:** Access advanced hand tracking, custom gestures
+  with TensorFlow Lite / PyTorch models, and interaction events.
 - **Gesture Recognition:** Opt into pinch, open-palm, fist, thumbs-up, point,
   and spread detection with `options.enableGestures()`, tune providers or
   thresholds, and subscribe to `gesturestart`/`gestureupdate`/`gestureend`
   events from the shared subsystem.
 - **World Understanding:** Present samples with depth sensing, geometry-aware
-  physics, and object recognition with Gemini in both XR and desktop simulator.
+  physics, and object recognition with Gemini in both XR and desktop
+  simulator.
 - **AI Integration:** Seamlessly connect to Gemini for multimodal
   understanding and live conversational experiences.
 - **Cross-Platform:** Write once and deploy to both XR devices and desktop
@@ -132,6 +135,16 @@ code below:
 </html>
 ```
 
+### Gem
+
+For rapdi prototyping, please refer to this
+[blog](https://research.google/blog/vibe-coding-xr-accelerating-ai-xr-prototyping-with-xr-blocks-and-gemini)
+and try out [XR Blocks Gem](https://xrblocks.github.io/gem) on Android XR or
+desktop using Chrome.
+
+A video demonstration of XR Blocks Gem can be found
+[here](https://www.youtube.com/watch?v=nknCzIxHHzw).
+
 ### Development Guide
 
 #### Setup
@@ -145,13 +158,12 @@ cd xrblocks
 npm ci
 ```
 
-After setup, either serve the samples and demos or develop locally, as
-described below.
+After setup, either serve the samples and demos or develop locally, as described
+below.
 
 #### Serve samples and demos
 
-Serve the repository to view samples and demos through
-`http://localhost:8080/`:
+Serve the repository to view samples and demos through `http://localhost:8080/`:
 
 ```bash
 # Serve the repository on http://localhost:8080
@@ -169,8 +181,8 @@ npm run dev
 
 #### Linting and formatting
 
-XR Blocks uses ESLint for linting and Prettier for formatting. Run the
-following commands to check your code before submitting a pull request:
+XR Blocks uses ESLint for linting and Prettier for formatting. Run the following
+commands to check your code before submitting a pull request:
 
 ```bash
 npm run lint # ESLint check
@@ -254,72 +266,23 @@ as:
 }
 ```
 
-#### Key Works Built with XR Blocks
-
-These references are built with XR Blocks:
-
 ```bibtex
-@inproceedings{Lee2025Sensible,
-  title = {{Sensible Agent: A Framework for Unobtrusive Interaction with Proactive AR Agent}},
-  author = {Lee, Geonsun and Xia, Min and Numan, Nels and Qian, Xun and Li, David and Chen, Yanhe and Kulshrestha, Achin and Chatterjee, Ishan and Zhang, Yinda and Manocha, Dinesh and Kim, David and Du, Ruofei},
-  booktitle = {Proceedings of the 39th Annual ACM Symposium on User Interface Software and Technology},
-  year = {2025},
-  publisher = {ACM},
-  numpages = {22},
-  series = {UIST},
-  doi = {10.1145/3746059.3747748},
-}
-```
-
-#### Inspiring Related Works
-
-We call for contributors to integrate our prior art into XR Blocks to enhance
-reproducibility and knowledge sharing:
-
-E.g., integrating models from <https://visualblocks.withgoogle.com> and [Transformers.js](https://huggingface.co/docs/transformers.js/en/index)
-to XR Blocks; bringing more
-[depth-based interaction](https://augmentedperception.github.io/depthlab/) to
-XR Blocks; and add more samples and demos. For large commits, feel free to add
-an issue before working on it so that your work won't be duplicated with others.
-
-```bibtex
-@inproceedings{Du2023Rapsai,
-  title = {{Rapsai: Accelerating Machine Learning Prototyping of Multimedia Applications Through Visual Programming}},
-  author = {Du, Ruofei and Li, Na and Jin, Jing and Carney, Michelle and Miles, Scott and Kleiner, Maria and Yuan, Xiuxiu and Zhang, Yinda and Kulkarni, Anuva and Liu, XingyuBruce and Sabie, Ahmed and Orts-Escolano, Sergio and Kar, Abhishek and Yu, Ping and Iyengar, Ram and Kowdle, Adarsh and Olwal, Alex},
-  booktitle = {Proceedings of the 2023 CHI Conference on Human Factors in Computing Systems},
-  year = {2023},
-  publisher = {ACM},
-  month = {Apr.},
-  day = {22-29},
-  number = {125},
-  pages = {1--23},
-  series = {CHI},
-  doi = {10.1145/3544548.3581338},
-}
-```
-
-Extending XR Blocks to XR communication:
-
-```bibtex
-@inproceedings{Hu2025DialogLab,
-  title = {{DialogLab: Authoring, Simulating, and Testing Dynamic Group Conversations in Hybrid Human-AI Conversations}},
-  author = {Hu, Erzhen and Chen, Yanhe and Li, Mingyi and Phadnis, Vrushank and Xu, Pingmei and Qian, Xun and Olwal, Alex and Kim, David and Heo, Seongkook and Du, Ruofei},
-  booktitle = {Proceedings of the 39th Annual ACM Symposium on User Interface Software and Technology},
-  year = {2025},
-  number = {210},
-  publisher = {ACM},
-  number = {210},
-  pages = {1--20},
-  series = {UIST},
-  doi = {10.1145/3746059.3747696},
+@misc{Du2026Vibe,
+  title={Vibe Coding XR: Accelerating AI + XR Prototyping with XR Blocks and Gemini},
+  author={Ruofei Du and Benjamin Hersh and David Li and Nels Numan and Xun Qian and Yanhe Chen and Zhongyi Zhou and Xingyue Chen and Jiahao Ren and Robert Timothy Bettridge and Steve Toh and David Kim},
+  year={2026},
+  eprint={2603.24591},
+  archivePrefix={arXiv},
+  primaryClass={cs.HC},
+  url={https://arxiv.org/abs/2603.24591},
 }
 ```
 
 ### Terms of Service
 
 - Please follow
-  [Google's Privacy & Terms](https://ai.google.dev/gemini-api/terms) when
-  using this SDK.
+  [Google's Privacy & Terms](https://policies.google.com/privacy?hl=en-US)
+  when using this SDK.
 
 - When using AI features in this SDK, please follow
   [Gemini's Privacy & Terms](https://ai.google.dev/gemini-api/terms).

@@ -40,6 +40,12 @@ export class InputOptions {
  */
 export class ReticleOptions {
   enabled = true;
+  /**
+   * When set to a positive value, the reticle is placed at this distance
+   * (in meters) along the controller ray when no intersection is found,
+   * instead of being hidden. Set to 0 to hide the reticle on miss.
+   */
+  defaultDistance = 0;
 }
 
 /**
@@ -297,7 +303,6 @@ export class Options {
   enableAI() {
     this.ai.enabled = true;
     this.ai.gemini.enabled = true;
-    this.ai.gemini.live.enabled = true;
     return this;
   }
 

@@ -72,7 +72,7 @@ export class Core {
   input = new Input();
 
   /** The main camera for rendering. */
-  camera!: THREE.PerspectiveCamera;
+  camera = new THREE.PerspectiveCamera();
 
   /** The root scene graph for all objects. */
   scene = new THREE.Scene();
@@ -198,11 +198,13 @@ export class Core {
       this.registry.register(this.transition);
     }
 
-    this.camera = new THREE.PerspectiveCamera(
-      /*fov=*/ 90,
-      window.innerWidth / window.innerHeight,
-      /*near=*/ options.camera.near,
-      /*far=*/ options.camera.far
+    this.camera.copy(
+      new THREE.PerspectiveCamera(
+        /*fov=*/ 90,
+        window.innerWidth / window.innerHeight,
+        /*near=*/ options.camera.near,
+        /*far=*/ options.camera.far
+      )
     );
     this.registry.register(this.camera, THREE.Camera);
     this.registry.register(this.camera, THREE.PerspectiveCamera);
@@ -253,10 +255,18 @@ export class Core {
     // Sets up device camera.
     if (options.deviceCamera?.enabled) {
       this.deviceCamera = new XRDeviceCamera(options.deviceCamera);
+      this.deviceCamera.setRenderer(this.renderer);
       this.registry.register(this.deviceCamera);
     }
 
     const webXRRequiredFeatures: string[] = options.webxrRequiredFeatures;
+    // Use camera-access when the browser supports it.
+    if (options.deviceCamera?.enabled) {
+      if (!this.webXRSettings.optionalFeatures) {
+        this.webXRSettings.optionalFeatures = [];
+      }
+      (this.webXRSettings.optionalFeatures as string[]).push('camera-access');
+    }
     this.webXRSettings.requiredFeatures = webXRRequiredFeatures;
     // Sets up depth.
     if (options.depth.enabled) {
@@ -423,6 +433,11 @@ export class Core {
       this.simulator.simulatorUpdate();
     }
     this.depth.update(frame);
+
+    // Update XR camera fallback textures.
+    if (this.deviceCamera?.isUsingXRCameraAccess) {
+      this.deviceCamera.updateXRCamera(frame);
+    }
 
     if (this.lighting) {
       this.lighting.update();
