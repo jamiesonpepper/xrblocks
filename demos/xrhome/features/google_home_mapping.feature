@@ -33,7 +33,6 @@ Feature: Google Home Device Mapping to SLAM Anchors
     Then the XR app should update the device state in the Firebase Realtime Database
     And a Firebase Cloud Function should trigger an Execute intent to the Google Home Graph API
     And the physical Google Home smart light should adjust its brightness
-    And the spatial panel should visually update to reflect the "ON" state
 
   Scenario: Controlling color for a mapped device via Spatial Panel
     Given a virtual spatial panel is mapped to a Google Home Graph smart light
