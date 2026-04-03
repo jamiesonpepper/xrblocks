@@ -1,6 +1,6 @@
 Feature: House-Scale SLAM Scanning and Storage via WebXR Anchors
   As a user with a WebXR-compatible device
-  I want to scan and store the physical layout of my multi-floor house including light fixtures
+  I want to scan and store the physical layout of my multi-floor house including light fixtures and other smart home devices
   So that I can persistently interact with virtual spatial panels anchored to physical entities
 
   Scenario: Initializing a house-scale scanning session
@@ -9,16 +9,20 @@ Feature: House-Scale SLAM Scanning and Storage via WebXR Anchors
     Then the system should establish an "unbounded" WebXR reference space
     And the system should begin plane detection for floors, walls, and ceilings
 
-  Scenario: Discovering and semantically identifying light fixtures
+  Scenario: Discovering and semantically identifying light fixtures and other smart home devices
     Given an active house-scale scanning session
     When the user looks at a physical light fixture on the ceiling
     Then the WebXR Lighting Estimation API should detect the primary light direction and intensity
-    And the on-device ML vision model should identify the 2D bounding box as a "light fixture"
-    And the system should correlate the 2D bounding box with the 3D ceiling plane depth data
+    And the cloud based Vertex AI vision model should identify the 2D bounding box as a "light fixture"
+    And the system should correlate the 3D spatial panel with the 3D ceiling plane depth data
     And project a virtual spatial panel indicator at the fixture's 3D coordinates
+    And the spatial panel label text should be colored yellow indicating it is unmapped
+    And the Vertex Vision API should also detect light switches, appliances, and other smart home devices
+    And the system should create a spatial panel for each detected device
+    And the spatial panel label text should be colored yellow indicating it is unmapped
 
   Scenario: Persisting anchors across a multi-floor environment
-    Given the system has identified multiple light fixtures across different rooms
+    Given the system has identified multiple light fixtures and other smart home devices across different rooms
     When the system creates an XRHitTestResult anchor for each fixture
     Then the system should request a persistent handle (UUID) for the room's Master Anchor
     And the system should store the relative (X, Y, Z) coordinates of each light fixture in the Firebase Realtime Database
