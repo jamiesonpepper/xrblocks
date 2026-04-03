@@ -21,7 +21,7 @@ Feature: House-Scale SLAM Scanning and Storage via WebXR Anchors
     Given the system has identified multiple light fixtures across different rooms
     When the system creates an XRHitTestResult anchor for each fixture
     Then the system should request a persistent handle (UUID) for the room's Master Anchor
-    And the system should store the relative (X, Y, Z) coordinates of each light fixture in IndexedDB
+    And the system should store the relative (X, Y, Z) coordinates of each light fixture in the Firebase Realtime Database
     And the system should handle tracking drift by using SLAM loop closure when the user re-enters a mapped room
 
   Scenario: Handling tracking loss and recovery

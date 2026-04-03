@@ -1,134 +1,85 @@
-# Implementation Plan: House-Scale SLAM & Google Home Integration
+# Implementation Plan: House-Scale SLAM & Google Home Graph Integration
 
-This plan outlines the approach to implementing the features described in `house_scale_slam.feature` and `google_home_mapping.feature`. The primary constraint is to safely **co-exist** with the current `demos/xrhome` code without impacting the existing functionality.
+This plan outlines the approach to implementing the features described in `house_scale_slam.feature` and `google_home_mapping.feature`. We will modify the existing `demos/xrhome` codebase to integrate Firebase Realtime Database and Cloud Functions for a rigorous Cloud-to-cloud smart home fulfillment structure.
 
-## Strategy: Advanced Co-existence
+## Strategy: Cloud-to-cloud Firebase Architecture
 
-Instead of heavily refactoring `main.js` and `matter-server.js` (which could destabilize the current app), we will create a parallel set of "advanced" entry points and modular files that share resources with the base demo but introduce the new capabilities.
+Instead of utilizing local Matter UDP protocols and containerized SQLite logic, this flow pivots to serverless Firebase and Google Home Graph. The XR frontend will communicate directly with Firebase Realtime Database. Firebase Cloud Functions will map `EXECUTE` and `SYNC` intents, pushing `reportState` and responding to Google Assistant/Home Graph requests natively.
 
 ---
 
 ## Proposed Changes
 
-### 1. New Frontend Modules (WebXR SLAM & Google Home UI)
+### 1. Frontend Web App Modifications
 
-We will create new JavaScript modules mapped to the new Gherkin features to keep the logic isolated.
+We will modify the core codebase to incorporate Firebase SDKs and SLAM persistence directly into the existing app.
+
+#### [MODIFY] `demos/xrhome/index.html`
+
+- **Purpose**: Update entry point for Firebase and Cloud-to-cloud mapping.
+- **Details**:
+  - Add Firebase CDN dependencies (`firebase-app`, `firebase-auth`, `firebase-database`, `firebase-functions`).
+  - Update the configuration overlay to actively prompt the user for their **Gemini API Key**, **Google Home Project ID**, and **OAuth details**. These credentials are required dynamically at runtime to power the Vertex vision module and sync with the Google Home Graph infrastructure. Firebase configuration variables (like the Firebase projectId and authDomain) will be statically bundled or securely loaded during the Firebase deploy.
 
 #### [NEW] `demos/xrhome/slam-manager.js`
 
-- **Purpose**: Implements the WebXR Anchors Module logic for Feature #1.
+- **Purpose**: Implements the WebXR Anchors Module logic.
 - **Details**:
-  - Subscribes to XR session events to request an `unbounded` reference space.
-  - Generates `XRAnchor`s based on `XRHitTestResult`s when scanning.
-  - Implements IndexedDB storage for persisting these anchor UUIDs and device coordinate offsets.
+  - Generates `XRAnchor`s based on `XRHitTestResult`s.
+  - Pushes anchoring 3D coordinates and Anchor UUIDs to Firebase Realtime Database (replacing IndexedDB and SQLite) for real-time persistence across sessions and devices.
 
-#### [NEW] `demos/xrhome/vision-advanced.js`
+#### [MODIFY] `demos/xrhome/vision.js`
 
-- **Purpose**: Augments SLAM with Vertex Vision for semantic understanding.
+- **Purpose**: Augment with Vertex Vision for semantic understanding.
 - **Details**:
-  - Leverages Vertex Vision to detect Light Switches, Light Fixtures with bulbs powered off, and other Smart Home devices based on 2D bounding boxes and 3D depth correlation.
-  - Passes these detections to the SLAM manager to be anchored.
+  - Enhance the prompts for rigid Smart Home appliance recognition (Lights, Switches, TVs) returning structural bounding boxes.
 
-#### [NEW] `demos/xrhome/hud-advanced.js`
+#### [MODIFY] `demos/xrhome/main.js` & `demos/xrhome/hud.js`
 
-- **Purpose**: Replaces the standard UI with an advanced mapping interface.
+- **Purpose**: Embed mapping capabilities and replace button assets.
 - **Details**:
-  - Invokes the SLAM-based scanning routine.
-  - Queries Google Home devices that can be assigned to the hitboxes determined by SLAM or Vertex Vision (Lights, Fixtures, Switches, or Smart Appliances).
+  - Overwrite local Matter integrations with Firebase Auth and Database listeners.
+  - Allow the scanning operations in the HUD to scan and map any smart home devices via SLAM to the applicable WebXR anchors and store the positioning in Firebase Realtime database.
+  - These positions should create spatial panels for each of the devices with an initial plus sign to link to the devices via Google Home Graph. Before a device is linked the spatial panel can be moved and the label for it is coloured yellow and the name and type of devices can be edited or changed and save and that information stored in Firebase Realtime Database as well.
+  - When the first plus button is pressed the app will then query the Home Graph to find devices of the same type and a search prompt will allow filtering.
+  - Once the spatial panel is linked power toggle, brightness +/-, colour, and disconnect buttons will be visible and the spatial panel will be locked in position and the label name colour set to green and the name or device type not editable.
+  - Migrate legacy UI canvas interactions or Spatial Buttons to the newly adopted `uiblocks` architecture for modern styling.
 
-#### [NEW] `demos/xrhome/google-home-client.js`
+### 2. Backend Infrastructure: Firebase Cloud Functions
 
-- **Purpose**: Implements frontend interaction with the Google Home APIs for Feature #2.
+We will discard the Docker/Express container approach in favor of stateless serverless architecture.
+
+#### [NEW] `demos/xrhome/functions/index.js`
+
+- **Purpose**: Serverless backend for Google Home Graph fulfillment.
 - **Details**:
-  - Provides methods to fetch Google Home devices from the new backend API.
-  - Handles the API requests triggered by `hud-advanced.js`.
+  - Utilize the `actions-on-google` smart home provider SDK.
+  - Implement smart home fulfillment endpoints mapping `action.devices.SYNC`, `action.devices.QUERY`, and `action.devices.EXECUTE` intents.
+  - Triggers on Realtime Database node updates to dynamically `reportState` back to the Home Graph API.
 
-### 2. New Backend Services
+#### [MODIFY] Configuration and Deployment Structure
 
-We will introduce a new server for Google Home integration, which will be started on port 8080.
-
-#### [NEW] `demos/xrhome/google-home-server.js`
-
-- **Purpose**: A standalone Express server providing the REST interface for the Android Home Device Control API and managing local persistence.
-- **Details**:
-  - Exposes endpoints like `/v1/home/devices` to list Google Home structures.
-  - Exposes control endpoints `/v1/home/device/:id/toggle`.
-  - Configured to run on port **8081** (allowing `matter-server.js` to occupy 8080 without conflicts).
-
-#### [NEW] Data Storage Strategy (SQLite)
-
-- **Purpose**: Provides persistent, relational mapping between WebXR Anchors and Google Home Devices entirely within the single Docker container.
-- **Why SQLite**: To avoid the complexity of adding cross-container databases (like Redis or PostgreSQL) to the Docker-Compose structure, we will use the `sqlite3` npm package. This creates a lightweight `.db` file directly on the container's virtual filesystem (which can optionally be mounted to the host machine for out-of-container persistence).
-- **Implementation**:
-  - `google-home-server.js` will initialize a simple SQLite table (`DeviceMappings`) containing the `AnchorUUID` and the `GoogleHomeDeviceID`.
-  - Exposes endpoints (`GET /v1/mappings`, `POST /v1/mappings`) for the frontend to save and restore the SLAM hitboxes.
-
-#### [NEW] Configuration Management (`.env`)
-
-- **Purpose**: Securely manage Gemini API keys, Google Home Project IDs, and OAuth credentials using standard environment files.
-- **Details**:
-  - We will incorporate the `dotenv` package into the backend servers to read from a standard `.env` file.
-  - Users can mount this `.env` file directly into the Docker container (`docker run --env-file .env ...`) to keep secrets out of the codebase and UI forms (the UI overlay can still provide a fallback manual entry if these are not present).
-  - A `demos/xrhome/.env.sample` file will be provided as a template.
-
-#### [MODIFY] `demos/xrhome/Dockerfile`
-
-- **Purpose**: Ensure the new `google-home-server.js` is built and exposed correctly alongside the original.
+- **Purpose**: Move from Docker to the Firebase toolchain.
 - **Changes**:
-  - We will modify the Dockerfile to expose both ports (`8080` and `8081`).
-  - The `CMD` will be updated (e.g., via a shell script or `concurrently`) to start **both** `matter-server.js` and `google-home-server.js` simultaneously. This allows the backend to serve both the original Matter workflow and the advanced Google Home workflow concurrently without requiring environment switching.
-
-#### [MODIFY] `demos/xrhome/package.json`
-
-- **Purpose**: Add new npm scripts to run the new backend safely.
-- **Changes**:
-  - Add script: `"start:google-home": "node google-home-server.js"`.
-  - Add dependency: `"sqlite3": "^5.1.7"` for local container database storage.
-  - Add dependency: `"dotenv": "^16.4.5"` for environment variable management.
-
-### 3. Parallel Entry Points
-
-To ensure the existing `index.html` and `main.js` are untouched, we will create "Advanced" entry points that boot the new modules.
-
-#### [NEW] `demos/xrhome/index-advanced.html`
-
-- **Purpose**: A visually identical copy of `index.html` but imports `main-advanced.js` instead of `main.js`.
-- **Changes**:
-  - Modified the `#config-overlay` form to prompt for `Google Home Project ID` and `OAuth Credentials` instead of Matter Codes.
-  - These values will be stored as cookies until cleared, matching the existing `auth.js` pattern (or standard browser cookie APIs) for persistence.
-
-#### [NEW] `demos/xrhome/main-advanced.js`
-
-- **Purpose**: The main orchestration file for this new feature set.
-- **Details**:
-  - Imports `hud-advanced.js`, `vision-advanced.js`, `keypad.js` (reusing the existing keypad UI).
-  - Integrates `slam-manager.js` for anchor-based scanning.
-  - Integrates `google-home-client.js` to populate the `VirtualLight3D` instances with Google Home IDs rather than Matter node IDs.
-
-### 4. UI Component Migration
-
-#### [MODIFY] Button Components
-
-- **Purpose**: Update the application's buttons to use the new `uiblocks` components provided by `xrblocks`.
-- **Details**:
-  - Transition existing button implementations in the UI overlays and spatial panels to use the new `uiblocks` components.
-  - Ensure uniform styling, better ergonomics, and consistent interaction patterns provided by the `xrblocks` component library.
+  - We will remove the `sqlite` dependencies and `Dockerfile` usage.
+  - Initialize a `firebase.json` for hosting the static `xrhome` frontend and deploying the backend functions via `firebase deploy`.
+  - The `package.json` will be updated to include deployment scripts (e.g., `"deploy": "firebase deploy"`) rather than Docker container orchestration.
 
 ---
 
 ## Verification Plan
 
+### Pre-Requisite Setup
+
+- Prompt the user to provide their valid **Gemini API Key** and **Google Home Project ID** so the environment can be fully credentialed and tested during execution.
+
 ### Automated/Unit Tests
 
-- **API Tests**: We will use `curl` to verify that `google-home-server.js` correctly exposes the `.get('/v1/home/devices')` endpoint on port 8081.
-- **Docker Build**: Verify `docker build -t xrhome .` succeeds and the container successfully maps ports 8080 and 8081, running cleanly with a configured `--env-file .env`. Note: Because this advanced flow utilizes the cloud-based Android Home Device Control API instead of local Matter mDNS UDP broadcasts, the Docker container does **not** require host-network mode or local subnet connectivity to the smart devices. It only requires outbound HTTPS access to Google's cloud endpoints.
+- **Browser Subagent Test**: Stand up the application locally (e.g., via `firebase serve`) and use a browser subagent to automatically navigate to the URL, ensuring the application loads successfully and the credential configuration overlay is accessible and functions correctly.
+- **Firebase Emulator Suites**: Use the Firebase Emulator to locally verify that Cloud Functions receive Realtime Database triggers and appropriately process mock `EXECUTE` commands before deploying.
 
 ### Manual Verification
 
-1. **Server Boot**: Verify the new Dockerized container boots correctly, logging startup for both `matter-server` (8080) and `google-home-server` (8081).
-2. **Standard Demo Verification**: Open `index.html` (hitting 8080) and confirm the original local-Matter features still operate flawlessly.
-3. **Advanced Demo UI**: Open `index-advanced.html` (also served by the 8080 static web host) and verify the OAuth and Project ID form renders, stores the cookie, and proceeds to the app.
-4. **Advanced Demo WebXR Context**: Boot the WebXR context.
-   - Verify the `unbounded` space is requested successfully.
-   - Verify anchors are created when ceiling lights, lamps, or wall switches are detected.
-   - Verify the mocked Google Home API devices render as mappable objects in the 3D space via `hud-advanced.js`.
+1. **Frontend Boot**: Ensure the user can authenticate properly and pass the configuration screens.
+2. **Database Write**: Confirm that planting a SLAM Anchor generates a real-time log within the Firebase Console's Database Viewer.
+3. **Home Graph Sync**: Verify within Google Cloud Console / Firebase Console that the Cloud Function successfully issues the Home Graph sync payload without permission errors on toggle.
