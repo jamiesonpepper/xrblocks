@@ -40,12 +40,12 @@ We will modify the core codebase to incorporate Firebase SDKs and SLAM persisten
 - **Details**:
   - Overwrite local Matter integrations with Firebase Auth and Database listeners.
   - Allow the scanning operations in the HUD to scan and map any smart home devices via SLAM to the applicable WebXR anchors and store the positioning in Firebase Realtime database.
-  - These positions should create spatial panels for each of the devices with an initial plus sign to link to the devices via Google Home Graph. Before a device is linked the spatial panel can be moved and the label for it is coloured yellow and the name and type of devices can be edited or changed and save and that information stored in Firebase Realtime Database as well.
-  - When the first plus button is pressed the app will then query the Home Graph to find devices of the same type and a search prompt will allow filtering.
-  - Once the spatial panel is linked power toggle, brightness +/-, colour, and disconnect buttons will be visible and the spatial panel will be locked in position and the label name colour set to green and the name or device type not editable.
+  - These positions should create spatial panels for each of the devices with an initial plus sign to link to the devices via Google Home Graph. Before a device is linked the spatial panel can be moved and the label for it is coloured yellow, and that information is stored in Firebase Realtime Database as well.
+  - When the first plus button is pressed the app will then query the Home Graph to find devices of the same type and a search prompt will allow filtering or browsing using a tree that expands the house into rooms and then into devices.
+  - Once the spatial panel is linked power toggle, brightness +/-, colour, and disconnect buttons will be visible and the spatial panel will be locked in position and the label name colour set to green, with the label text automatically updated to use the official device name synced from Google Home.
   - Migrate legacy UI canvas interactions or Spatial Buttons to the newly adopted `uiblocks` architecture for modern styling.
 
-### 2. Backend Infrastructure: Firebase Cloud Functions
+### 2. Backend Infrastructure: Firebase Hosting, Cloud Functions and Realtime Database
 
 We will discard the Docker/Express container approach in favor of stateless serverless architecture.
 
