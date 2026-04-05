@@ -47,7 +47,7 @@ We will modify the core codebase to incorporate Firebase SDKs and SLAM persisten
 
 ### 2. Backend Infrastructure: Firebase Hosting, Cloud Functions and Realtime Database
 
-We will discard the Docker/Express container approach in favor of stateless serverless architecture.
+We will discard the Docker/Express container approach in favor of stateless serverless architecture, utilizing the newly integrated **Firebase MCP Server** to manage configuration, initialization, and deployment tasks.
 
 #### [NEW] `demos/xrhome/functions/index.js`
 
@@ -59,11 +59,18 @@ We will discard the Docker/Express container approach in favor of stateless serv
 
 #### [MODIFY] Configuration and Deployment Structure
 
-- **Purpose**: Move from Docker to the Firebase toolchain.
+- **Purpose**: Move from Docker to the Firebase toolchain via MCP.
 - **Changes**:
   - We will remove the `sqlite` dependencies and `Dockerfile` usage.
-  - Initialize a `firebase.json` for hosting the static `xrhome` frontend and deploying the backend functions via `firebase deploy`.
-  - The `package.json` will be updated to include deployment scripts (e.g., `"deploy": "firebase deploy"`) rather than Docker container orchestration.
+  - Leverage the **Firebase MCP server** (`firebase_init` tool) to programmatically initialize Firebase Hosting, Functions, and Realtime Database directly via agent commands.
+  - The `package.json` will be updated to include deployment scripts (e.g., `"deploy": "firebase deploy"`) which interact securely with the MCP ecosystem.
+
+---
+
+## Agent Guidelines & Skill Utilization
+
+> [!NOTE]
+> All future development and feature implementation for this plan will strictly adhere to the provided **System Skills** (e.g., `frontend-ui-engineering`, `test-driven-development`, `api-and-interface-design`). This structured agentic approach ensures resilient API development, rigorous testing, and high-quality UI architecture.
 
 ---
 
