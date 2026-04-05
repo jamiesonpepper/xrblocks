@@ -46,3 +46,15 @@ Feature: Google Home Device Mapping to SLAM Anchors
     Given the system has access to the structural metadata (rooms) from the Google Home Graph
     When a new SLAM anchor is created in a specific mapped room
     Then the system should suggest unmapped Google Home Graph devices located in that same room
+
+  Scenario: Handling offline states and Home Graph sync failures
+    Given a virtual spatial panel is mapped to a Google Home Graph device
+    When the user interacts with the spatial panel but the network request fails or times out
+    Then the XR app should immediately display a localized error indicator on the spatial panel
+    And the spatial panel state should revert to its previous visual configuration to ensure UI integrity
+
+  Scenario: Querying for devices with an empty Home Graph structure
+    Given the user attempts to link a spatial panel via the plus button
+    When the app queries the Home Graph and no recognized devices are returned
+    Then the spatial panel should display a meaningful "No Devices Found" empty state rather than a blank interface
+    And provide an actionable prompt to ensure the user's devices are linked in the Google Home app

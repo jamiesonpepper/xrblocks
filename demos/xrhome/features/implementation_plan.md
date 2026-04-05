@@ -10,40 +10,54 @@ Instead of utilizing local Matter UDP protocols and containerized SQLite logic, 
 
 ## Proposed Changes
 
-### 1. Frontend Web App Modifications
+### 1. Frontend Web App Architecture & Refactoring
 
-We will modify the core codebase to incorporate Firebase SDKs and SLAM persistence directly into the existing app.
+Adhering to the `frontend-ui-engineering` and `api-and-interface-design` system skills, we will decouple the monolithic `main.js` by extracting data fetching, presentation, and hardware state into focused, composable modules.
 
 #### [MODIFY] `demos/xrhome/index.html`
 
-- **Purpose**: Update entry point for Firebase and Cloud-to-cloud mapping.
+- **Purpose**: Update entry point securely.
 - **Details**:
-  - Add Firebase CDN dependencies (`firebase-app`, `firebase-auth`, `firebase-database`, `firebase-functions`).
-  - Update the configuration overlay to actively prompt the user for their **Gemini API Key**, **Google Home Project ID**, and **OAuth details**. These credentials are required dynamically at runtime to power the Vertex vision module and sync with the Google Home Graph infrastructure. Firebase configuration variables (like the Firebase projectId and authDomain) will be statically bundled or securely loaded during the Firebase deploy.
+  - Add Firebase CDN dependencies.
+  - Update the configuration overlay to actively prompt the user for their **Gemini API Key**, **Google Home Project ID**, and **OAuth details**. Firebase configuration variables will be securely loaded during the Firebase deploy.
 
-#### [NEW] `demos/xrhome/slam-manager.js`
+#### [NEW] `demos/xrhome/services/slam-persistence.js`
 
 - **Purpose**: Implements the WebXR Anchors Module logic.
 - **Details**:
   - Generates `XRAnchor`s based on `XRHitTestResult`s.
-  - Pushes anchoring 3D coordinates and Anchor UUIDs to Firebase Realtime Database (replacing IndexedDB and SQLite) for real-time persistence across sessions and devices.
+  - Pushes anchoring 3D coordinates and Anchor UUIDs to Firebase Realtime Database for real-time persistence across sessions and devices.
+
+#### [NEW] `demos/xrhome/services/firebase-home-graph.js`
+
+- **Purpose**: Data Container mapping for Smart Home Graph queries.
+- **Details**:
+  - Encapsulates Firebase Database reads/writes, keeping network logic cleanly separated from rendering.
+
+#### [NEW] `demos/xrhome/components/smart-device-panel.js`
+
+- **Purpose**: Presentation component for mapped devices using `uiblocks`.
+- **Details**:
+  - Implements the spatial UI lifecycle:
+    - **Scanning State**: Yellow labels, movable panels, "+" link button.
+    - **Query State**: Displays robust loading skeletons while querying the Home Graph to find devices of the same type via a searchable house/room tree.
+    - **Linked State**: Green labels, locked position, official Google Home device name, exposing discrete power/brightness/color controls.
+    - **Error/Empty States**: Reverts UI state on Firebase sync failures and displays structured, actionable empty states if Home Graph queries return zero devices.
 
 #### [MODIFY] `demos/xrhome/vision.js`
 
-- **Purpose**: Augment with Vertex Vision for semantic understanding.
+- **Purpose**: Augment existing Vertex Vision for semantic understanding.
 - **Details**:
-  - Enhance the prompts for rigid Smart Home appliance recognition (Lights, Switches, TVs) returning structural bounding boxes.
+  - Enhance the prompts for rigid Smart Home appliance recognition (Lights, Switches, TVs, robot vacuums, etc.) returning structural bounding boxes.
 
 #### [MODIFY] `demos/xrhome/main.js` & `demos/xrhome/hud.js`
 
-- **Purpose**: Embed mapping capabilities and replace button assets.
+- **Purpose**: Lean orchestration and persistent system HUD.
 - **Details**:
-  - Overwrite local Matter integrations with Firebase Auth and Database listeners.
-  - Allow the scanning operations in the HUD to scan and map any smart home devices via SLAM to the applicable WebXR anchors and store the positioning in Firebase Realtime database.
-  - These positions should create spatial panels for each of the devices with an initial plus sign to link to the devices via Google Home Graph. Before a device is linked the spatial panel can be moved and the label for it is coloured yellow, and that information is stored in Firebase Realtime Database as well.
-  - When the first plus button is pressed the app will then query the Home Graph to find devices of the same type and a search prompt will allow filtering or browsing using a tree that expands the house into rooms and then into devices.
-  - Once the spatial panel is linked power toggle, brightness +/-, colour, and disconnect buttons will be visible and the spatial panel will be locked in position and the label name colour set to green, with the label text automatically updated to use the official device name synced from Google Home.
-  - Migrate legacy UI canvas interactions or Spatial Buttons to the newly adopted `uiblocks` architecture for modern styling.
+  - **Refactor**: Strip the 1800+ line spatial panel mapping and selection code out of `main.js` into the discrete components listed above.
+  - **HUD Preservation & Upgrade**: Retain and modernize `hud.js` (potentially using `uiblocks` for consistency) to serve as the primary spatial dashboard. This HUD will:
+    - Provide an explicit UI toggle to **Start / Stop SLAM Scanning**.
+    - Display persistent, real-time status logs for scanning progress, Firebase synchronization, and Home Graph action successes or failures.
 
 ### 2. Backend Infrastructure: Firebase Hosting, Cloud Functions and Realtime Database
 
@@ -70,7 +84,7 @@ We will discard the Docker/Express container approach in favor of stateless serv
 ## Agent Guidelines & Skill Utilization
 
 > [!NOTE]
-> All future development and feature implementation for this plan will strictly adhere to the provided **System Skills** (e.g., `frontend-ui-engineering`, `test-driven-development`, `api-and-interface-design`). This structured agentic approach ensures resilient API development, rigorous testing, and high-quality UI architecture.
+> All future development and feature implementation for this plan will strictly adhere to the provided **System Skills** (e.g., `frontend-ui-engineering`, `test-driven-development`, `api-and-interface-design`). This structured agentic approach ensures resilient modular code, robust loading states, and components smaller than 200 lines.
 
 ---
 

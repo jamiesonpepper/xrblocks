@@ -34,3 +34,9 @@ Feature: House-Scale SLAM Scanning and Storage via WebXR Anchors
     Then the system should pause the anchoring process
     And wait for SLAM relocalization
     And restore the Master Anchor from the persistent handle to resynchronize the unbounded coordinate system
+
+  Scenario: Handling Vertex Vision API failures gracefully
+    Given an active house-scale scanning session capturing camera frames
+    When the cloud-based Vertex Vision API experiences a timeout or network failure
+    Then the system should display a non-obtrusive warning on the HUD indicating AI degradation
+    And the scanning session should gracefully fall back to relying exclusively on plane detection and manual anchor placement
