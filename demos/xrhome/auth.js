@@ -13,10 +13,14 @@ export class AuthManager {
 
   loadConfig() {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : {
-      geminiKey: '',
-      matterCode: ''
-    };
+    const config = stored ? JSON.parse(stored) : { geminiKey: '', matterCode: '' };
+    // Pre-fill from server-injected key if not saved by user yet.
+    // Mark it so hasConfig() stays false until the user explicitly submits the form.
+    if (!config.geminiKey && window.GEMINI_API_KEY) {
+      config.geminiKey = window.GEMINI_API_KEY;
+      this._keyFromServer = true;
+    }
+    return config;
   }
 
   saveConfig(newConfig) {
@@ -26,8 +30,8 @@ export class AuthManager {
   }
 
   hasConfig() {
-    // We need at least Gemini Key to start
-    return !!this.config.geminiKey;
+    // Only auto-start if the key was explicitly saved by the user (not just server-injected)
+    return !!this.config.geminiKey && !this._keyFromServer;
   }
 
   // Legacy OAuth methods removed as we are using Matter Multi-Admin now.
