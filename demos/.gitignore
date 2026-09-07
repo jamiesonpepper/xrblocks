@@ -1,2 +1,7 @@
 node_modules
 *.tsbuildinfo
+.env
+.env.*
+*.env
+!.env.sample
+!.env.example
