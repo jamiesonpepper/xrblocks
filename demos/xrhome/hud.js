@@ -75,150 +75,133 @@ export class HUDManager {
         this.menuPos = new THREE.Vector3(0, 0.3, -1.5);
         this.menuRot = new THREE.Euler(0, 0, 0);
         this.renderMenu();
-        console.log("HUD initialized in 3D Mode (SpatialPanel) with Jetpack Glimmer");
+        console.log("HUD initialized in 3D Mode (UICard)");
     }
 
     renderMenu() {
         if (this.panel) {
             this.menuPos.copy(this.panel.position);
             this.menuRot.copy(this.panel.rotation);
-            // Completely destroy the old panel so it never stacks
-            if (xb.remove) {
-                xb.remove(this.panel);
-            } else if (this.scene) {
+            if (this.scene) {
                 this.scene.remove(this.panel);
+            } else if (xb.remove) {
+                xb.remove(this.panel);
             }
         }
 
-        const H_TOGGLE = 0.1;
-        const H_HEADER = 0.15;
-        const H_LINE = 0.08;
-        const H_SPACE = 0.05;
-        const H_BUTTON = 0.25;
+        // Collapsed shows only 1 line, Expanded shows 4
+        const maxLines = this.isMenuExpanded ? 4 : 1;
+        this.logLines3D = [];
+        const logChildren = [];
+        for (let i = 0; i < maxLines; i++) {
+            const txt = new xb.UIText({
+                text: '',
+                style: {
+                    fontSize: 14,
+                    color: '#ffffff',
+                    width: '100%',
+                }
+            });
+            this.logLines3D.push(txt);
+            logChildren.push(txt);
+        }
 
-        // Collapsed shows only 1 line, Expanded shows 3
-        const maxLines = this.isMenuExpanded ? 3 : 1;
-        const dynamicHistoryHeight = maxLines * H_LINE;
-        
-        const menuHeight = H_TOGGLE + H_HEADER + dynamicHistoryHeight + H_SPACE + H_BUTTON + H_SPACE;
-        const getW = (h) => h / menuHeight;
-
-        this.panel = new xb.SpatialPanel({
-             width: 0.6,
-             height: menuHeight,
-             // Monochromatic Jetpack Glimmer: Translucent White Glass
-             backgroundColor: 'rgba(255, 255, 255, 0.25)', 
-             showEdge: true,
-             edgeColor: 'rgba(255, 255, 255, 0.9)', // Solid white grab border
-             edgeWidth: 0.02,
+        this.scanButton = new xb.UIButton({
+            label: this.isScanning ? "STOP SCAN" : "START SCAN",
+            icon: this.isScanning ? "stop" : "search",
+            style: {
+                width: '100%',
+                borderRadius: 12,
+            },
+            onClick: () => {
+                if (this.onScanToggle) this.onScanToggle();
+            }
         });
+
+        const toggleBtn = new xb.UIButton({
+            label: this.isMenuExpanded ? '-' : '+',
+            ariaLabel: 'Toggle HUD expand',
+            style: {
+                width: 36,
+                height: 36,
+                borderRadius: 8,
+            },
+            onClick: () => {
+                this.isMenuExpanded = !this.isMenuExpanded;
+                this.renderMenu();
+            }
+        });
+
+        const headerRow = new xb.UIPanel({
+            style: {
+                width: '100%',
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+            },
+            children: [
+                new xb.UIText({
+                    text: "XR Home Control",
+                    style: { fontSize: 18, fontWeight: 'bold', color: '#ffffff' }
+                }),
+                toggleBtn
+            ]
+        });
+
+        const logPanel = new xb.UIPanel({
+            style: {
+                width: '100%',
+                flexDirection: 'column',
+                gap: 4,
+                padding: 8,
+                backgroundColor: 'rgba(0, 0, 0, 0.35)',
+                borderRadius: 10,
+            },
+            children: logChildren
+        });
+
+        this.panel = new xb.UICard({
+            size: { width: 0.54, height: 'auto' },
+            manipulation: true,
+            edge: { scale: true },
+            style: {
+                flexDirection: 'column',
+                gap: 12,
+                padding: 16,
+                backgroundColor: 'rgba(20, 20, 25, 0.85)',
+                borderRadius: 20,
+            },
+            children: [
+                headerRow,
+                logPanel,
+                this.scanButton
+            ]
+        });
+
         this.panel.position.copy(this.menuPos);
         this.panel.rotation.copy(this.menuRot);
-        
+
         if (this.scene) {
             this.scene.add(this.panel);
         } else {
             xb.add(this.panel);
         }
 
-        const grid = this.panel.addGrid();
-        
-        // 1. Top Right Karat Toggle
-        const toggleRow = grid.addRow({ weight: getW(H_TOGGLE) });
-        toggleRow.addCol({ weight: 0.8 }); 
-        toggleRow.addCol({ weight: 0.2 }).addTextButton({
-             text: this.isMenuExpanded ? '-' : '+', // Reliable ASCII
-             fontColor: '#1a1a1a', // High contrast dark grey
-             backgroundColor: 'rgba(255, 255, 255, 0.5)',
-             fontSize: 0.8,
-        }).onTriggered = () => {
-             this.isMenuExpanded = !this.isMenuExpanded;
-             this.renderMenu();
-        };
-
-        // 2. Header
-        grid.addRow({ weight: getW(H_HEADER) }).addText({
-             text: "XR Home Control",
-             fontSize: 0.08,
-             textAlign: 'center',
-             fontColor: '#1a1a1a' // High contrast
-        });
-
-        // 3. Dynamic Status / Log Area
-        this.logLines3D = [];
-        for(let i = 0; i < maxLines; i++) {
-             const row = grid.addRow({ weight: getW(H_LINE) });
-             const txt = row.addText({
-                 text: "",
-                 fontSize: 0.05,
-                 textAlign: 'left',
-                 fontColor: '#ffffff', // Crisp white text looks great on glass
-                 paddingX: 0.05
-             });
-             this.logLines3D.push(txt);
-        }
-        
         this.sync3DLogs();
-
-        grid.addRow({ weight: getW(H_SPACE) });
-        
-        // 4. Scan Button Row (Monochromatic)
-        const btnRow = grid.addRow({ weight: getW(H_BUTTON) });
-        btnRow.addCol({ weight: 0.25 }); 
-        this.scanButton = btnRow.addCol({ weight: 0.5 }).addTextButton({
-             text: this.isScanning ? "STOP SCAN" : "START SCAN", 
-             fontSize: 0.30,
-             // Monochromatic translucent button (no red/green)
-             backgroundColor: 'rgba(255, 255, 255, 0.4)', 
-             fontColor: '#1a1a1a' 
-        });
-        btnRow.addCol({ weight: 0.25 }); 
-        
-        this.scanButton.onTriggered = () => {
-             if (this.onScanToggle) this.onScanToggle();
-        };
-        
-        grid.addRow({ weight: getW(H_SPACE) });
-        
-        if (this.panel.updateLayouts) {
-             this.panel.updateLayouts();
-        }
-        
-        this.enforceDepth();
     }
     
     enforceDepth() {
-        const doEnforce = () => {
-            if (!this.panel) return;
-            this.panel.traverse(child => {
-                child.renderOrder = 601;
-                if (child === this.panel.mesh) child.renderOrder = 600;
-
-                if (child.material) {
-                    const mats = Array.isArray(child.material) ? child.material : [child.material];
-                    mats.forEach(m => {
-                        m.depthTest = false;
-                        m.depthWrite = false;
-                        m.needsUpdate = true;
-                    });
-                }
-            });
-        };
-        
-        doEnforce();
-        setTimeout(doEnforce, 50);
-        setTimeout(doEnforce, 150);
+        // Handled natively by UICard
     }
     
     sync3DLogs() {
         if (!this.logLines3D) return;
         const maxDisplayed = this.logLines3D.length;
         const startIdx = Math.max(0, this.lines.length - maxDisplayed);
-        for(let i=0; i < maxDisplayed; i++) {
+        for (let i = 0; i < maxDisplayed; i++) {
              const lineData = this.lines[startIdx + i];
              if (this.logLines3D[i]) {
                   this.logLines3D[i].text = lineData ? lineData.text : "";
-                  this.logLines3D[i].fontColor = '#ffffff';
              }
         }
     }
@@ -233,9 +216,8 @@ export class HUDManager {
         if (this.mode === '2D') {
             this.draw2D();
         } else if (this.scanButton) {
-            // CRITICAL FIX: Simply update the button properties instead of rebuilding the entire menu.
-            // This prevents the overlapping "stacking" bug completely.
-            this.scanButton.text = scanning ? "STOP SCAN" : "START SCAN";
+            this.scanButton.label = scanning ? "STOP SCAN" : "START SCAN";
+            this.scanButton.icon = scanning ? "stop" : "search";
         }
     }
 

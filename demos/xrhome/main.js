@@ -162,8 +162,8 @@ import { FirebaseHAIntegration } from './services/firebase-ha-integration.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=15';
-import { VirtualKeypad } from './keypad.js';
+import { HUDManager } from './hud.js?v=16';
+import { VirtualKeypad } from './keypad.js?v=16';
 
 // Globals
 const auth = new AuthManager();
@@ -312,33 +312,10 @@ class VirtualLight3D extends THREE.Group {
       
       this.add(this.hitMesh);
       
-      // 3. Label + Interface (Spatial Panel)
+      // 3. Label + Interface (UICard)
       this.panelWidth = width;
       this.panelHeight = height;
-      this.panel = new xb.SpatialPanel({
-          width: width, 
-          height: height, 
-          backgroundColor: '#00000000', // Fully transparent
-          draggable: false,             // Disables XRBlocks native dragging
-      });
-      
-      this.panel.isInteractive = false;
-      this.panel.mesh.isDraggable = false;
-      this.panel.isDraggable = false;
-      
-      // Recursively disable dragging on EVERYTHING
-      this.panel.traverse(c => {
-          c.isDraggable = false;
-          c.userData = c.userData || {};
-          c.userData.isDraggable = false;
-      });
-      
-      this.hitMesh.isDraggable = false;
-      this.hitMesh.userData = { isDraggable: false };
-
-      // Positioned below the box
-      this.panel.position.set(0, -height/2 - 0.25, 0);
-      this.add(this.panel);
+      this.panel = null;
 
       this.rebuildPanel();
       
@@ -349,66 +326,16 @@ class VirtualLight3D extends THREE.Group {
   }
   
   rebuildPanel() {
-      // Recreate SpatialPanel completely to prevent layout bounding box accumulation bugs
       if (this.panel) {
-           this.remove(this.panel);
+          this.remove(this.panel);
       }
       
       const isPaired = !!(this.realDevice || this.linkedNodeId);
       const canDrag = !isPaired && !isScanning;
       
-      // Make the entire VirtualLight3D group the native drag root!
-      // This prevents the XRBlocks DragManager from applying world coordinates to a nested child panel, which caused spinning logic loops.
       this.draggable = canDrag;
       this.draggingMode = 'TRANSLATING';
       this.dragFacingCamera = false;
-      
-      const targetHeight = this.isSelectingDevice ? 1.4 : this.panelHeight;
-      
-      this.panel = new xb.SpatialPanel({
-          width: this.panelWidth, // Fixed square shape 0.6x0.6
-          height: targetHeight,
-          backgroundColor: '#00000000', // Fully transparent
-          draggable: false,             // Prevent DragManager from clamping onto the child panel
-          useBorderlessShader: !canDrag, // Maintain native shiny styling logic based on drag state
-      });
-      
-      // FIX DRAG: We must undefined the internal drawing mode so DragManager propagates to our true root VirtualLight3D group!
-      this.panel.draggingMode = undefined;
-      
-      // Positioned below the box
-      this.panel.position.set(0, -targetHeight/2 - 0.25, 0);
-      this.add(this.panel);
-      
-      this.mainGrid = this.panel.addGrid();
-
-      // Allow interactions
-      this.panel.isInteractive = true;
-      
-      // Do not manually disable dragging here. Let the PanelOptions initialization persist.
-      // We only disable it strictly via the native loop when the panel is paired.
-      this.panel.userData.isVirtualLight = true; 
-      
-      // Removed recursive lockdown of child interaction properties.
-
-      // Force Light Panel to Layer 300 (Lowest Tier)
-      const enforceRenderOrder = (panel, baseOrder) => {
-          if (!panel) return;
-          panel.traverse(child => {
-              child.renderOrder = baseOrder + 1;
-              if (child === panel.mesh) child.renderOrder = baseOrder;
-
-              if (child.material) {
-                  const mats = Array.isArray(child.material) ? child.material : [child.material];
-                  mats.forEach(m => {
-                      m.depthTest = false;
-                      m.depthWrite = false;
-                      m.needsUpdate = true;
-                  });
-              }
-          });
-      };
-      enforceRenderOrder(this.panel, 300);
       
       if (this.isSelectingDevice) {
           this._buildDeviceListUI();
@@ -416,135 +343,127 @@ class VirtualLight3D extends THREE.Group {
       }
       
       const isOn = this.isOn;
-      
       const stateColor = this.stateColor !== undefined ? this.stateColor : '#FFFF00';
       
-      // Dynamic Text Sizing for Labels 
-      const labelChars = this.labelText.length;
-      let dynamicFontSize = 0.5; // Much larger
-      if (labelChars > 11) {
-          dynamicFontSize = Math.max(0.25, 0.5 * (11 / labelChars));
-      }
-      
-      // ROW 1: Label
-      const rowLabel = this.mainGrid.addRow({ weight: 0.4 });
-      rowLabel.addText({ 
-          text: this.labelText, 
-          fontSize: dynamicFontSize, 
-          fontColor: stateColor, // Label text dynamically matches state
-          textAlign: 'center',
-          mode: 'center', // Explicitly override 'fitWidth' layout intercept!
-          maxWidth: this.panelWidth * 0.9 // Hard limit text wrapping width so it NEVER pushes the Grid bounds outwards
+      const labelText = new xb.UIText({
+          text: this.labelText,
+          style: {
+              fontSize: 16,
+              fontWeight: 'bold',
+              color: stateColor,
+              textAlign: 'center',
+              width: '100%',
+          }
       });
       
-      // ROW 2: Control Button
-      const rowBtn = this.mainGrid.addRow({ weight: 0.6 });
+      const cardChildren = [labelText];
       
       if (!isPaired) {
           // --- UNPAIRED UI ---
-          const btn = rowBtn.addIconButton({ 
-              text: 'add_circle',  
-              fontSize: 0.80,
-              width: 1.20,
-              height: 1.20,
-              mode: 'center', 
-              backgroundColor: '#00AA00', 
-              fontColor: '#FFFFFF'
+          const btn = new xb.UIButton({
+              label: 'Pair Device',
+              icon: 'add_circle',
+              style: {
+                  width: '100%',
+                  borderRadius: 12,
+              },
+              onClick: () => this.handleConfigClick()
           });
-          btn.onTriggered = () => this.handleConfigClick();
-          
+          cardChildren.push(btn);
       } else {
           // --- PAIRED UI ---
-          const toggleBtn = rowBtn.addCol({weight: 0.5}).addIconButton({
-              text: 'power_settings_new',
-              fontSize: 0.80, // Icon size
-              width: 1.20,
-              height: 1.20,
-              mode: 'center', 
-              backgroundColor: isOn ? '#FFFFFF' : '#FFFFFF', 
-              fontColor: isOn ? '#CC0000' : '#00AA00'
+          const toggleBtn = new xb.UIButton({
+              label: isOn ? 'Turn Off' : 'Turn On',
+              icon: 'power_settings_new',
+              style: {
+                  flexGrow: 1,
+                  borderRadius: 10,
+              },
+              onClick: () => this.toggle()
           });
-          toggleBtn.onTriggered = () => this.toggle();
 
-          const unpairBtn = rowBtn.addCol({weight: 0.5}).addIconButton({ 
-              text: 'link_off', 
-              fontSize: 0.80, 
-              width: 1.20,
-              height: 1.20,
-              mode: 'center', 
-              backgroundColor: '#CC0000', 
-              fontColor: '#FFFFFF'
+          const unpairBtn = new xb.UIButton({
+              label: 'Unpair',
+              icon: 'link_off',
+              style: {
+                  flexGrow: 1,
+                  borderRadius: 10,
+              },
+              onClick: () => this.handleConfigClick()
           });
-          unpairBtn.onTriggered = () => this.handleConfigClick();
           
-          // ROW 3: Brightness Controls
-          const rowBrightness = this.mainGrid.addRow({ weight: 0.6 });
+          cardChildren.push(new xb.UIPanel({
+              style: { width: '100%', flexDirection: 'row', gap: 8 },
+              children: [toggleBtn, unpairBtn]
+          }));
           
-          const decBtn = rowBrightness.addCol({weight: 0.5}).addIconButton({
-              text: 'remove',
-              fontSize: 0.40,
-              width: 0.60,
-              height: 0.60,
-              mode: 'center',
-              backgroundColor: '#CC0000',
-              fontColor: '#FFFFFF'
+          // Brightness Controls
+          const decBtn = new xb.UIButton({
+              label: '-10%',
+              icon: 'remove',
+              style: { flexGrow: 1, borderRadius: 10 },
+              onClick: () => this.setBrightness(this.brightness - 10)
           });
-          decBtn.onTriggered = () => this.setBrightness(this.brightness - 10);
           
-          const incBtn = rowBrightness.addCol({weight: 0.5}).addIconButton({
-              text: 'add',
-              fontSize: 0.40,
-              width: 0.60,
-              height: 0.60,
-              mode: 'center',
-              backgroundColor: '#00AA00',
-              fontColor: '#FFFFFF'
+          const incBtn = new xb.UIButton({
+              label: '+10%',
+              icon: 'add',
+              style: { flexGrow: 1, borderRadius: 10 },
+              onClick: () => this.setBrightness(this.brightness + 10)
           });
-          incBtn.onTriggered = () => this.setBrightness(this.brightness + 10);
           
-          // ROW 4: Color Controls
+          cardChildren.push(new xb.UIPanel({
+              style: { width: '100%', flexDirection: 'row', gap: 8 },
+              children: [decBtn, incBtn]
+          }));
+          
+          // Color Controls
           const supportsColor = this.realDevice && this.realDevice.attributes && this.realDevice.attributes.supported_color_modes && 
               (this.realDevice.attributes.supported_color_modes.includes('rgb') || 
                this.realDevice.attributes.supported_color_modes.includes('hs') || 
                this.realDevice.attributes.supported_color_modes.includes('xy'));
 
           if (supportsColor) {
-              const rowColor = this.mainGrid.addRow({ weight: 0.6 });
-              
-              const redBtn = rowColor.addCol({weight: 0.33}).addIconButton({
-                  text: 'palette',
-                  fontSize: 0.40,
-                  width: 0.60,
-                  height: 0.60,
-                  mode: 'center',
-                  backgroundColor: '#CC0000',
-                  fontColor: '#FFFFFF'
+              const redBtn = new xb.UIButton({
+                  label: 'Red',
+                  icon: 'palette',
+                  style: { flexGrow: 1, borderRadius: 10 },
+                  onClick: () => this.setColor(255, 0, 0)
               });
-              redBtn.onTriggered = () => this.setColor(255, 0, 0);
-              
-              const greenBtn = rowColor.addCol({weight: 0.33}).addIconButton({
-                  text: 'palette',
-                  fontSize: 0.40,
-                  width: 0.60,
-                  height: 0.60,
-                  mode: 'center',
-                  backgroundColor: '#00CC00',
-                  fontColor: '#FFFFFF'
+              const greenBtn = new xb.UIButton({
+                  label: 'Green',
+                  icon: 'palette',
+                  style: { flexGrow: 1, borderRadius: 10 },
+                  onClick: () => this.setColor(0, 255, 0)
               });
-              greenBtn.onTriggered = () => this.setColor(0, 255, 0);
-
-              const blueBtn = rowColor.addCol({weight: 0.33}).addIconButton({
-                  text: 'palette',
-                  fontSize: 0.40,
-                  width: 0.60,
-                  height: 0.60,
-                  mode: 'center',
-                  backgroundColor: '#0000CC',
-                  fontColor: '#FFFFFF'
+              const blueBtn = new xb.UIButton({
+                  label: 'Blue',
+                  icon: 'palette',
+                  style: { flexGrow: 1, borderRadius: 10 },
+                  onClick: () => this.setColor(0, 0, 255)
               });
-              blueBtn.onTriggered = () => this.setColor(0, 0, 255);
+              cardChildren.push(new xb.UIPanel({
+                  style: { width: '100%', flexDirection: 'row', gap: 6 },
+                  children: [redBtn, greenBtn, blueBtn]
+              }));
           }
       }
+
+      this.panel = new xb.UICard({
+          size: { width: this.panelWidth, height: 'auto' },
+          manipulation: canDrag,
+          style: {
+              flexDirection: 'column',
+              gap: 10,
+              padding: 12,
+              backgroundColor: 'rgba(20, 20, 25, 0.85)',
+              borderRadius: 16,
+          },
+          children: cardChildren
+      });
+
+      this.panel.position.set(0, -this.panelHeight/2 - 0.25, 0);
+      this.add(this.panel);
   }
 
   handleConfigClick() {
@@ -583,45 +502,87 @@ class VirtualLight3D extends THREE.Group {
       const allDevices = Array.from(smartHome.devices.values());
       const devices = allDevices.filter(d => d.id.startsWith('light.') || d.id.startsWith('switch.'));
       
-      const ITEMS_PER_PAGE = 10;
+      const ITEMS_PER_PAGE = 6;
       const totalPages = Math.ceil(devices.length / ITEMS_PER_PAGE) || 1;
       if (this.devicePage >= totalPages) this.devicePage = Math.max(0, totalPages - 1);
       
       const startIdx = this.devicePage * ITEMS_PER_PAGE;
       const pageDevices = devices.slice(startIdx, startIdx + ITEMS_PER_PAGE);
       
-      const headerRow = this.mainGrid.addRow({ weight: 0.15 });
-      headerRow.addCol({weight: 0.7}).addText({ text: 'Select Device', fontSize: 0.08, fontColor: '#FFFFFF' });
-      const cancelBtn = headerRow.addCol({weight: 0.3}).addIconButton({ text: 'close', fontSize: 0.08, backgroundColor: '#CC0000', fontColor: '#FFFFFF', mode: 'center' });
-      cancelBtn.onTriggered = () => {
-          this.isSelectingDevice = false;
-          this.rebuildPanel();
-      };
+      const headerRow = new xb.UIPanel({
+          style: {
+              width: '100%',
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+          },
+          children: [
+              new xb.UIText({ text: 'Select Device', style: { fontSize: 16, fontWeight: 'bold', color: '#FFFFFF' } }),
+              new xb.UIButton({
+                  label: 'X',
+                  ariaLabel: 'Cancel selection',
+                  style: { width: 32, height: 32, borderRadius: 8 },
+                  onClick: () => {
+                      this.isSelectingDevice = false;
+                      this.rebuildPanel();
+                  }
+              })
+          ]
+      });
+
+      const bodyChildren = [headerRow];
       
       if (devices.length === 0) {
-          const emptyRow = this.mainGrid.addRow({ weight: 0.4 });
-          emptyRow.addText({ text: 'No Devices Found', fontSize: 0.07, fontColor: '#FF6666', textAlign: 'center', mode: 'center' });
-          const promptRow = this.mainGrid.addRow({ weight: 0.45 });
-          promptRow.addText({ text: 'Ensure devices are linked in Home Assistant', fontSize: 0.045, fontColor: '#CCCCCC', textAlign: 'center', mode: 'center' });
-          return;
+          bodyChildren.push(new xb.UIText({ text: 'No Devices Found', style: { fontSize: 14, color: '#FF6666', textAlign: 'center' } }));
+          bodyChildren.push(new xb.UIText({ text: 'Ensure devices are linked in Home Assistant', style: { fontSize: 12, color: '#CCCCCC', textAlign: 'center' } }));
+      } else {
+          pageDevices.forEach(d => {
+              bodyChildren.push(new xb.UIButton({
+                  label: d.name || d.id,
+                  style: { width: '100%', borderRadius: 8 },
+                  onClick: () => this.pairWithDevice(d.id)
+              }));
+          });
+          
+          if (totalPages > 1) {
+              const prevBtn = new xb.UIButton({
+                  label: '<',
+                  disabled: this.devicePage <= 0,
+                  style: { width: 40, borderRadius: 8 },
+                  onClick: () => { if (this.devicePage > 0) { this.devicePage--; this.rebuildPanel(); } }
+              });
+              const pageIndicator = new xb.UIText({
+                  text: `${this.devicePage + 1} / ${totalPages}`,
+                  style: { fontSize: 14, color: '#FFFFFF', textAlign: 'center', flexGrow: 1 }
+              });
+              const nextBtn = new xb.UIButton({
+                  label: '>',
+                  disabled: this.devicePage >= totalPages - 1,
+                  style: { width: 40, borderRadius: 8 },
+                  onClick: () => { if (this.devicePage < totalPages - 1) { this.devicePage++; this.rebuildPanel(); } }
+              });
+              bodyChildren.push(new xb.UIPanel({
+                  style: { width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+                  children: [prevBtn, pageIndicator, nextBtn]
+              }));
+          }
       }
 
-      pageDevices.forEach(d => {
-          const row = this.mainGrid.addRow({ weight: 0.08 });
-          const btn = row.addCol({weight: 1.0}).addButton({ text: d.name || d.id, fontSize: 0.05, fontColor: '#FFFFFF', backgroundColor: '#333333' });
-          btn.onTriggered = () => {
-              this.pairWithDevice(d.id);
-          };
+      this.panel = new xb.UICard({
+          size: { width: this.panelWidth, height: 'auto' },
+          manipulation: false,
+          style: {
+              flexDirection: 'column',
+              gap: 8,
+              padding: 12,
+              backgroundColor: 'rgba(20, 20, 25, 0.9)',
+              borderRadius: 16,
+          },
+          children: bodyChildren
       });
-      
-      if (totalPages > 1) {
-          const pageRow = this.mainGrid.addRow({ weight: 0.1 });
-          const prevBtn = pageRow.addCol({weight: 0.3}).addButton({ text: '<', fontSize: 0.08 });
-          prevBtn.onTriggered = () => { if (this.devicePage > 0) { this.devicePage--; this.rebuildPanel(); } };
-          pageRow.addCol({weight: 0.4}).addText({ text: `${this.devicePage + 1} / ${totalPages}`, fontSize: 0.06, fontColor: '#FFFFFF', textAlign: 'center' });
-          const nextBtn = pageRow.addCol({weight: 0.3}).addButton({ text: '>', fontSize: 0.08 });
-          nextBtn.onTriggered = () => { if (this.devicePage < totalPages - 1) { this.devicePage++; this.rebuildPanel(); } };
-      }
+
+      this.panel.position.set(0, -this.panelHeight/2 - 0.25, 0);
+      this.add(this.panel);
   }
 
   pairWithDevice(deviceId) {
