@@ -85,24 +85,38 @@ You can interact with the detected smart lights differently depending on your pl
 
 ## Technical Setup (Developers)
 
-### Docker (Linux/WSL2)
+The architecture has been migrated from local node containers to a serverless model using Firebase Hosting and Cloud Functions, enabling secure 3rd-party integrations (Vertex AI, Google Home Graph).
 
-Required for Matter mDNS discovery on Linux.
+### 1. Credentials & Secrets Setup (`.env.sample` and Auth)
 
-```bash
-docker build -t xrhome-demo .
-docker run --name xrhome --network host -it --rm -p 8080:8080 xrhome-demo
-```
+To connect to Gemini, Google Home, and Firebase Auth:
+1. Open `.env.sample` located in the root of the project.
+2. Enter your `GEMINI_API_KEY`, `GOOGLE_HOME_PROJECT_ID`, and `WEB_API_KEY`.
+3. Copy or rename this file to `.env` inside the `functions/` directory:
+   ```bash
+   cp .env.sample functions/.env
+   ```
+   *Note: Firebase Cloud Functions require local environment files to be stored inside the `functions` folder to be properly loaded during deployment!*
 
-frontend: `https://<hostname>:8080/demos/xrhome/index.html`
+**Firebase Authentication:**
+This demo uses Firebase Authentication with Google Sign-in to protect Realtime Database anchors.
+1. Go to your [Firebase Console](https://console.firebase.google.com/).
+2. Navigate to **Authentication** > **Sign-in method**.
+3. Click **Add new provider** > **Google**.
+4. Enable it and ensure your project's support email is configured.
 
-### Local Node.js (Windows/Mac)
+### 2. Local Development (Emulators)
 
-Recommended for development.
+You can run the full Firebase suite locally without deploying:
+   ```bash
+   cd functions && npm install && cd ..
+   firebase emulators:start
+   ```
 
-```bash
-npm install
-npm run dev
-```
+### 3. Deployment
 
-Access at `https://<hostname>:8080/demos/xrhome/index.html` (Accept self-signed cert).
+To publish the static frontend and provision the backend REST APIs to the cloud:
+   ```bash
+   # Make sure your functions/.env is populated
+   firebase deploy
+   ```

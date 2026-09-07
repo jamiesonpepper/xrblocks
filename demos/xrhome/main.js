@@ -158,10 +158,11 @@ import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
 import { VisionManager } from './vision.js';
-import { matterClient } from './matter-client.js';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js';
+import { HUDManager } from './hud.js?v=15';
 import { VirtualKeypad } from './keypad.js';
 
 // Globals
@@ -187,19 +188,34 @@ let isConfiguring = false;
 let configIndex = 0;
 
 // Setup Configuration UI
-function setupUI() {
+async function setupUI() {
     const overlay = document.getElementById('config-overlay');
     const startBtn = document.getElementById('start-btn');
     const geminiInput = document.getElementById('gemini-key');
     const matterInput = document.getElementById('matter-code');
 
+    // 1. Fetch Cloud Function backend config first so headsets auto-load without manual key entry
+    let backendConfig = null;
+    try {
+        const configRes = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/getConfig');
+        if (configRes.ok) {
+            backendConfig = await configRes.json();
+            if (backendConfig.geminiKey && !auth.config.geminiKey) {
+                auth.config.geminiKey = backendConfig.geminiKey;
+                auth.saveConfig(auth.config);
+            }
+        }
+    } catch (e) {
+        console.warn("Could not pre-fetch remote config in setupUI:", e);
+    }
+
     if (auth.config.geminiKey) geminiInput.value = auth.config.geminiKey;
     if (auth.config.matterCode) matterInput.value = auth.config.matterCode;
 
-    // Auto-start if configured
+    // Auto-start if configured (from Cloud Function or localStorage)
     if (auth.hasConfig()) {
          overlay.style.display = 'none';
-         initApp();
+         initApp(backendConfig);
          return;
     }
 
@@ -211,30 +227,7 @@ function setupUI() {
         auth.saveConfig(config);
         
         overlay.style.display = 'none';
-        initApp();
-        
-        // Setup XR Interaction
-        setTimeout(() => {
-            if (xb.renderer && xb.renderer.xr) {
-                const controller0 = xb.renderer.xr.getController(0);
-                const controller1 = xb.renderer.xr.getController(1);
-                
-                // Add Listeners
-                controller0.addEventListener('select', onXRSelect);
-                controller1.addEventListener('select', onXRSelect);
-                
-                controller0.addEventListener('selectstart', onXRSelectStart);
-                controller1.addEventListener('selectstart', onXRSelectStart);
-                
-                controller0.addEventListener('selectend', onXRSelectEnd);
-                controller1.addEventListener('selectend', onXRSelectEnd);
-                
-                console.log("XR Interaction Listeners Attached");
-                
-                // Add Interaction Script for Dragging
-                xb.add(new HUDInteraction());
-            }
-        }, 1000);
+        initApp(backendConfig);
     });
 }
 
@@ -296,7 +289,7 @@ class VirtualLight2D {
 // --- 3D Virtual Light (AR/XR) ---
 // --- 3D Virtual Light (AR/XR) ---
 class VirtualLight3D extends THREE.Group {
-  constructor(geminiData, labelText, width = 0.15, height = 0.20) {
+  constructor(geminiData, labelText, width = 0.6, height = 0.8) {
       super();
       this.geminiData = geminiData; // Keep for xmin/xmax/ymin/ymax
       this.labelText = labelText || "Light";
@@ -305,6 +298,8 @@ class VirtualLight3D extends THREE.Group {
       this.brightness = 100;
       this.realDevice = null;
       this.linkedNodeId = null; 
+      this.isSelectingDevice = false;
+      this.devicePage = 0;
 
       // Hit Mesh (Invisible, for easier raycasting if needed)
       const hitGeo = new THREE.PlaneGeometry(width, height);
@@ -368,9 +363,11 @@ class VirtualLight3D extends THREE.Group {
       this.draggingMode = 'TRANSLATING';
       this.dragFacingCamera = false;
       
+      const targetHeight = this.isSelectingDevice ? 1.4 : this.panelHeight;
+      
       this.panel = new xb.SpatialPanel({
           width: this.panelWidth, // Fixed square shape 0.6x0.6
-          height: this.panelHeight,
+          height: targetHeight,
           backgroundColor: '#00000000', // Fully transparent
           draggable: false,             // Prevent DragManager from clamping onto the child panel
           useBorderlessShader: !canDrag, // Maintain native shiny styling logic based on drag state
@@ -380,7 +377,7 @@ class VirtualLight3D extends THREE.Group {
       this.panel.draggingMode = undefined;
       
       // Positioned below the box
-      this.panel.position.set(0, -this.panelHeight/2 - 0.25, 0);
+      this.panel.position.set(0, -targetHeight/2 - 0.25, 0);
       this.add(this.panel);
       
       this.mainGrid = this.panel.addGrid();
@@ -413,17 +410,20 @@ class VirtualLight3D extends THREE.Group {
       };
       enforceRenderOrder(this.panel, 300);
       
+      if (this.isSelectingDevice) {
+          this._buildDeviceListUI();
+          return;
+      }
+      
       const isOn = this.isOn;
       
       const stateColor = this.stateColor !== undefined ? this.stateColor : '#FFFF00';
       
       // Dynamic Text Sizing for Labels 
       const labelChars = this.labelText.length;
-      let dynamicFontSize = 0.264; // Doubled to compensate for 50% smaller panel layout
-      // If label is very long (e.g. "Ceiling Light" = 13 chars), shrink font size so it fits row bounds linearly.
-      // Panel width is now 0.15. Assumed constraint proportionally smaller.
+      let dynamicFontSize = 0.5; // Much larger
       if (labelChars > 11) {
-          dynamicFontSize = Math.max(0.132, 0.264 * (11 / labelChars));
+          dynamicFontSize = Math.max(0.25, 0.5 * (11 / labelChars));
       }
       
       // ROW 1: Label
@@ -444,9 +444,9 @@ class VirtualLight3D extends THREE.Group {
           // --- UNPAIRED UI ---
           const btn = rowBtn.addIconButton({ 
               text: 'add_circle',  
-              fontSize: 0.40,
-              width: 0.60,
-              height: 0.60,
+              fontSize: 0.80,
+              width: 1.20,
+              height: 1.20,
               mode: 'center', 
               backgroundColor: '#00AA00', 
               fontColor: '#FFFFFF'
@@ -457,9 +457,9 @@ class VirtualLight3D extends THREE.Group {
           // --- PAIRED UI ---
           const toggleBtn = rowBtn.addCol({weight: 0.5}).addIconButton({
               text: 'power_settings_new',
-              fontSize: 0.40, // Icon size
-              width: 0.60,
-              height: 0.60,
+              fontSize: 0.80, // Icon size
+              width: 1.20,
+              height: 1.20,
               mode: 'center', 
               backgroundColor: isOn ? '#FFFFFF' : '#FFFFFF', 
               fontColor: isOn ? '#CC0000' : '#00AA00'
@@ -468,9 +468,9 @@ class VirtualLight3D extends THREE.Group {
 
           const unpairBtn = rowBtn.addCol({weight: 0.5}).addIconButton({ 
               text: 'link_off', 
-              fontSize: 0.40, 
-              width: 0.60,
-              height: 0.60,
+              fontSize: 0.80, 
+              width: 1.20,
+              height: 1.20,
               mode: 'center', 
               backgroundColor: '#CC0000', 
               fontColor: '#FFFFFF'
@@ -501,11 +501,53 @@ class VirtualLight3D extends THREE.Group {
               fontColor: '#FFFFFF'
           });
           incBtn.onTriggered = () => this.setBrightness(this.brightness + 10);
+          
+          // ROW 4: Color Controls
+          const supportsColor = this.realDevice && this.realDevice.attributes && this.realDevice.attributes.supported_color_modes && 
+              (this.realDevice.attributes.supported_color_modes.includes('rgb') || 
+               this.realDevice.attributes.supported_color_modes.includes('hs') || 
+               this.realDevice.attributes.supported_color_modes.includes('xy'));
+
+          if (supportsColor) {
+              const rowColor = this.mainGrid.addRow({ weight: 0.6 });
+              
+              const redBtn = rowColor.addCol({weight: 0.33}).addIconButton({
+                  text: 'palette',
+                  fontSize: 0.40,
+                  width: 0.60,
+                  height: 0.60,
+                  mode: 'center',
+                  backgroundColor: '#CC0000',
+                  fontColor: '#FFFFFF'
+              });
+              redBtn.onTriggered = () => this.setColor(255, 0, 0);
+              
+              const greenBtn = rowColor.addCol({weight: 0.33}).addIconButton({
+                  text: 'palette',
+                  fontSize: 0.40,
+                  width: 0.60,
+                  height: 0.60,
+                  mode: 'center',
+                  backgroundColor: '#00CC00',
+                  fontColor: '#FFFFFF'
+              });
+              greenBtn.onTriggered = () => this.setColor(0, 255, 0);
+
+              const blueBtn = rowColor.addCol({weight: 0.33}).addIconButton({
+                  text: 'palette',
+                  fontSize: 0.40,
+                  width: 0.60,
+                  height: 0.60,
+                  mode: 'center',
+                  backgroundColor: '#0000CC',
+                  fontColor: '#FFFFFF'
+              });
+              blueBtn.onTriggered = () => this.setColor(0, 0, 255);
+          }
       }
   }
 
   handleConfigClick() {
-      // Logic from `hud.checkClick` handler in main.js
       const vl = this;
       console.log("3D Config Clicked:", vl.label, vl);
       
@@ -530,72 +572,87 @@ class VirtualLight3D extends THREE.Group {
                 }
             });
       } else {
-            // PAIR
-            if (!keypad.visible) {
-                 if (!keypad.mesh) keypad.init(xb.scene);
-                 
-                 hud.speak("Enter Pairing Code.");
-                 
-                 // Position keypad centered in front of the camera
-                 let cam = xb.camera;
-                 if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
-                     cam = xb.renderer.xr.getCamera();
-                 }
-                 
-                 if (cam) {
-                     const camPos = new THREE.Vector3();
-                     const camDir = new THREE.Vector3();
-                     cam.getWorldPosition(camPos);
-                     cam.getWorldDirection(camDir);
-                     
-                     // Spawn exactly 5.0m in front of the user's view
-                     const spawnPos = camPos.clone().add(camDir.multiplyScalar(5.0));
-                     keypad.group.position.copy(spawnPos);
-                     
-                     // Use exact DragManager turnPanelToFaceTheCamera math to prevent snap-correction on interaction
-                     const v = new THREE.Vector3().subVectors(keypad.group.position, camPos);
-                     keypad.group.quaternion.setFromAxisAngle(
-                         new THREE.Vector3(0, 1, 0),
-                         (3 * Math.PI) / 2 - Math.atan2(v.z, v.x)
-                     );
-                     
-                     // Console log for debugging the exact coordinates
-                     console.log(`[Keypad Debug] Spawning at ${keypad.group.position.toArray().map(n=>Math.round(n*100)/100).join(',')}, looking at camera at ${camPos.toArray().map(n=>Math.round(n*100)/100).join(',')}`);
-                     
-                     // CRITICAL FIX: Flush matrix calculation to XRBlocks immediately so hit testing align
-                     keypad.group.updateMatrixWorld(true);
-                 } else {
-                     // Fallback
-                     const lightPos = new THREE.Vector3();
-                     vl.getWorldPosition(lightPos);
-                     keypad.group.position.copy(lightPos).add(new THREE.Vector3(0.6, 0, 0.5));
-                     keypad.group.updateMatrixWorld(true);
-                 }
+            // ENTER SELECTION MODE
+            this.isSelectingDevice = true;
+            this.devicePage = 0;
+            this.rebuildPanel();
+      }
+  }
 
-                 keypad.open("", (code) => {
-                      if (code) {
-                          hud.speak("Pairing device...");
-                          hud.log("Pairing...", '#FFFF00');
-                          
-                          smartHome.commissionDevice(code, vl.label).then(res => {
-                               if (res.success) {
-                                  hud.speak("Success! Paired.");
-                                  hud.log("Paired!", '#00FF00');
-                                  vl.linkedNodeId = res.nodeId;
-                                  vl.updateVisuals(); // Instantly swap UI state
-                                  refreshRealDevices();
-                              } else {
-                                  hud.speak("Pairing Failed.");
-                                  hud.log("Error: " + (res.error?.message || "Unknown"), '#FF0000');
-                              }
-                          });
-                      } else {
-                          hud.speak("Pairing cancelled.");
-                      }
-                 }, () => {
-                     hud.speak("Cancelled.");
-                 });
-             }
+  _buildDeviceListUI() {
+      const allDevices = Array.from(smartHome.devices.values());
+      const devices = allDevices.filter(d => d.id.startsWith('light.') || d.id.startsWith('switch.'));
+      
+      const ITEMS_PER_PAGE = 10;
+      const totalPages = Math.ceil(devices.length / ITEMS_PER_PAGE) || 1;
+      if (this.devicePage >= totalPages) this.devicePage = Math.max(0, totalPages - 1);
+      
+      const startIdx = this.devicePage * ITEMS_PER_PAGE;
+      const pageDevices = devices.slice(startIdx, startIdx + ITEMS_PER_PAGE);
+      
+      const headerRow = this.mainGrid.addRow({ weight: 0.15 });
+      headerRow.addCol({weight: 0.7}).addText({ text: 'Select Device', fontSize: 0.08, fontColor: '#FFFFFF' });
+      const cancelBtn = headerRow.addCol({weight: 0.3}).addIconButton({ text: 'close', fontSize: 0.08, backgroundColor: '#CC0000', fontColor: '#FFFFFF', mode: 'center' });
+      cancelBtn.onTriggered = () => {
+          this.isSelectingDevice = false;
+          this.rebuildPanel();
+      };
+      
+      if (devices.length === 0) {
+          const emptyRow = this.mainGrid.addRow({ weight: 0.4 });
+          emptyRow.addText({ text: 'No Devices Found', fontSize: 0.07, fontColor: '#FF6666', textAlign: 'center', mode: 'center' });
+          const promptRow = this.mainGrid.addRow({ weight: 0.45 });
+          promptRow.addText({ text: 'Ensure devices are linked in Home Assistant', fontSize: 0.045, fontColor: '#CCCCCC', textAlign: 'center', mode: 'center' });
+          return;
+      }
+
+      pageDevices.forEach(d => {
+          const row = this.mainGrid.addRow({ weight: 0.08 });
+          const btn = row.addCol({weight: 1.0}).addButton({ text: d.name || d.id, fontSize: 0.05, fontColor: '#FFFFFF', backgroundColor: '#333333' });
+          btn.onTriggered = () => {
+              this.pairWithDevice(d.id);
+          };
+      });
+      
+      if (totalPages > 1) {
+          const pageRow = this.mainGrid.addRow({ weight: 0.1 });
+          const prevBtn = pageRow.addCol({weight: 0.3}).addButton({ text: '<', fontSize: 0.08 });
+          prevBtn.onTriggered = () => { if (this.devicePage > 0) { this.devicePage--; this.rebuildPanel(); } };
+          pageRow.addCol({weight: 0.4}).addText({ text: `${this.devicePage + 1} / ${totalPages}`, fontSize: 0.06, fontColor: '#FFFFFF', textAlign: 'center' });
+          const nextBtn = pageRow.addCol({weight: 0.3}).addButton({ text: '>', fontSize: 0.08 });
+          nextBtn.onTriggered = () => { if (this.devicePage < totalPages - 1) { this.devicePage++; this.rebuildPanel(); } };
+      }
+  }
+
+  pairWithDevice(deviceId) {
+      hud.speak("Pairing device...");
+      hud.log(`Pairing to ${deviceId}...`, '#FFFF00');
+      
+      const device = smartHome.devices.get(deviceId);
+      if (device) {
+          this.linkedNodeId = deviceId;
+          this.realDevice = device;
+          this.labelText = device.name || deviceId;
+          this.label = this.labelText;
+          this.isSelectingDevice = false;
+          
+          if (auth.db && auth.user) {
+              const pos = this.position;
+              const quat = this.quaternion;
+              const ref = auth.db.ref(`users/${auth.user.uid}/anchors/${deviceId.replace(/\./g, '_')}`);
+              ref.set({
+                  position: { x: pos.x, y: pos.y, z: pos.z },
+                  quaternion: { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
+                  timestamp: firebase.database.ServerValue.TIMESTAMP
+              }).then(() => {
+                  hud.log(`Saved coordinates`, '#00FF00');
+              }).catch(err => {
+                  console.error("Failed to save anchor", err);
+              });
+          }
+          
+          this.updateVisuals();
+          refreshRealDevices();
       }
   }
 
@@ -605,8 +662,8 @@ class VirtualLight3D extends THREE.Group {
       const isPaired = !!(this.realDevice || this.linkedNodeId);
       
       // Hydrate state from realDevice if available BEFORE rebuilding buttons
-      if (this.realDevice && this.realDevice.traits && this.realDevice.traits['sdm.devices.traits.OnOff']) {
-          this.isOn = this.realDevice.traits['sdm.devices.traits.OnOff'].isOn;
+      if (this.realDevice) {
+          this.isOn = this.realDevice.isOn;
       }
       
       const isOn = this.isOn;
@@ -623,6 +680,7 @@ class VirtualLight3D extends THREE.Group {
   }
 
   toggle() {
+      const prevOn = this.isOn;
       this.isOn = !this.isOn;
       this.updateVisuals();
       
@@ -633,16 +691,59 @@ class VirtualLight3D extends THREE.Group {
           const colorStr = this.isOn ? '#FFFFFF' : '#00FF00';
           hud.log(`${this.labelText} turned ${stateStr}`, colorStr);
           
-          smartHome.toggleLight(this.realDevice.id, this.isOn).then(() => {
-              hud.speak(this.isOn ? "Turning On" : "Turning Off");
+          smartHome.toggleLight(this.realDevice.id, this.isOn).then((success) => {
+              if (success !== false) {
+                  hud.speak(this.isOn ? "Turning On" : "Turning Off");
+              } else {
+                  // Revert on failure
+                  hud.log(`Failed to toggle ${this.labelText}`, '#FF0000');
+                  hud.speak("Device sync failed");
+                  this.isOn = prevOn;
+                  this.updateVisuals();
+              }
+          }).catch(() => {
+              hud.log(`Network error syncing ${this.labelText}`, '#FF0000');
+              this.isOn = prevOn;
+              this.updateVisuals();
           });
       } 
   }
 
   setBrightness(val) {
+      const prevBrightness = this.brightness;
       this.brightness = Math.max(0, Math.min(100, val));
       if (this.realDevice && smartHome) {
-          smartHome.setBrightness(this.realDevice.id, this.brightness);
+          smartHome.setBrightness(this.realDevice.id, this.brightness).then((success) => {
+              if (success === false) {
+                  this.brightness = prevBrightness;
+                  hud.log(`Failed to set brightness for ${this.labelText}`, '#FF0000');
+              }
+          }).catch(() => {
+              this.brightness = prevBrightness;
+          });
+      }
+  }
+
+  setColor(r, g, b) {
+      if (this.realDevice && smartHome) {
+          const prevColor = this.stateColor;
+          // Convert to hex for text label coloring (as per feature file)
+          const toHex = (n) => {
+              const hex = n.toString(16);
+              return hex.length === 1 ? '0' + hex : hex;
+          };
+          this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+          this.rebuildPanel();
+          smartHome.setColor(this.realDevice.id, r, g, b).then((success) => {
+              if (success === false) {
+                  this.stateColor = prevColor;
+                  this.rebuildPanel();
+                  hud.log(`Failed to set color for ${this.labelText}`, '#FF0000');
+              }
+          }).catch(() => {
+              this.stateColor = prevColor;
+              this.rebuildPanel();
+          });
       }
   }
   
@@ -654,7 +755,7 @@ class VirtualLight3D extends THREE.Group {
 
 let isAppInitialized = false;
 
-async function initApp() {
+async function initApp(preloadedConfig = null) {
     if (isAppInitialized) {
         console.warn("initApp called multiple times. Ignoring.");
         return;
@@ -663,10 +764,43 @@ async function initApp() {
 
     console.log("Initializing XRHome...");
     
-    // smartHome is now the matterClient singleton
-    smartHome = matterClient;
+    // Fetch Backend Config if not already preloaded
+    let apiConfig = preloadedConfig;
+    if (!apiConfig) {
+        try {
+            const configRes = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/getConfig');
+            apiConfig = await configRes.json();
+        } catch (e) {
+            apiConfig = { projectId: 'xrhome-009ef8' };
+        }
+    }
+    if (!apiConfig.projectId) apiConfig.projectId = 'xrhome-009ef8';
+
+    if (apiConfig.geminiKey && !auth.config.geminiKey) {
+        auth.config.geminiKey = apiConfig.geminiKey;
+        auth.saveConfig(auth.config);
+    }
     
-    // 1. Fetch Real Devices
+    if (apiConfig.firebaseApiKey) {
+        const firebaseConfig = {
+            apiKey: apiConfig.firebaseApiKey,
+            authDomain: `${apiConfig.projectId}.firebaseapp.com`,
+            projectId: apiConfig.projectId,
+        };
+        smartHome = new FirebaseHAIntegration(apiConfig.projectId);
+        await smartHome.listen();
+        console.log(`Home Assistant Connected! Successfully retrieved ${smartHome.devices.size} devices.`);
+        
+        // Listen for device changes
+        smartHome.onDevicesChanged = (devices) => {
+            console.log("Devices updated via HA:", devices);
+            refreshRealDevices();
+        };
+    } else {
+        console.warn("No Firebase API Key found, skipping Firebase initialization.");
+    }
+    
+    // 1. Fetch Real Devices (Local Cache from Firestore)
     await refreshRealDevices();
 
     // Check for AR Support FIRST before starting any cameras
@@ -693,12 +827,21 @@ async function initApp() {
     o.controllers.visualizeRays = true;
 
     if (isARSupported) {
-        o.enableUI(); // Only show "Enter AR" if supported
-        o.enableCamera('environment'); // natively mount deviceCamera via XRBlocks
-        o.referenceSpaceType = 'unbounded';
-        o.webxrRequiredFeatures.push('unbounded');
-        console.log("Enabled XRBlocks Native Camera for 3D processing.");
+        if (typeof o.enableUI === 'function') o.enableUI();
+        if (o.xrButton) {
+            o.xrButton.enabled = true;
+            o.xrButton.startText = 'Enter AR';
+        }
+        if (typeof o.enableCamera === 'function') {
+            o.enableCamera();
+        }
+        o.referenceSpaceType = 'local-floor';
+        console.log("Configured XRBlocks for AR with local-floor reference space.");
     } else {
+        if (o.xrButton) {
+            o.xrButton.enabled = false;
+        }
+        o.enableSimulator = false;
         // Desktop Mode: Create a transparent canvas manually
         if (!o.canvas) {
             o.canvas = document.createElement('canvas');
@@ -721,8 +864,27 @@ async function initApp() {
     const getDeps = () => ({ virtualLights, smartHome, hud, VirtualLight3D });
     xb.add(new EasterEggManager(getDeps));
 
-    // REMOVED: Desktop Camera Eye-Level workaround (caused crash with xb.get)
-    // 2D HUD does not require this.
+    // Attach XR Interaction Listeners & Dragging Script
+    setTimeout(() => {
+        if (xb.renderer && xb.renderer.xr) {
+            const controller0 = xb.renderer.xr.getController(0);
+            const controller1 = xb.renderer.xr.getController(1);
+            
+            if (controller0 && controller1) {
+                controller0.addEventListener('select', onXRSelect);
+                controller1.addEventListener('select', onXRSelect);
+                
+                controller0.addEventListener('selectstart', onXRSelectStart);
+                controller1.addEventListener('selectstart', onXRSelectStart);
+                
+                controller0.addEventListener('selectend', onXRSelectEnd);
+                controller1.addEventListener('selectend', onXRSelectEnd);
+                
+                console.log("XR Interaction Listeners Attached to controllers");
+            }
+            xb.add(new HUDInteraction());
+        }
+    }, 1000);
 
     // 4. Create Passthrough Plane (HUD) - ONLY for AR (or if we want it in VR)
     if (isARSupported) {
@@ -745,35 +907,24 @@ async function initApp() {
     // 5. Init HUD
     if (!isARSupported) {
         // Desktop: 2D Overlay
-        // Ensure HUD handles string mode correctly
         console.log("HUD: Initializing 2D Desktop Overlay...");
         hud.init(document.body, '2D');
         console.log("HUD: 2D Overlay Attached to Body");
-        
-        // 6b. Menu (2D) - Uses standard browser prompts, no class needed
-        // menu.init(document.body, '2D'); // REMOVED
-        
     } else {
         // XR: 3D Plane
-        // Wait for engine/scene
         setTimeout(() => {
-             // Access App Instance
              let app = null;
-             // Safe check for xb.get
              try {
                 if (typeof xb.get === 'function') {
                     app = xb.get();
                 }
              } catch(e) {}
              
-             // Fallback to scene export if get() fails or app is missing
              const parent = app?.camera || xb.scene; 
              
              if (parent) {
                 hud.init(parent, '3D');
                 console.log("HUD: 3D Plane Attached to Scene/Camera");
-                
-                // Keypad Init only occurs on demand later in startAssignmentFlow
              } else {
                 console.warn("Could not find Camera or Scene for 3D HUD");
              }
@@ -781,7 +932,8 @@ async function initApp() {
     }
     
     // 6. Init Vision Loop
-    vision.init(auth.config.geminiKey);
+    const activeGeminiKey = auth.config.geminiKey || apiConfig.geminiKey;
+    vision.init(activeGeminiKey);
     startVisionLoop();
 }
 
@@ -970,6 +1122,22 @@ async function toggleScan() {
         // --- STARTING SCAN ---
         hud.log("Starting Camera...", '#FFFF00');
         
+        // 0. Cleanup Unmapped Anchors from PREVIOUS session
+        const unmappedLights = virtualLights.filter(vl => !vl.realDevice && !vl.linkedNodeId);
+        unmappedLights.forEach(vl => {
+            if (vl.parent) {
+                vl.parent.remove(vl);
+            } else if (xb.scene) {
+                xb.scene.remove(vl);
+            }
+        });
+        if (unmappedLights.length > 0) {
+            hud.log(`Cleaned up ${unmappedLights.length} unmapped anchors.`, '#FF8800');
+        }
+        
+        // Keep only mapped lights
+        virtualLights = virtualLights.filter(vl => vl.realDevice || vl.linkedNodeId);
+
         // 1. Flush Logic (Before setting isScanning = true)
         // This prevents the fast loop from grabbing a stale frame while we flush
         latestFrameBlob = null;
@@ -1053,6 +1221,8 @@ async function toggleScan() {
     } else {
         // --- STOPPING SCAN ---
         isScanning = false;
+        
+        // Anchor cleanup moved to STARTING SCAN so anchors persist for pairing
         
         // Update all visual lights to toggle draggability ON (if unpaired)
         virtualLights.forEach(vl => vl.updateVisuals());
@@ -1146,6 +1316,8 @@ async function refreshRealDevices() {
         console.log("Raw Devices Returned:", devices);
         
         realDevices = devices.filter(d => 
+            d.id?.startsWith('light.') || 
+            d.id?.startsWith('switch.') ||
             d.type === 'sdm.devices.types.LIGHT' || 
             d.type === 'LIGHT' || // Matter Client default
             (d.traits && d.traits['sdm.devices.traits.OnOff'])
@@ -1650,6 +1822,9 @@ class GlobalManager extends xb.Script {
     
     onUpdate(dt) {
         this.gestureSystem.update(dt);
+        if (hud && hud.panel && hud.panel.update) {
+            hud.panel.update();
+        }
     }
 }
 xb.add(new GlobalManager());

@@ -8,7 +8,7 @@ export class VisionManager {
     constructor() {
         this.apiKey = null;
         this.isScanning = false;
-        this.onLightsFound = null; // Callback(lights[])
+        this.onDevicesFound = null; // Callback(devices[])
         this.onStatus = null; // Callback(text)
     }
 
@@ -43,7 +43,7 @@ export class VisionManager {
             const payload = {
                 contents: [{
                     parts: [
-                        { text: "Analyze this image from a wide-angle room camera. Find all light sources (lamps, ceiling lights, bulbs, strips) even if they are small, distant, or currently turned OFF. Look carefully for lamp shades, recessed lights, and fixtures. Return a JSON array of objects with keys: label, ymin, xmin, ymax, xmax. Coordinates are normalized 0-1. If none, return empty array." },
+                        { text: "Analyze this image from a wide-angle room camera. Find all rigid Smart Home appliances (switches, Smart TV's, appliances, and smart bulbs in lamps, ceiling, lights and elsewhere) even if they are currently turned OFF. Look carefully for any visible devices. Return a JSON array of objects with keys: label, ymin, xmin, ymax, xmax. Coordinates are normalized 0-1. If none, return empty array." },
                         {
                             inline_data: {
                                 mime_type: "image/jpeg",
@@ -90,11 +90,11 @@ export class VisionManager {
             // Parse Result
             if (data.candidates && data.candidates[0].content && data.candidates[0].content.parts[0].text) {
                 const jsonText = data.candidates[0].content.parts[0].text;
-                const lights = JSON.parse(jsonText);
+                const devices = JSON.parse(jsonText);
                 
-                console.log(`[Vision] Parsed Lights: ${lights.length} found.`);
-                if (this.onLightsFound) this.onLightsFound(lights, cameraMatrix); // Pass Matrix Back
-                if (this.onStatus) this.onStatus(`Found ${lights.length} lights`);
+                console.log(`[Vision] Parsed Devices: ${devices.length} found.`);
+                if (this.onDevicesFound) this.onDevicesFound(devices, cameraMatrix); // Pass Matrix Back
+                if (this.onStatus) this.onStatus(`Found ${devices.length} devices`);
             } else {
                 console.warn(`[Vision] No candidates in response.`);
                 if (this.onStatus) this.onStatus("No result");

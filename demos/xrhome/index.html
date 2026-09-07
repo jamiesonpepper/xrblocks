@@ -51,7 +51,7 @@
             border: 1px solid #444;
             color: white;
             border-radius: 4px;
-            box-sizing: border-box; /* Fix padding width issue */
+            box-sizing: border-box;
         }
         button#start-btn {
             width: 100%;
@@ -79,7 +79,7 @@
             width: 100vw;
             height: 100vh;
             object-fit: cover;
-            z-index: -1; /* Behind the UI and Canvas */
+            z-index: -1;
         }
         #process-canvas {
             display: none;
@@ -88,13 +88,8 @@
         /* Force XRBlocks Canvas to be transparent */
         canvas[data-engine="three.js"], canvas {
             background-color: transparent !important;
-            pointer-events: auto; /* Allow interaction */
-            z-index: 10; /* Above video */
-        }
-
-        /* Hide any default XRBlocks overlay UI if it uses common IDs/classes */
-        #xrblocks-ui, .xrblocks-ui {
-            display: none !important;
+            pointer-events: auto;
+            z-index: 10;
         }
     </style>
     <script>
@@ -104,6 +99,7 @@
       {
         "imports": {
           "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+          "three/": "https://cdn.jsdelivr.net/npm/three@0.182.0/",
           "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
           "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
           "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
@@ -113,8 +109,13 @@
           "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
           "lit/": "https://esm.run/lit@3/",
           "@dimforge/rapier3d-simd-compat": "https://cdn.skypack.dev/@dimforge/rapier3d-simd-compat@0.17.0",
-          "xrblocks": "https://cdn.jsdelivr.net/gh/google/xrblocks@build/xrblocks.js",
-          "xrblocks/addons/": "https://cdn.jsdelivr.net/gh/google/xrblocks@build/addons/"
+          "xrblocks": "https://cdn.jsdelivr.net/gh/jamiesonpepper/xrblocks@build/xrblocks.js",
+          "xrblocks/addons/": "https://cdn.jsdelivr.net/gh/jamiesonpepper/xrblocks@build/addons/",
+          "@pmndrs/uikit": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit@1.0.56/dist/index.min.js",
+          "@pmndrs/uikit-pub-sub": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit-pub-sub@1.0.56/dist/index.min.js",
+          "@pmndrs/msdfonts": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.56/dist/index.min.js",
+          "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.12.1/dist/signals-core.mjs",
+          "yoga-layout/load": "https://cdn.jsdelivr.net/npm/yoga-layout@3.2.1/dist/src/load.js"
         }
       }
     </script>
@@ -132,6 +133,7 @@
                     <label for="gemini-key">Gemini API Key</label>
                     <input type="password" id="gemini-key" placeholder="AIza..." autocomplete="current-password" />
                 </div>
+
                 <div class="input-group">
                     <label for="matter-code">Matter Pairing Codes (Optional, Comma separated)</label>
                     <input type="text" id="matter-code" placeholder="Code1, Code2..." autocomplete="off" />
@@ -146,15 +148,7 @@
     <video id="webrtc-video" autoplay playsinline></video>
     <canvas id="process-canvas"></canvas>
 
-    <!-- UI Overlay for Main App -->
-    <!-- Replaced by HUD Canvas Button -->
-    <!-- 
-    <button id="scan-now-btn" ...>Scan Room 📷</button>
-    -->
-
-
-
     <!-- Main Logic -->
-    <script type="module" src="main.js"></script>
+    <script type="module" src="main.js?v=15"></script>
   </body>
 </html>

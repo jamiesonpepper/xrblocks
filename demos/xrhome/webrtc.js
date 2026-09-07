@@ -32,7 +32,20 @@ export class CameraManager {
             
             return new Promise((resolve) => {
                 this.videoElement.onloadedmetadata = () => {
-                    this.videoElement.play(); // Explicitly play to ensure frames are rendering
+                    this.videoElement.play(); // Explicitly play
+                    
+                    // Force continuous rendering to prevent WebXR from suspending the video frame buffer!
+                    const keepAliveCanvas = document.createElement('canvas');
+                    keepAliveCanvas.width = 1; keepAliveCanvas.height = 1;
+                    const keepAliveCtx = keepAliveCanvas.getContext('2d', { alpha: false });
+                    const keepAliveLoop = () => {
+                        if (this.videoElement.readyState >= 2 && !this.videoElement.paused) {
+                            keepAliveCtx.drawImage(this.videoElement, 0, 0, 1, 1);
+                        }
+                        requestAnimationFrame(keepAliveLoop);
+                    };
+                    keepAliveLoop();
+                    
                     resolve();
                 };
             });
@@ -44,6 +57,19 @@ export class CameraManager {
 
     async captureFrame(canvasElement) {
         if (!this.stream) return null;
+
+        // Ensure playback isn't suspended by WebXR overlay
+        if (this.videoElement.paused) {
+            try { await this.videoElement.play(); } catch(e){}
+        }
+
+        // Wait for video frame to advance to prevent stale initial FoV (Headset Freeze Fix)
+        const startIdx = this.videoElement.currentTime;
+        let attempts = 0;
+        while(this.videoElement.currentTime === startIdx && attempts < 10) {
+            await new Promise(r => setTimeout(r, 50));
+            attempts++;
+        }
 
         const ctx = canvasElement.getContext('2d');
         let width = 640;
