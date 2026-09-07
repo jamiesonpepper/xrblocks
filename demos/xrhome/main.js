@@ -157,13 +157,13 @@ function onXRSelect(event) {
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js';
+import { VisionManager } from './vision.js?v=17';
 import { FirebaseHAIntegration } from './services/firebase-ha-integration.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=16';
-import { VirtualKeypad } from './keypad.js?v=16';
+import { HUDManager } from './hud.js?v=17';
+import { VirtualKeypad } from './keypad.js?v=17';
 
 // Globals
 const auth = new AuthManager();
@@ -913,17 +913,20 @@ function startVisionLoop() {
         }
     };
 
-    vision.onLightsFound = (lights, cameraMatrix) => {
-        // Critical: If user stopped scanning, IGNORE result to prevent clearing lights
-        if (!isScanning) {
-            console.log("Scan stopped. Ignoring late result.");
+    const handleDevicesFound = (lights, cameraMatrix) => {
+        if (!lights || lights.length === 0) {
+            console.log("[Vision] 0 devices in result.");
             return;
         }
 
-        // hud.drawLights(lights); // Removed to prevent index mismatch (Wait for spawnVirtualLights -> link -> draw)
-        hud.speak(`Found ${lights.length} lights.`);
+        console.log(`[Vision] Processing ${lights.length} detected devices...`);
+        hud.speak(`Found ${lights.length} devices.`);
+        hud.log(`Detected ${lights.length} devices`, '#00FF00');
         spawnVirtualLights(lights, cameraMatrix);
     };
+
+    vision.onLightsFound = handleDevicesFound;
+    vision.onDevicesFound = handleDevicesFound;
 
     hud.speak("Vision System Ready. Click button to scan.");
     
@@ -1516,19 +1519,15 @@ async function spawnVirtualLights(lights, cameraMatrix) {
             const uniformScale = targetVisibleWidth / 0.3; // Base UI width is locked at 0.3
             vLight.scale.setScalar(uniformScale);
             
-            // POSITIONING FIX: Use Historical Camera Matrix correctly 
+            // POSITIONING: Use Historical Camera Matrix with true local-floor coordinates
             if (cameraMatrix) {
-                 // The coordinates (x, y, z) are relative to the camera AT THE TIME OF CAPTURE
-                 // Apply a 2m push-back further into the scene along the camera's line of sight
-                 vLight.position.set(x, y, z - 2.0);
+                 // The coordinates (x, y, z) are relative to the camera at time of capture
+                 vLight.position.set(x, y, z);
                  
-                 // Apply the exact transform the camera had when it took the photo
+                 // Transform by camera pose at time of capture into world coordinates
                  vLight.applyMatrix4(cameraMatrix);
                  
-                 // Apply exactly 2m vertical offset UP in absolute World coordinates
-                 vLight.position.y += 2.0;
-                 
-                 // Make the panel face the user's *current* position so they can read it
+                 // Make the panel face the user's current camera position
                  let currentCam = xb.camera;
                  try {
                      if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
@@ -1540,14 +1539,13 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                  console.log(`[Spawn] Placed '${label}' via Historical Matrix at`, vLight.position);
                  vLight.updateMatrixWorld(true);
             } else if (cam) {
-                 // Fallback if no matrix was saved during capture (shouldn't happen with the fast loop fix)
                  const camPos = new THREE.Vector3();
                  const camDir = new THREE.Vector3();
                  cam.getWorldPosition(camPos);
                  cam.getWorldDirection(camDir);
                  
-                 const basePos = camPos.clone().add(camDir.multiplyScalar(-z + 2.0));
-                 basePos.y += 2.0; // Raise 2m higher
+                 const basePos = camPos.clone().add(camDir.multiplyScalar(Math.abs(z)));
+                 basePos.y = Math.max(0.8, camPos.y + y);
                  
                  vLight.position.copy(basePos);
                  vLight.lookAt(camPos); 
@@ -1556,7 +1554,7 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                  vLight.updateMatrixWorld(true);
             } else {
                  console.warn(`[Spawn] No Camera! Using Safe Center with Offset.`);
-                 vLight.position.set(x, 1.6 + y + 2.0, z - 2.0); 
+                 vLight.position.set(x, 1.4 + y, z); 
                  vLight.updateMatrixWorld(true);
             }
             

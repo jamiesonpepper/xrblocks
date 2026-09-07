@@ -72,10 +72,37 @@ export class HUDManager {
     init3D(scene) {
         this.scene = scene;
         this.isMenuExpanded = true;
-        this.menuPos = new THREE.Vector3(0, 0.3, -1.5);
+
+        let cam = null;
+        try {
+            if (xb.renderer?.xr?.isPresenting) {
+                cam = xb.renderer.xr.getCamera();
+            } else {
+                cam = xb.core?.camera || xb.camera;
+            }
+        } catch (e) {}
+
+        const camPos = new THREE.Vector3();
+        const camDir = new THREE.Vector3();
+
+        if (cam) {
+            cam.getWorldPosition(camPos);
+            cam.getWorldDirection(camDir);
+            // Place 1.2m in front of where the user is looking
+            this.menuPos = camPos.clone().add(camDir.multiplyScalar(1.2));
+            // Set at comfortable chest/eye level
+            this.menuPos.y = Math.max(1.25, camPos.y - 0.1);
+        } else {
+            this.menuPos = new THREE.Vector3(0, 1.35, -1.2);
+        }
+
         this.menuRot = new THREE.Euler(0, 0, 0);
         this.renderMenu();
-        console.log("HUD initialized in 3D Mode (UICard)");
+
+        if (cam) {
+            this.panel.lookAt(camPos);
+        }
+        console.log("HUD initialized in 3D Mode (UICard) at Y =", this.menuPos.y);
     }
 
     renderMenu() {
