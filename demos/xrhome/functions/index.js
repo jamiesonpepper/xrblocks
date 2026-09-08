@@ -51,14 +51,38 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
   }
 
   try {
-    const states = await callHaApi('/api/states');
-    
-    // Filter to relevant domains (light, switch, media_player)
+    // Query entity area assignments from Home Assistant template API
+    let areaMap = {};
+    try {
+      const templateQuery = `
+      {% set ns = namespace(items=[]) %}
+      {% for s in states if s.domain in ['light', 'switch', 'media_player'] %}
+        {% set a = area_name(s.entity_id) %}
+        {% set ns.items = ns.items + [{'entity_id': s.entity_id, 'area': a if a else 'Other'}] %}
+      {% endfor %}
+      {{ ns.items | to_json }}
+      `;
+      const templateRes = await callHaApi('/api/template', 'POST', { template: templateQuery });
+      if (Array.isArray(templateRes)) {
+        templateRes.forEach(item => {
+          if (item.entity_id) areaMap[item.entity_id] = item.area || 'Other';
+        });
+      }
+    } catch (areaErr) {
+      console.warn("Could not fetch HA areas via template:", areaErr);
+    }
+
+    // Filter to relevant domains (light, switch, media_player) and attach area
     const allowedDomains = ['light', 'switch', 'media_player'];
-    const devices = states.filter(entity => {
-      const domain = entity.entity_id.split('.')[0];
-      return allowedDomains.includes(domain);
-    });
+    const devices = states
+      .filter(entity => {
+        const domain = entity.entity_id.split('.')[0];
+        return allowedDomains.includes(domain);
+      })
+      .map(entity => ({
+        ...entity,
+        area: areaMap[entity.entity_id] || entity.attributes?.area || 'Other'
+      }));
 
     return res.status(200).json({ devices });
   } catch (error) {

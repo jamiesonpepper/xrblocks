@@ -138,7 +138,11 @@ export class HUDManager {
             icon: this.isScanning ? "stop" : "search",
             style: {
                 width: '100%',
+                height: 40,
                 borderRadius: 12,
+                backgroundColor: this.isScanning ? 'rgba(255, 59, 48, 0.4)' : 'rgba(66, 133, 244, 0.4)',
+                borderWidth: 1,
+                borderColor: '#FFFFFF',
             },
             onClick: () => {
                 if (this.onScanToggle) this.onScanToggle();
@@ -146,12 +150,15 @@ export class HUDManager {
         });
 
         const toggleBtn = new xb.UIButton({
-            label: this.isMenuExpanded ? '-' : '+',
+            label: this.isMenuExpanded ? '−' : '+',
             ariaLabel: 'Toggle HUD expand',
             style: {
                 width: 36,
                 height: 36,
                 borderRadius: 8,
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                borderWidth: 1,
+                borderColor: '#FFFFFF',
             },
             onClick: () => {
                 this.isMenuExpanded = !this.isMenuExpanded;
@@ -181,7 +188,9 @@ export class HUDManager {
                 flexDirection: 'column',
                 gap: 4,
                 padding: 8,
-                backgroundColor: 'rgba(0, 0, 0, 0.35)',
+                backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                borderWidth: 1,
+                borderColor: 'rgba(255, 255, 255, 0.25)',
                 borderRadius: 10,
             },
             children: logChildren
@@ -195,7 +204,10 @@ export class HUDManager {
                 flexDirection: 'column',
                 gap: 12,
                 padding: 16,
-                backgroundColor: 'rgba(20, 20, 25, 0.85)',
+                backgroundColor: 'rgba(15, 20, 30, 0.65)',
+                borderWidth: 1.5,
+                borderColor: '#FFFFFF',
+                borderOpacity: 0.95,
                 borderRadius: 20,
             },
             children: [

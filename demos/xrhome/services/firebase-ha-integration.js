@@ -28,6 +28,7 @@ export class FirebaseHAIntegration {
           this.devices.set(entity.entity_id, {
             id: entity.entity_id,
             name: entity.attributes.friendly_name || entity.entity_id,
+            area: entity.area || entity.attributes.area || 'Other',
             state: entity.state,
             attributes: entity.attributes,
             isOn: entity.state === 'on',

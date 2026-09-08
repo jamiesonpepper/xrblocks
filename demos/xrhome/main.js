@@ -157,13 +157,13 @@ function onXRSelect(event) {
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=18';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=18';
+import { VisionManager } from './vision.js?v=19';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=19';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=18';
-import { VirtualKeypad } from './keypad.js?v=18';
+import { HUDManager } from './hud.js?v=19';
+import { VirtualKeypad } from './keypad.js?v=19';
 
 // Globals
 const auth = new AuthManager();
@@ -289,7 +289,7 @@ class VirtualLight2D {
 // --- 3D Virtual Light (AR/XR) ---
 // --- 3D Virtual Light (AR/XR) ---
 class VirtualLight3D extends THREE.Group {
-  constructor(geminiData, labelText, width = 0.6, height = 0.8) {
+  constructor(geminiData, labelText, width = 0.36, height = 0.5) {
       super();
       this.geminiData = geminiData; // Keep for xmin/xmax/ymin/ymax
       this.originalLabel = labelText || "Light";
@@ -302,6 +302,7 @@ class VirtualLight3D extends THREE.Group {
       this.linkedNodeId = null; 
       this.isSelectingDevice = false;
       this.devicePage = 0;
+      this.expandedAreas = new Set();
 
       // Hit Mesh (Invisible, for easier raycasting if needed)
       const hitGeo = new THREE.PlaneGeometry(width, height);
@@ -350,7 +351,7 @@ class VirtualLight3D extends THREE.Group {
       const labelText = new xb.UIText({
           text: this.labelText,
           style: {
-              fontSize: 16,
+              fontSize: 14,
               fontWeight: 'bold',
               color: stateColor,
               textAlign: 'center',
@@ -367,43 +368,55 @@ class VirtualLight3D extends THREE.Group {
               icon: 'add_circle',
               style: {
                   width: '100%',
-                  borderRadius: 12,
+                  height: 36,
+                  borderRadius: 10,
+                  backgroundColor: 'rgba(255, 255, 255, 0.15)',
+                  borderWidth: 1,
+                  borderColor: '#FFFFFF',
               },
               onClick: () => this.handleConfigClick()
           });
           cardChildren.push(btn);
       } else {
           // --- PAIRED UI ---
-          // 1. Power Toggle & Unpair
+          // 1. Power Toggle & Unpair (Wordless compact icons)
           const toggleBtn = new xb.UIButton({
-              label: isOn ? 'Turn Off' : 'Turn On',
-              icon: 'power_settings_new',
+              label: isOn ? '⏻ ON' : '⏻ OFF',
+              ariaLabel: isOn ? 'Turn Off' : 'Turn On',
               style: {
                   flexGrow: 1,
-                  borderRadius: 10,
+                  height: 32,
+                  borderRadius: 8,
+                  backgroundColor: isOn ? 'rgba(52, 199, 89, 0.35)' : 'rgba(255, 255, 255, 0.1)',
+                  borderWidth: 1,
+                  borderColor: isOn ? '#34C759' : 'rgba(255, 255, 255, 0.4)',
               },
               onClick: () => this.toggle()
           });
 
           const unpairBtn = new xb.UIButton({
-              label: 'Unpair',
-              icon: 'link_off',
+              label: '🔗❌',
+              ariaLabel: 'Unpair device',
               style: {
-                  flexGrow: 1,
-                  borderRadius: 10,
+                  width: 38,
+                  height: 32,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 59, 48, 0.2)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255, 59, 48, 0.6)',
               },
               onClick: () => this.handleConfigClick()
           });
           
           cardChildren.push(new xb.UIPanel({
-              style: { width: '100%', flexDirection: 'row', gap: 8 },
+              style: { width: '100%', flexDirection: 'row', gap: 6 },
               children: [toggleBtn, unpairBtn]
           }));
           
-          // 2. Brightness Slider
+          // 2. Brightness Slider (compact)
           const brightnessText = new xb.UIText({
-              text: `Brightness: ${this.brightness}%`,
-              style: { fontSize: 13, color: '#CCCCCC', width: '100%' }
+              text: `☀️ ${this.brightness}%`,
+              style: { fontSize: 12, color: '#EEEEEE', width: '100%' }
           });
           const brightnessSlider = new xb.UISlider({
               ariaLabel: `${this.labelText} brightness`,
@@ -411,9 +424,9 @@ class VirtualLight3D extends THREE.Group {
               max: 100,
               step: 1,
               value: this.brightness,
-              style: { width: '100%', height: 32 },
+              style: { width: '100%', height: 26 },
               onInput: (val) => {
-                  brightnessText.text = `Brightness: ${Math.round(val)}%`;
+                  brightnessText.text = `☀️ ${Math.round(val)}%`;
               },
               onChange: (val) => {
                   this.setBrightness(val);
@@ -422,41 +435,39 @@ class VirtualLight3D extends THREE.Group {
           cardChildren.push(brightnessText);
           cardChildren.push(brightnessSlider);
           
-          // 3. Color Palette
-          const colorHeader = new xb.UIText({
-              text: 'Color Palette',
-              style: { fontSize: 13, color: '#CCCCCC', width: '100%' }
-          });
-          
+          // 3. Color Swatches (wordless outlined dots)
           const paletteSwatches = [
-              { name: 'Red', hex: '#FF3B30', rgb: [255, 59, 48] },
-              { name: 'Orange', hex: '#FF9500', rgb: [255, 149, 0] },
-              { name: 'Yellow', hex: '#FFCC00', rgb: [255, 204, 0] },
-              { name: 'Green', hex: '#34C759', rgb: [52, 199, 89] },
-              { name: 'Blue', hex: '#007AFF', rgb: [0, 122, 255] },
-              { name: 'Purple', hex: '#AF52DE', rgb: [175, 82, 222] },
+              { hex: '#FF3B30', rgb: [255, 59, 48] },
+              { hex: '#FF9500', rgb: [255, 149, 0] },
+              { hex: '#FFCC00', rgb: [255, 204, 0] },
+              { hex: '#34C759', rgb: [52, 199, 89] },
+              { hex: '#007AFF', rgb: [0, 122, 255] },
+              { hex: '#AF52DE', rgb: [175, 82, 222] },
           ];
 
           const colorButtons = paletteSwatches.map(swatch => new xb.UIButton({
-              label: swatch.name,
-              ariaLabel: swatch.name,
+              label: '',
+              ariaLabel: swatch.hex,
               style: {
                   flexGrow: 1,
-                  borderRadius: 8,
+                  height: 22,
+                  borderRadius: 6,
+                  backgroundColor: swatch.hex,
+                  borderWidth: 1,
+                  borderColor: '#FFFFFF',
               },
               onClick: () => this.setColor(swatch.rgb[0], swatch.rgb[1], swatch.rgb[2])
           }));
           
-          cardChildren.push(colorHeader);
           cardChildren.push(new xb.UIPanel({
               style: { width: '100%', flexDirection: 'row', gap: 4 },
               children: colorButtons
           }));
 
-          // 4. Warmth / White Color Temperature Slider
+          // 4. Warmth / Temperature Slider & Quick Presets (compact)
           const warmthText = new xb.UIText({
-              text: `Warmth: ${this.colorTemp || 2700}K`,
-              style: { fontSize: 13, color: '#FFD199', width: '100%' }
+              text: `🌡️ ${this.colorTemp || 2700}K`,
+              style: { fontSize: 12, color: '#FFD199', width: '100%' }
           });
           const warmthSlider = new xb.UISlider({
               ariaLabel: `${this.labelText} warmth`,
@@ -464,9 +475,9 @@ class VirtualLight3D extends THREE.Group {
               max: 6500,
               step: 50,
               value: this.colorTemp || 2700,
-              style: { width: '100%', height: 32 },
+              style: { width: '100%', height: 26 },
               onInput: (val) => {
-                  warmthText.text = `Warmth: ${Math.round(val)}K`;
+                  warmthText.text = `🌡️ ${Math.round(val)}K`;
               },
               onChange: (val) => {
                   this.setColorTemp(Math.round(val));
@@ -474,29 +485,29 @@ class VirtualLight3D extends THREE.Group {
           });
 
           const warmPreset = new xb.UIButton({
-              label: 'Warm 2200K',
-              style: { flexGrow: 1, borderRadius: 8 },
+              label: '2200K',
+              style: { flexGrow: 1, height: 24, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)', fontSize: 11 },
               onClick: () => {
                   this.setColorTemp(2200);
-                  warmthText.text = 'Warmth: 2200K';
+                  warmthText.text = '🌡️ 2200K';
                   warmthSlider.value = 2200;
               }
           });
           const softPreset = new xb.UIButton({
-              label: 'Soft 2700K',
-              style: { flexGrow: 1, borderRadius: 8 },
+              label: '2700K',
+              style: { flexGrow: 1, height: 24, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)', fontSize: 11 },
               onClick: () => {
                   this.setColorTemp(2700);
-                  warmthText.text = 'Warmth: 2700K';
+                  warmthText.text = '🌡️ 2700K';
                   warmthSlider.value = 2700;
               }
           });
           const coolPreset = new xb.UIButton({
-              label: 'Cool 6500K',
-              style: { flexGrow: 1, borderRadius: 8 },
+              label: '6500K',
+              style: { flexGrow: 1, height: 24, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)', fontSize: 11 },
               onClick: () => {
                   this.setColorTemp(6500);
-                  warmthText.text = 'Warmth: 6500K';
+                  warmthText.text = '🌡️ 6500K';
                   warmthSlider.value = 6500;
               }
           });
@@ -504,7 +515,7 @@ class VirtualLight3D extends THREE.Group {
           cardChildren.push(warmthText);
           cardChildren.push(warmthSlider);
           cardChildren.push(new xb.UIPanel({
-              style: { width: '100%', flexDirection: 'row', gap: 6 },
+              style: { width: '100%', flexDirection: 'row', gap: 4 },
               children: [warmPreset, softPreset, coolPreset]
           }));
       }
@@ -514,15 +525,19 @@ class VirtualLight3D extends THREE.Group {
           manipulation: canDrag,
           style: {
               flexDirection: 'column',
-              gap: 10,
-              padding: 14,
-              backgroundColor: 'rgba(20, 20, 25, 0.88)',
+              gap: 8,
+              padding: 12,
+              backgroundColor: 'rgba(15, 20, 30, 0.65)',
+              borderWidth: 1.5,
+              borderColor: '#FFFFFF',
+              borderOpacity: 0.95,
               borderRadius: 16,
           },
           children: cardChildren
       });
 
-      this.panel.position.set(0, -this.panelHeight/2 - 0.25, 0);
+      // Center panel at 3D anchor position (closer to physical device)
+      this.panel.position.set(0, 0, 0);
       this.add(this.panel);
   }
 
@@ -575,12 +590,52 @@ class VirtualLight3D extends THREE.Group {
       const allDevices = Array.from(smartHome.devices.values());
       const devices = allDevices.filter(d => d.id.startsWith('light.') || d.id.startsWith('switch.'));
       
-      const ITEMS_PER_PAGE = 6;
-      const totalPages = Math.ceil(devices.length / ITEMS_PER_PAGE) || 1;
+      // 1. Group devices by Area
+      const areaGroups = {};
+      devices.forEach(d => {
+          const area = d.area || 'Other';
+          if (!areaGroups[area]) areaGroups[area] = [];
+          areaGroups[area].push(d);
+      });
+
+      // 2. Sort Areas Alphabetically Descending (Z -> A)
+      const sortedAreas = Object.keys(areaGroups).sort((a, b) => b.localeCompare(a));
+
+      // 3. Sort Devices within each area Alphabetically Descending (Z -> A)
+      sortedAreas.forEach(area => {
+          areaGroups[area].sort((a, b) => (b.name || b.id).localeCompare(a.name || a.id));
+      });
+
+      if (!this.expandedAreas) this.expandedAreas = new Set();
+
+      // 4. Build flattened list of visible tree nodes
+      const visibleItems = [];
+      sortedAreas.forEach(area => {
+          const isExpanded = this.expandedAreas.has(area);
+          const count = areaGroups[area].length;
+          visibleItems.push({
+              type: 'area',
+              area,
+              count,
+              isExpanded
+          });
+          if (isExpanded) {
+              areaGroups[area].forEach(dev => {
+                  visibleItems.push({
+                      type: 'device',
+                      device: dev,
+                      area
+                  });
+              });
+          }
+      });
+
+      const ITEMS_PER_PAGE = 5;
+      const totalPages = Math.ceil(visibleItems.length / ITEMS_PER_PAGE) || 1;
       if (this.devicePage >= totalPages) this.devicePage = Math.max(0, totalPages - 1);
       
       const startIdx = this.devicePage * ITEMS_PER_PAGE;
-      const pageDevices = devices.slice(startIdx, startIdx + ITEMS_PER_PAGE);
+      const pageItems = visibleItems.slice(startIdx, startIdx + ITEMS_PER_PAGE);
       
       const headerRow = new xb.UIPanel({
           style: {
@@ -590,11 +645,11 @@ class VirtualLight3D extends THREE.Group {
               alignItems: 'center',
           },
           children: [
-              new xb.UIText({ text: 'Select Device', style: { fontSize: 16, fontWeight: 'bold', color: '#FFFFFF' } }),
+              new xb.UIText({ text: 'Select Device', style: { fontSize: 14, fontWeight: 'bold', color: '#FFFFFF' } }),
               new xb.UIButton({
-                  label: 'X',
+                  label: '✕',
                   ariaLabel: 'Cancel selection',
-                  style: { width: 32, height: 32, borderRadius: 8 },
+                  style: { width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: '#FFFFFF', backgroundColor: 'rgba(255, 255, 255, 0.1)' },
                   onClick: () => {
                       this.isSelectingDevice = false;
                       this.rebuildPanel();
@@ -606,32 +661,65 @@ class VirtualLight3D extends THREE.Group {
       const bodyChildren = [headerRow];
       
       if (devices.length === 0) {
-          bodyChildren.push(new xb.UIText({ text: 'No Devices Found', style: { fontSize: 14, color: '#FF6666', textAlign: 'center' } }));
-          bodyChildren.push(new xb.UIText({ text: 'Ensure devices are linked in Home Assistant', style: { fontSize: 12, color: '#CCCCCC', textAlign: 'center' } }));
+          bodyChildren.push(new xb.UIText({ text: 'No Devices Found', style: { fontSize: 13, color: '#FF6666', textAlign: 'center' } }));
+          bodyChildren.push(new xb.UIText({ text: 'Ensure devices are linked in Home Assistant', style: { fontSize: 11, color: '#CCCCCC', textAlign: 'center' } }));
       } else {
-          pageDevices.forEach(d => {
-              bodyChildren.push(new xb.UIButton({
-                  label: d.name || d.id,
-                  style: { width: '100%', borderRadius: 8 },
-                  onClick: () => this.pairWithDevice(d.id)
-              }));
+          pageItems.forEach(item => {
+              if (item.type === 'area') {
+                  bodyChildren.push(new xb.UIButton({
+                      label: `${item.isExpanded ? '▼' : '▶'} ${item.area} (${item.count})`,
+                      style: {
+                          width: '100%',
+                          height: 30,
+                          borderRadius: 8,
+                          backgroundColor: 'rgba(255, 255, 255, 0.16)',
+                          borderWidth: 1,
+                          borderColor: 'rgba(255, 255, 255, 0.7)',
+                          fontSize: 12,
+                          fontWeight: 'bold',
+                      },
+                      onClick: () => {
+                          if (this.expandedAreas.has(item.area)) {
+                              this.expandedAreas.delete(item.area);
+                          } else {
+                              this.expandedAreas.add(item.area);
+                          }
+                          this.rebuildPanel();
+                      }
+                  }));
+              } else if (item.type === 'device') {
+                  const dev = item.device;
+                  bodyChildren.push(new xb.UIButton({
+                      label: `  • ${dev.name || dev.id}`,
+                      style: {
+                          width: '100%',
+                          height: 28,
+                          borderRadius: 6,
+                          backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                          borderWidth: 1,
+                          borderColor: 'rgba(255, 255, 255, 0.35)',
+                          fontSize: 11,
+                      },
+                      onClick: () => this.pairWithDevice(dev.id)
+                  }));
+              }
           });
           
           if (totalPages > 1) {
               const prevBtn = new xb.UIButton({
                   label: '<',
                   disabled: this.devicePage <= 0,
-                  style: { width: 40, borderRadius: 8 },
+                  style: { width: 36, height: 28, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)' },
                   onClick: () => { if (this.devicePage > 0) { this.devicePage--; this.rebuildPanel(); } }
               });
               const pageIndicator = new xb.UIText({
                   text: `${this.devicePage + 1} / ${totalPages}`,
-                  style: { fontSize: 14, color: '#FFFFFF', textAlign: 'center', flexGrow: 1 }
+                  style: { fontSize: 12, color: '#FFFFFF', textAlign: 'center', flexGrow: 1 }
               });
               const nextBtn = new xb.UIButton({
                   label: '>',
                   disabled: this.devicePage >= totalPages - 1,
-                  style: { width: 40, borderRadius: 8 },
+                  style: { width: 36, height: 28, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)' },
                   onClick: () => { if (this.devicePage < totalPages - 1) { this.devicePage++; this.rebuildPanel(); } }
               });
               bodyChildren.push(new xb.UIPanel({
@@ -648,13 +736,16 @@ class VirtualLight3D extends THREE.Group {
               flexDirection: 'column',
               gap: 8,
               padding: 12,
-              backgroundColor: 'rgba(20, 20, 25, 0.9)',
+              backgroundColor: 'rgba(15, 20, 30, 0.65)',
+              borderWidth: 1.5,
+              borderColor: '#FFFFFF',
+              borderOpacity: 0.95,
               borderRadius: 16,
           },
           children: bodyChildren
       });
 
-      this.panel.position.set(0, -this.panelHeight/2 - 0.25, 0);
+      this.panel.position.set(0, 0, 0);
       this.add(this.panel);
   }
 
@@ -1571,14 +1662,14 @@ async function spawnVirtualLights(lights, cameraMatrix) {
     
 
             // Estimate depth based on bounding box size using true perspective inversion.
-            // Assuming average physical detected object (lamp, keypad) is ~0.4 meters wide.
+            // Assuming average physical detected object (lamp, keypad) is ~0.28 meters wide.
             // Z ≈ true_physical_width / normalized_image_size
             const boxSize = Math.max(l.xmax - l.xmin, l.ymax - l.ymin);
             
-            let z = -4.8; 
+            let z = -1.8; 
             if (boxSize > 0) {
-                 const size = Math.max(0.02, boxSize); // floor at 0.02 to prevent infinite depth
-                 z = -Math.max(0.5, Math.min(6.0, 0.4 / size)); 
+                 const size = Math.max(0.04, boxSize); // floor at 0.04 to prevent infinite depth
+                 z = -Math.max(0.8, Math.min(2.8, 0.28 / size)); 
             }
             
             // Get Camera
@@ -1606,13 +1697,12 @@ async function spawnVirtualLights(lights, cameraMatrix) {
             const x = (cx - 0.5) * vW; 
             const y = -(cy - 0.5) * vH; 
             
-            // Create a perfectly uniform 3:4 vertically constrained UI panel explicitly
-            const vLight = new VirtualLight3D(l, label);
+            // Create a compact 3D panel with base width 0.36m
+            const vLight = new VirtualLight3D(l, label, 0.36, 0.5);
             
-            // Restore a dynamically scaled physical size matched to the vision API detection distance!
-            // We apply it uniformly against the 3D Group so the internal UI margins NEVER stretch horizontally!
-            const targetVisibleWidth = Math.max(0.3, (l.xmax - l.xmin) * vW * 1.5);
-            const uniformScale = targetVisibleWidth / 0.3; // Base UI width is locked at 0.3
+            // Keep uniform scale constrained to a natural viewing size (0.85 - 1.15)
+            const targetVisibleWidth = Math.max(0.28, (l.xmax - l.xmin) * vW * 1.1);
+            const uniformScale = Math.max(0.85, Math.min(1.15, targetVisibleWidth / 0.36));
             vLight.scale.setScalar(uniformScale);
             
             // POSITIONING: Use Historical Camera Matrix with true local-floor coordinates
