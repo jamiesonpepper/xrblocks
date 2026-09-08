@@ -46,9 +46,9 @@ class HUDInteraction extends xb.Script {
 function onXRSelectStart(event) {
     const controller = event.target;
     
-    // Define draggables: HUD ONLY
+    // Define draggables: Keypad ONLY (HUD and device panels use native UICard manipulation)
     const draggables = [];
-    if (hud.panel) draggables.push(hud.panel);
+    if (keypad && keypad.panel) draggables.push(keypad.panel);
 
     tempMatrix.identity().extractRotation(controller.matrixWorld);
     raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
@@ -157,13 +157,13 @@ function onXRSelect(event) {
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=20';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=20';
+import { VisionManager } from './vision.js?v=21';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=21';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=20';
-import { VirtualKeypad } from './keypad.js?v=20';
+import { HUDManager } from './hud.js?v=21';
+import { VirtualKeypad } from './keypad.js?v=21';
 
 // Globals
 const auth = new AuthManager();
@@ -285,8 +285,37 @@ class VirtualLight2D {
     }
 }
 
-// --- 3D Virtual Light (AR/XR) ---
-// --- 3D Virtual Light (AR/XR) ---
+function hslToRgb(h, s = 1.0, l = 0.5) {
+    h = ((h % 360) + 360) % 360;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = l - c / 2;
+    let r1 = 0, g1 = 0, b1 = 0;
+    if (h < 60) { r1 = c; g1 = x; b1 = 0; }
+    else if (h < 120) { r1 = x; g1 = c; b1 = 0; }
+    else if (h < 180) { r1 = 0; g1 = c; b1 = x; }
+    else if (h < 240) { r1 = 0; g1 = x; b1 = c; }
+    else if (h < 300) { r1 = x; g1 = 0; b1 = c; }
+    else { r1 = c; g1 = 0; b1 = x; }
+    return [Math.round((r1 + m) * 255), Math.round((g1 + m) * 255), Math.round((b1 + m) * 255)];
+}
+
+function kelvinToHex(k) {
+    const temp = k / 100;
+    let r, g, b;
+    if (temp <= 66) {
+        r = 255;
+        g = Math.max(0, Math.min(255, 99.4708025861 * Math.log(temp) - 161.1195681661));
+        b = temp <= 19 ? 0 : Math.max(0, Math.min(255, 138.5177312231 * Math.log(temp - 10) - 305.0447927307));
+    } else {
+        r = Math.max(0, Math.min(255, 329.698727446 * Math.pow(temp - 60, -0.1332047592)));
+        g = Math.max(0, Math.min(255, 288.1221695283 * Math.pow(temp - 60, -0.0755148492)));
+        b = 255;
+    }
+    const toHex = (n) => Math.round(n).toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
 // --- 3D Virtual Light (AR/XR) ---
 class VirtualLight3D extends THREE.Group {
   constructor(geminiData, labelText, width = 0.36, height = 0.5) {
@@ -298,6 +327,7 @@ class VirtualLight3D extends THREE.Group {
       this.isOn = false;
       this.brightness = 100;
       this.colorTemp = 2700;
+      this.currentHue = 0;
       this.realDevice = null;
       this.linkedNodeId = null; 
       this.isSelectingDevice = false;
@@ -370,7 +400,7 @@ class VirtualLight3D extends THREE.Group {
                   width: '100%',
                   height: 36,
                   borderRadius: 10,
-                  backgroundColor: 'rgba(255, 255, 255, 0.15)',
+                  backgroundColor: 'rgba(255, 255, 255, 0.18)',
                   borderWidth: 1,
                   borderColor: '#FFFFFF',
               },
@@ -379,7 +409,7 @@ class VirtualLight3D extends THREE.Group {
           cardChildren.push(btn);
       } else {
           // --- PAIRED UI ---
-          // 1. Power Toggle & Unpair (Wordless compact icons)
+          // 1. Power Toggle & Unpair (Broken link icon)
           const toggleBtn = new xb.UIButton({
               label: isOn ? '⏻ ON' : '⏻ OFF',
               ariaLabel: isOn ? 'Turn Off' : 'Turn On',
@@ -387,23 +417,23 @@ class VirtualLight3D extends THREE.Group {
                   flexGrow: 1,
                   height: 32,
                   borderRadius: 8,
-                  backgroundColor: isOn ? 'rgba(52, 199, 89, 0.35)' : 'rgba(255, 255, 255, 0.1)',
+                  backgroundColor: isOn ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.12)',
                   borderWidth: 1,
-                  borderColor: isOn ? '#34C759' : 'rgba(255, 255, 255, 0.4)',
+                  borderColor: isOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.5)',
               },
               onClick: () => this.toggle()
           });
 
           const unpairBtn = new xb.UIButton({
-              label: '🔗❌',
+              icon: 'link_off',
               ariaLabel: 'Unpair device',
               style: {
                   width: 38,
                   height: 32,
                   borderRadius: 8,
-                  backgroundColor: 'rgba(255, 59, 48, 0.2)',
+                  backgroundColor: 'rgba(255, 255, 255, 0.14)',
                   borderWidth: 1,
-                  borderColor: 'rgba(255, 59, 48, 0.6)',
+                  borderColor: 'rgba(255, 255, 255, 0.6)',
               },
               onClick: () => this.handleConfigClick()
           });
@@ -413,10 +443,10 @@ class VirtualLight3D extends THREE.Group {
               children: [toggleBtn, unpairBtn]
           }));
           
-          // 2. Brightness Slider (compact)
+          // 2. Brightness Slider
           const brightnessText = new xb.UIText({
               text: `☀️ ${this.brightness}%`,
-              style: { fontSize: 12, color: '#EEEEEE', width: '100%' }
+              style: { fontSize: 12, color: '#FFFFFF', width: '100%' }
           });
           const brightnessSlider = new xb.UISlider({
               ariaLabel: `${this.labelText} brightness`,
@@ -435,88 +465,71 @@ class VirtualLight3D extends THREE.Group {
           cardChildren.push(brightnessText);
           cardChildren.push(brightnessSlider);
           
-          // 3. Color Swatches (wordless outlined dots)
-          const paletteSwatches = [
-              { hex: '#FF3B30', rgb: [255, 59, 48] },
-              { hex: '#FF9500', rgb: [255, 149, 0] },
-              { hex: '#FFCC00', rgb: [255, 204, 0] },
-              { hex: '#34C759', rgb: [52, 199, 89] },
-              { hex: '#007AFF', rgb: [0, 122, 255] },
-              { hex: '#AF52DE', rgb: [175, 82, 222] },
+          // 3. Rainbow Color Slider
+          const rainbowText = new xb.UIText({
+              text: `🌈 Color`,
+              style: { fontSize: 12, color: '#FFFFFF', width: '100%' }
+          });
+          const rainbowSlider = new xb.UISlider({
+              ariaLabel: `${this.labelText} rainbow color`,
+              min: 0,
+              max: 360,
+              step: 1,
+              value: this.currentHue !== undefined ? this.currentHue : 0,
+              style: { width: '100%', height: 26 },
+              onInput: (val) => {
+                  this.currentHue = Math.round(val);
+                  const [r, g, b] = hslToRgb(this.currentHue);
+                  const toHex = (n) => n.toString(16).padStart(2, '0');
+                  this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+                  labelText.style.color = this.stateColor;
+              },
+              onChange: (val) => {
+                  this.currentHue = Math.round(val);
+                  const [r, g, b] = hslToRgb(this.currentHue);
+                  this.setColor(r, g, b);
+              }
+          });
+          cardChildren.push(rainbowText);
+          cardChildren.push(rainbowSlider);
+
+          // 4. 6 Common Temperatures (Colour-based selectors, no slider)
+          const tempText = new xb.UIText({
+              text: `🌡️ ${this.colorTemp || 2700}K`,
+              style: { fontSize: 12, color: '#FFFFFF', width: '100%' }
+          });
+
+          const tempPresets = [
+              { kelvin: 2000, hex: '#FF8B1A' },
+              { kelvin: 2700, hex: '#FFB46B' },
+              { kelvin: 3500, hex: '#FFD1A3' },
+              { kelvin: 4500, hex: '#FFF0E4' },
+              { kelvin: 5500, hex: '#F5F7FF' },
+              { kelvin: 6500, hex: '#DCE5FF' },
           ];
 
-          const colorButtons = paletteSwatches.map(swatch => new xb.UIButton({
+          const tempButtons = tempPresets.map(preset => new xb.UIButton({
               label: '',
-              ariaLabel: swatch.hex,
+              ariaLabel: `${preset.kelvin}K`,
               style: {
                   flexGrow: 1,
                   height: 22,
                   borderRadius: 6,
-                  backgroundColor: swatch.hex,
-                  borderWidth: 1,
+                  backgroundColor: preset.hex,
+                  borderWidth: this.colorTemp === preset.kelvin ? 2 : 1,
                   borderColor: '#FFFFFF',
               },
-              onClick: () => this.setColor(swatch.rgb[0], swatch.rgb[1], swatch.rgb[2])
+              onClick: () => {
+                  this.setColorTemp(preset.kelvin, preset.hex);
+                  tempText.text = `🌡️ ${preset.kelvin}K`;
+                  labelText.style.color = preset.hex;
+              }
           }));
-          
+
+          cardChildren.push(tempText);
           cardChildren.push(new xb.UIPanel({
               style: { width: '100%', flexDirection: 'row', gap: 4 },
-              children: colorButtons
-          }));
-
-          // 4. Warmth / Temperature Slider & Quick Presets (compact)
-          const warmthText = new xb.UIText({
-              text: `🌡️ ${this.colorTemp || 2700}K`,
-              style: { fontSize: 12, color: '#FFD199', width: '100%' }
-          });
-          const warmthSlider = new xb.UISlider({
-              ariaLabel: `${this.labelText} warmth`,
-              min: 2000,
-              max: 6500,
-              step: 50,
-              value: this.colorTemp || 2700,
-              style: { width: '100%', height: 26 },
-              onInput: (val) => {
-                  warmthText.text = `🌡️ ${Math.round(val)}K`;
-              },
-              onChange: (val) => {
-                  this.setColorTemp(Math.round(val));
-              }
-          });
-
-          const warmPreset = new xb.UIButton({
-              label: '2200K',
-              style: { flexGrow: 1, height: 24, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)', fontSize: 11 },
-              onClick: () => {
-                  this.setColorTemp(2200);
-                  warmthText.text = '🌡️ 2200K';
-                  warmthSlider.value = 2200;
-              }
-          });
-          const softPreset = new xb.UIButton({
-              label: '2700K',
-              style: { flexGrow: 1, height: 24, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)', fontSize: 11 },
-              onClick: () => {
-                  this.setColorTemp(2700);
-                  warmthText.text = '🌡️ 2700K';
-                  warmthSlider.value = 2700;
-              }
-          });
-          const coolPreset = new xb.UIButton({
-              label: '6500K',
-              style: { flexGrow: 1, height: 24, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)', fontSize: 11 },
-              onClick: () => {
-                  this.setColorTemp(6500);
-                  warmthText.text = '🌡️ 6500K';
-                  warmthSlider.value = 6500;
-              }
-          });
-
-          cardChildren.push(warmthText);
-          cardChildren.push(warmthSlider);
-          cardChildren.push(new xb.UIPanel({
-              style: { width: '100%', flexDirection: 'row', gap: 4 },
-              children: [warmPreset, softPreset, coolPreset]
+              children: tempButtons
           }));
       }
 
@@ -527,7 +540,7 @@ class VirtualLight3D extends THREE.Group {
               flexDirection: 'column',
               gap: 8,
               padding: 12,
-              backgroundColor: 'rgba(15, 20, 30, 0.65)',
+              backgroundColor: 'rgba(255, 255, 255, 0.12)',
               borderWidth: 1.5,
               borderColor: '#FFFFFF',
               borderRadius: 16,
@@ -597,12 +610,12 @@ class VirtualLight3D extends THREE.Group {
           areaGroups[area].push(d);
       });
 
-      // 2. Sort Areas Alphabetically Descending (Z -> A)
-      const sortedAreas = Object.keys(areaGroups).sort((a, b) => b.localeCompare(a));
+      // 2. Sort Areas Alphabetically Ascending (A -> Z)
+      const sortedAreas = Object.keys(areaGroups).sort((a, b) => a.localeCompare(b));
 
-      // 3. Sort Devices within each area Alphabetically Descending (Z -> A)
+      // 3. Sort Devices within each area Alphabetically Ascending (A -> Z)
       sortedAreas.forEach(area => {
-          areaGroups[area].sort((a, b) => (b.name || b.id).localeCompare(a.name || a.id));
+          areaGroups[area].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
       });
 
       if (!this.expandedAreas) this.expandedAreas = new Set();
@@ -735,7 +748,7 @@ class VirtualLight3D extends THREE.Group {
               flexDirection: 'column',
               gap: 8,
               padding: 12,
-              backgroundColor: 'rgba(15, 20, 30, 0.65)',
+              backgroundColor: 'rgba(255, 255, 255, 0.12)',
               borderWidth: 1.5,
               borderColor: '#FFFFFF',
               borderRadius: 16,
@@ -798,7 +811,7 @@ class VirtualLight3D extends THREE.Group {
       
       let colorStr = '#FFFF00'; // Yellow (Unpaired)
       if (isPaired) {
-          colorStr = isOn ? '#FFFFFF' : '#00FF00';
+          colorStr = isOn ? (this.colorTemp ? kelvinToHex(this.colorTemp) : '#FFFFFF') : '#00FF00';
       }
       
       this.stateColor = colorStr;
@@ -881,10 +894,12 @@ class VirtualLight3D extends THREE.Group {
       }
   }
 
-  setColorTemp(kelvin) {
+  setColorTemp(kelvin, hexColor) {
       this.colorTemp = Math.round(kelvin);
+      this.stateColor = hexColor || kelvinToHex(this.colorTemp);
+      this.rebuildPanel();
       if (this.realDevice && smartHome) {
-          hud.log(`Warmth set to ${this.colorTemp}K`, '#FFD199');
+          hud.log(`Warmth set to ${this.colorTemp}K`, this.stateColor);
           smartHome.setColorTemp(this.realDevice.id, this.colorTemp).then((success) => {
               if (success !== false && this.realDevice) {
                   this.realDevice.color_temp_kelvin = this.colorTemp;
