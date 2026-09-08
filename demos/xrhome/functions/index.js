@@ -51,6 +51,8 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
   }
 
   try {
+    const states = await callHaApi('/api/states');
+
     // Query entity area assignments from Home Assistant template API
     let areaMap = {};
     try {
@@ -62,11 +64,23 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
       {% endfor %}
       {{ ns.items | to_json }}
       `;
-      const templateRes = await callHaApi('/api/template', 'POST', { template: templateQuery });
-      if (Array.isArray(templateRes)) {
-        templateRes.forEach(item => {
-          if (item.entity_id) areaMap[item.entity_id] = item.area || 'Other';
-        });
+      const haUrl = process.env.HA_URL.replace(/\/$/, '');
+      const templateResponse = await fetch(`${haUrl}/api/template`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.HA_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ template: templateQuery })
+      });
+      if (templateResponse.ok) {
+        const text = await templateResponse.text();
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(item => {
+            if (item.entity_id) areaMap[item.entity_id] = item.area || 'Other';
+          });
+        }
       }
     } catch (areaErr) {
       console.warn("Could not fetch HA areas via template:", areaErr);
