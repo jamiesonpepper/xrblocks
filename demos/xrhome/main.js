@@ -157,13 +157,13 @@ function onXRSelect(event) {
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=19';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=19';
+import { VisionManager } from './vision.js?v=20';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=20';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=19';
-import { VirtualKeypad } from './keypad.js?v=19';
+import { HUDManager } from './hud.js?v=20';
+import { VirtualKeypad } from './keypad.js?v=20';
 
 // Globals
 const auth = new AuthManager();
@@ -530,7 +530,6 @@ class VirtualLight3D extends THREE.Group {
               backgroundColor: 'rgba(15, 20, 30, 0.65)',
               borderWidth: 1.5,
               borderColor: '#FFFFFF',
-              borderOpacity: 0.95,
               borderRadius: 16,
           },
           children: cardChildren
@@ -739,7 +738,6 @@ class VirtualLight3D extends THREE.Group {
               backgroundColor: 'rgba(15, 20, 30, 0.65)',
               borderWidth: 1.5,
               borderColor: '#FFFFFF',
-              borderOpacity: 0.95,
               borderRadius: 16,
           },
           children: bodyChildren

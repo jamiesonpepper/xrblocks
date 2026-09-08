@@ -207,7 +207,6 @@ export class HUDManager {
                 backgroundColor: 'rgba(15, 20, 30, 0.65)',
                 borderWidth: 1.5,
                 borderColor: '#FFFFFF',
-                borderOpacity: 0.95,
                 borderRadius: 20,
             },
             children: [
