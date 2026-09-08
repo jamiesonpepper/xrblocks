@@ -157,13 +157,13 @@ function onXRSelect(event) {
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=17';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js';
+import { VisionManager } from './vision.js?v=18';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=18';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=17';
-import { VirtualKeypad } from './keypad.js?v=17';
+import { HUDManager } from './hud.js?v=18';
+import { VirtualKeypad } from './keypad.js?v=18';
 
 // Globals
 const auth = new AuthManager();
@@ -292,10 +292,12 @@ class VirtualLight3D extends THREE.Group {
   constructor(geminiData, labelText, width = 0.6, height = 0.8) {
       super();
       this.geminiData = geminiData; // Keep for xmin/xmax/ymin/ymax
-      this.labelText = labelText || "Light";
-      this.label = labelText; // Alias for pairing logic
+      this.originalLabel = labelText || "Light";
+      this.labelText = this.originalLabel;
+      this.label = this.labelText; // Alias for pairing logic
       this.isOn = false;
       this.brightness = 100;
+      this.colorTemp = 2700;
       this.realDevice = null;
       this.linkedNodeId = null; 
       this.isSelectingDevice = false;
@@ -372,6 +374,7 @@ class VirtualLight3D extends THREE.Group {
           cardChildren.push(btn);
       } else {
           // --- PAIRED UI ---
+          // 1. Power Toggle & Unpair
           const toggleBtn = new xb.UIButton({
               label: isOn ? 'Turn Off' : 'Turn On',
               icon: 'power_settings_new',
@@ -397,56 +400,113 @@ class VirtualLight3D extends THREE.Group {
               children: [toggleBtn, unpairBtn]
           }));
           
-          // Brightness Controls
-          const decBtn = new xb.UIButton({
-              label: '-10%',
-              icon: 'remove',
-              style: { flexGrow: 1, borderRadius: 10 },
-              onClick: () => this.setBrightness(this.brightness - 10)
+          // 2. Brightness Slider
+          const brightnessText = new xb.UIText({
+              text: `Brightness: ${this.brightness}%`,
+              style: { fontSize: 13, color: '#CCCCCC', width: '100%' }
+          });
+          const brightnessSlider = new xb.UISlider({
+              ariaLabel: `${this.labelText} brightness`,
+              min: 1,
+              max: 100,
+              step: 1,
+              value: this.brightness,
+              style: { width: '100%', height: 32 },
+              onInput: (val) => {
+                  brightnessText.text = `Brightness: ${Math.round(val)}%`;
+              },
+              onChange: (val) => {
+                  this.setBrightness(val);
+              }
+          });
+          cardChildren.push(brightnessText);
+          cardChildren.push(brightnessSlider);
+          
+          // 3. Color Palette
+          const colorHeader = new xb.UIText({
+              text: 'Color Palette',
+              style: { fontSize: 13, color: '#CCCCCC', width: '100%' }
           });
           
-          const incBtn = new xb.UIButton({
-              label: '+10%',
-              icon: 'add',
-              style: { flexGrow: 1, borderRadius: 10 },
-              onClick: () => this.setBrightness(this.brightness + 10)
-          });
-          
-          cardChildren.push(new xb.UIPanel({
-              style: { width: '100%', flexDirection: 'row', gap: 8 },
-              children: [decBtn, incBtn]
+          const paletteSwatches = [
+              { name: 'Red', hex: '#FF3B30', rgb: [255, 59, 48] },
+              { name: 'Orange', hex: '#FF9500', rgb: [255, 149, 0] },
+              { name: 'Yellow', hex: '#FFCC00', rgb: [255, 204, 0] },
+              { name: 'Green', hex: '#34C759', rgb: [52, 199, 89] },
+              { name: 'Blue', hex: '#007AFF', rgb: [0, 122, 255] },
+              { name: 'Purple', hex: '#AF52DE', rgb: [175, 82, 222] },
+          ];
+
+          const colorButtons = paletteSwatches.map(swatch => new xb.UIButton({
+              label: swatch.name,
+              ariaLabel: swatch.name,
+              style: {
+                  flexGrow: 1,
+                  borderRadius: 8,
+              },
+              onClick: () => this.setColor(swatch.rgb[0], swatch.rgb[1], swatch.rgb[2])
           }));
           
-          // Color Controls
-          const supportsColor = this.realDevice && this.realDevice.attributes && this.realDevice.attributes.supported_color_modes && 
-              (this.realDevice.attributes.supported_color_modes.includes('rgb') || 
-               this.realDevice.attributes.supported_color_modes.includes('hs') || 
-               this.realDevice.attributes.supported_color_modes.includes('xy'));
+          cardChildren.push(colorHeader);
+          cardChildren.push(new xb.UIPanel({
+              style: { width: '100%', flexDirection: 'row', gap: 4 },
+              children: colorButtons
+          }));
 
-          if (supportsColor) {
-              const redBtn = new xb.UIButton({
-                  label: 'Red',
-                  icon: 'palette',
-                  style: { flexGrow: 1, borderRadius: 10 },
-                  onClick: () => this.setColor(255, 0, 0)
-              });
-              const greenBtn = new xb.UIButton({
-                  label: 'Green',
-                  icon: 'palette',
-                  style: { flexGrow: 1, borderRadius: 10 },
-                  onClick: () => this.setColor(0, 255, 0)
-              });
-              const blueBtn = new xb.UIButton({
-                  label: 'Blue',
-                  icon: 'palette',
-                  style: { flexGrow: 1, borderRadius: 10 },
-                  onClick: () => this.setColor(0, 0, 255)
-              });
-              cardChildren.push(new xb.UIPanel({
-                  style: { width: '100%', flexDirection: 'row', gap: 6 },
-                  children: [redBtn, greenBtn, blueBtn]
-              }));
-          }
+          // 4. Warmth / White Color Temperature Slider
+          const warmthText = new xb.UIText({
+              text: `Warmth: ${this.colorTemp || 2700}K`,
+              style: { fontSize: 13, color: '#FFD199', width: '100%' }
+          });
+          const warmthSlider = new xb.UISlider({
+              ariaLabel: `${this.labelText} warmth`,
+              min: 2000,
+              max: 6500,
+              step: 50,
+              value: this.colorTemp || 2700,
+              style: { width: '100%', height: 32 },
+              onInput: (val) => {
+                  warmthText.text = `Warmth: ${Math.round(val)}K`;
+              },
+              onChange: (val) => {
+                  this.setColorTemp(Math.round(val));
+              }
+          });
+
+          const warmPreset = new xb.UIButton({
+              label: 'Warm 2200K',
+              style: { flexGrow: 1, borderRadius: 8 },
+              onClick: () => {
+                  this.setColorTemp(2200);
+                  warmthText.text = 'Warmth: 2200K';
+                  warmthSlider.value = 2200;
+              }
+          });
+          const softPreset = new xb.UIButton({
+              label: 'Soft 2700K',
+              style: { flexGrow: 1, borderRadius: 8 },
+              onClick: () => {
+                  this.setColorTemp(2700);
+                  warmthText.text = 'Warmth: 2700K';
+                  warmthSlider.value = 2700;
+              }
+          });
+          const coolPreset = new xb.UIButton({
+              label: 'Cool 6500K',
+              style: { flexGrow: 1, borderRadius: 8 },
+              onClick: () => {
+                  this.setColorTemp(6500);
+                  warmthText.text = 'Warmth: 6500K';
+                  warmthSlider.value = 6500;
+              }
+          });
+
+          cardChildren.push(warmthText);
+          cardChildren.push(warmthSlider);
+          cardChildren.push(new xb.UIPanel({
+              style: { width: '100%', flexDirection: 'row', gap: 6 },
+              children: [warmPreset, softPreset, coolPreset]
+          }));
       }
 
       this.panel = new xb.UICard({
@@ -455,8 +515,8 @@ class VirtualLight3D extends THREE.Group {
           style: {
               flexDirection: 'column',
               gap: 10,
-              padding: 12,
-              backgroundColor: 'rgba(20, 20, 25, 0.85)',
+              padding: 14,
+              backgroundColor: 'rgba(20, 20, 25, 0.88)',
               borderRadius: 16,
           },
           children: cardChildren
@@ -473,16 +533,29 @@ class VirtualLight3D extends THREE.Group {
       if (vl.realDevice) {
             // UNPAIR
             hud.speak("Unpairing device...");
-            hud.log(`Unpairing ${vl.realDevice.id}...`, '#FFFF00');
+            const devId = vl.realDevice.id;
+            hud.log(`Unpairing ${devId}...`, '#FFFF00');
             
-            smartHome.unpairDevice(vl.realDevice.id).then(success => {
+            smartHome.unpairDevice(devId).then(success => {
                 if (success) {
                     hud.speak("Device Unpaired.");
                     hud.log("Unpaired & Removed.", '#00FF00');
                     
+                    if (auth.db && auth.user) {
+                        try {
+                            const ref = auth.db.ref(`users/${auth.user.uid}/anchors/${devId.replace(/\./g, '_')}`);
+                            ref.remove();
+                        } catch (e) {
+                            console.warn("Anchor remove error:", e);
+                        }
+                    }
+                    
+                    vl.unpaired = true;
                     vl.realDevice = null;
                     vl.linkedNodeId = null; 
-                    vl.isOn = false;        
+                    vl.isOn = false;
+                    vl.labelText = vl.originalLabel || "Light";
+                    vl.label = vl.labelText;
                     
                     vl.updateVisuals();
                     setTimeout(refreshRealDevices, 500);
@@ -591,6 +664,7 @@ class VirtualLight3D extends THREE.Group {
       
       const device = smartHome.devices.get(deviceId);
       if (device) {
+          this.unpaired = false;
           this.linkedNodeId = deviceId;
           this.realDevice = device;
           this.labelText = device.name || deviceId;
@@ -618,13 +692,17 @@ class VirtualLight3D extends THREE.Group {
   }
 
   updateVisuals() {
-      // if (!this.mesh) return; // Mesh removed
-      
       const isPaired = !!(this.realDevice || this.linkedNodeId);
       
       // Hydrate state from realDevice if available BEFORE rebuilding buttons
       if (this.realDevice) {
           this.isOn = this.realDevice.isOn;
+          if (this.realDevice.brightness !== undefined) {
+              this.brightness = this.realDevice.brightness;
+          }
+          if (this.realDevice.color_temp_kelvin) {
+              this.colorTemp = this.realDevice.color_temp_kelvin;
+          }
       }
       
       const isOn = this.isOn;
@@ -636,35 +714,40 @@ class VirtualLight3D extends THREE.Group {
       
       this.stateColor = colorStr;
       
-      // Rebuild Panel to update Text/Icon
+      // Rebuild Panel to update Text/Icon/Sliders
       this.rebuildPanel();
   }
 
   toggle() {
-      const prevOn = this.isOn;
-      this.isOn = !this.isOn;
+      const nextOn = !this.isOn;
+      this.isOn = nextOn;
+      if (this.realDevice) {
+          this.realDevice.isOn = nextOn;
+      }
       this.updateVisuals();
       
       if (this.realDevice && smartHome) {
-          console.log(`[Toggle] 3D Light ${this.labelText} -> ${this.isOn}`);
+          console.log(`[Toggle] 3D Light ${this.labelText} -> ${nextOn}`);
           
-          const stateStr = this.isOn ? "ON" : "OFF";
-          const colorStr = this.isOn ? '#FFFFFF' : '#00FF00';
+          const stateStr = nextOn ? "ON" : "OFF";
+          const colorStr = nextOn ? '#FFFFFF' : '#00FF00';
           hud.log(`${this.labelText} turned ${stateStr}`, colorStr);
           
-          smartHome.toggleLight(this.realDevice.id, this.isOn).then((success) => {
+          smartHome.toggleLight(this.realDevice.id, nextOn).then((success) => {
               if (success !== false) {
-                  hud.speak(this.isOn ? "Turning On" : "Turning Off");
+                  hud.speak(nextOn ? "Turning On" : "Turning Off");
               } else {
                   // Revert on failure
                   hud.log(`Failed to toggle ${this.labelText}`, '#FF0000');
                   hud.speak("Device sync failed");
-                  this.isOn = prevOn;
+                  this.isOn = !nextOn;
+                  if (this.realDevice) this.realDevice.isOn = !nextOn;
                   this.updateVisuals();
               }
           }).catch(() => {
               hud.log(`Network error syncing ${this.labelText}`, '#FF0000');
-              this.isOn = prevOn;
+              this.isOn = !nextOn;
+              if (this.realDevice) this.realDevice.isOn = !nextOn;
               this.updateVisuals();
           });
       } 
@@ -672,10 +755,12 @@ class VirtualLight3D extends THREE.Group {
 
   setBrightness(val) {
       const prevBrightness = this.brightness;
-      this.brightness = Math.max(0, Math.min(100, val));
+      this.brightness = Math.max(1, Math.min(100, Math.round(val)));
       if (this.realDevice && smartHome) {
           smartHome.setBrightness(this.realDevice.id, this.brightness).then((success) => {
-              if (success === false) {
+              if (success !== false && this.realDevice) {
+                  this.realDevice.brightness = this.brightness;
+              } else if (success === false) {
                   this.brightness = prevBrightness;
                   hud.log(`Failed to set brightness for ${this.labelText}`, '#FF0000');
               }
@@ -688,7 +773,6 @@ class VirtualLight3D extends THREE.Group {
   setColor(r, g, b) {
       if (this.realDevice && smartHome) {
           const prevColor = this.stateColor;
-          // Convert to hex for text label coloring (as per feature file)
           const toHex = (n) => {
               const hex = n.toString(16);
               return hex.length === 1 ? '0' + hex : hex;
@@ -704,6 +788,18 @@ class VirtualLight3D extends THREE.Group {
           }).catch(() => {
               this.stateColor = prevColor;
               this.rebuildPanel();
+          });
+      }
+  }
+
+  setColorTemp(kelvin) {
+      this.colorTemp = Math.round(kelvin);
+      if (this.realDevice && smartHome) {
+          hud.log(`Warmth set to ${this.colorTemp}K`, '#FFD199');
+          smartHome.setColorTemp(this.realDevice.id, this.colorTemp).then((success) => {
+              if (success !== false && this.realDevice) {
+                  this.realDevice.color_temp_kelvin = this.colorTemp;
+              }
           });
       }
   }
@@ -1585,31 +1681,26 @@ async function spawnVirtualLights(lights, cameraMatrix) {
      console.log("[Link] Updating Links between Virtual Lights and Real Devices...");
      if (virtualLights.length === 0) return;
      
-     // 1. Clear existing links first (to allow re-assignment)
-     // Actually, we want to keep them if valid.
-     
      for (const vl of virtualLights) {
          let matchedDevice = null;
+
+         if (vl.unpaired) {
+             if (vl.realDevice) {
+                 vl.realDevice = null;
+                 if (vl.updateVisuals) vl.updateVisuals();
+             }
+             continue;
+         }
 
          // A. Check Explicit Link (nodeId)
          if (vl.linkedNodeId) {
              matchedDevice = realDevices.find(d => d.id === vl.linkedNodeId || d.nodeId === vl.linkedNodeId);
          }
          
-         // B. Check Label Match (Name-based)
-         if (!matchedDevice && vl.labelText) {
+         // B. Check Label Match (Name-based) - only if explicit and not original label
+         if (!matchedDevice && vl.labelText && vl.labelText !== vl.originalLabel) {
              matchedDevice = realDevices.find(d => d.name === vl.labelText || (d.traits && d.traits["sdm.devices.traits.Info"]?.customName === vl.labelText));
          }
-
-         // C. Fallback: Index-based (Legacy/Auto) - only if no explicit link
-         // This is risky if list order changes. 
-         // Let's Disable Index Matching for now to allow explicit assignment only?
-         // Or map unassigned lights to unassigned devices?
-         /*
-         if (!matchedDevice) {
-             // Find first unassigned device?
-         }
-         */
 
          if (matchedDevice) {
               if (vl.realDevice !== matchedDevice) {
@@ -1621,19 +1712,20 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                   console.log(`[Link] Linked '${vl.labelText}' <-> Device: ${devName} (ID: ${matchedDevice.id})`);
                   hud.speak(`Linked to ${devName}`);
                   if (vl.mesh) vl.mesh.material.color.setHex(0x00FF00); // Green (Linked)
+                  if (vl.updateVisuals) vl.updateVisuals();
               }
          } else {
               if (vl.realDevice) {
-                  console.log(`[Link] Unlinked '${vl.labelText}'`);
-                  vl.realDevice = null;
-                  if (vl.mesh) vl.mesh.material.color.setHex(0xFFFF00); // Yellow (Unlinked)
+                   console.log(`[Link] Unlinked '${vl.labelText}'`);
+                   vl.realDevice = null;
+                   if (vl.mesh) vl.mesh.material.color.setHex(0xFFFF00); // Yellow (Unlinked)
+                   if (vl.updateVisuals) vl.updateVisuals();
               }
-         }
+          }
 
-         // Poll State if linked (Throttle during scan?)
-         // User requested: "When scanning... unnecessary calls to /light/state... should be removed"
-         if (vl.realDevice && smartHome && !isScanning) {
-             smartHome.getLightState(vl.realDevice.id).then(isOn => {
+          // Poll State if linked (Throttle during scan?)
+          if (vl.realDevice && smartHome && !isScanning) {
+              smartHome.getLightState(vl.realDevice.id).then(isOn => {
                  if (isOn !== null && vl.isOn !== isOn) {
                      // ... (State Sync Logic)
                      console.log(`[Poll] Syncing State for ${vl.labelText}: ${isOn ? 'ON' : 'OFF'}`);

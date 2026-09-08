@@ -66,6 +66,10 @@ export class FirebaseHAIntegration {
   async setColor(deviceId, r, g, b) {
     return await this.controlDevice(deviceId, 'turn_on', { rgb_color: [r, g, b] });
   }
+
+  async setColorTemp(deviceId, kelvin) {
+    return await this.controlDevice(deviceId, 'turn_on', { color_temp_kelvin: kelvin });
+  }
   
   async controlDevice(entity_id, service, service_data = {}) {
       try {
