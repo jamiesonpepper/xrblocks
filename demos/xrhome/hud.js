@@ -199,7 +199,6 @@ export class HUDManager {
         this.panel = new xb.UICard({
             size: { width: 0.54, height: 'auto' },
             manipulation: true,
-            edge: { scale: true },
             style: {
                 flexDirection: 'column',
                 gap: 12,

@@ -46,42 +46,44 @@ class HUDInteraction extends xb.Script {
 function onXRSelectStart(event) {
     const controller = event.target;
     
-    // Define draggables: Keypad ONLY (HUD and device panels use native UICard manipulation)
+    // Helper to see if user clicked a button or interactive slider
+    function isInteractive(obj, root) {
+        let curr = obj;
+        while (curr && curr !== root) {
+            if (curr.onClick || curr.onInput || curr.onChange || (curr.userData && curr.userData.interactive)) {
+                return true;
+            }
+            curr = curr.parent;
+        }
+        return false;
+    }
+
+    // Define draggables: HUD, Keypad, and any unlinked Virtual Light panels
     const draggables = [];
+    if (hud && hud.panel) draggables.push(hud.panel);
     if (keypad && keypad.panel) draggables.push(keypad.panel);
+    if (virtualLights && virtualLights.length > 0) {
+        for (const vl of virtualLights) {
+            if (!vl.linkedNodeId && vl.panel) {
+                draggables.push(vl.panel);
+            }
+        }
+    }
 
     tempMatrix.identity().extractRotation(controller.matrixWorld);
     raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
     raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
 
-    // Intersect ONLY permitted draggables
     const intersects = raycaster.intersectObjects(draggables, true);
 
     if (intersects.length > 0) {
         const hit = intersects[0];
         
-        // Find root draggable (Panel)
-        let targetPanel = null;
-        if (hud.panel && (hit.object === hud.panel || hud.panel.children.includes(hit.object))) targetPanel = hud.panel;
-        
-        // Check explicit lock for HUD
-        if (targetPanel === hud.panel && (targetPanel.isDraggable === false || targetPanel.userData?.isDraggable === false)) return;
-
-        if (targetPanel) {
-             // Convert to Local Point on Panel
-            const localPoint = targetPanel.worldToLocal(hit.point.clone());
-            
-            // Panel Size
-            const w = targetPanel === hud.panel ? 0.6 : 0.6; 
-            const h = targetPanel === hud.panel ? 0.8 : 0.6;
-            const border = 0.04; 
-            
-            // Allow grabbing Keypad anywhere, HUD on border
-            if (Math.abs(localPoint.x) > w/2 - border || Math.abs(localPoint.y) > h/2 - border || targetPanel === keypad.panel) {
-                
+        // 1. HUD Panel (Grab anywhere on card, unless clicking scan or toggle button)
+        if (hud && hud.panel && (hit.object === hud.panel || hud.panel.children.includes(hit.object))) {
+            if (!isInteractive(hit.object, hud.panel)) {
                 dragController = controller;
-                const objectToMove = targetPanel;
-                
+                const objectToMove = hud.panel;
                 dragController.userData.selected = objectToMove;
                 
                 const cPos = new THREE.Vector3();
@@ -91,9 +93,48 @@ function onXRSelectStart(event) {
                 
                 dragOffset.copy(objectToMove.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
                 dragQuaternion.copy(cQuat.clone().invert()).multiply(objectToMove.quaternion);
-                
-                hud.speak("Moving Panel");
                 return;
+            }
+        }
+
+        // 2. Keypad Panel
+        if (keypad && keypad.panel && (hit.object === keypad.panel || keypad.panel.children.includes(hit.object))) {
+            if (!isInteractive(hit.object, keypad.panel)) {
+                dragController = controller;
+                const objectToMove = keypad.panel;
+                dragController.userData.selected = objectToMove;
+                
+                const cPos = new THREE.Vector3();
+                const cQuat = new THREE.Quaternion();
+                controller.getWorldPosition(cPos);
+                controller.getWorldQuaternion(cQuat);
+                
+                dragOffset.copy(objectToMove.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
+                dragQuaternion.copy(cQuat.clone().invert()).multiply(objectToMove.quaternion);
+                return;
+            }
+        }
+
+        // 3. Unlinked Virtual Light: Move the entire VirtualLight3D group directly so position is preserved!
+        if (virtualLights && virtualLights.length > 0) {
+            for (const vl of virtualLights) {
+                if (!vl.linkedNodeId && vl.panel && (hit.object === vl.panel || vl.panel.children.includes(hit.object))) {
+                    if (!isInteractive(hit.object, vl.panel)) {
+                        dragController = controller;
+                        const objectToMove = vl; // Move group in world space
+                        vl.hasBeenMoved = true;
+                        dragController.userData.selected = objectToMove;
+                        
+                        const cPos = new THREE.Vector3();
+                        const cQuat = new THREE.Quaternion();
+                        controller.getWorldPosition(cPos);
+                        controller.getWorldQuaternion(cQuat);
+                        
+                        dragOffset.copy(objectToMove.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
+                        dragQuaternion.copy(cQuat.clone().invert()).multiply(objectToMove.quaternion);
+                        return;
+                    }
+                }
             }
         }
     }
@@ -157,13 +198,13 @@ function onXRSelect(event) {
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=21';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=21';
+import { VisionManager } from './vision.js?v=22';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=22';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=21';
-import { VirtualKeypad } from './keypad.js?v=21';
+import { HUDManager } from './hud.js?v=22';
+import { VirtualKeypad } from './keypad.js?v=22';
 
 // Globals
 const auth = new AuthManager();
@@ -333,6 +374,7 @@ class VirtualLight3D extends THREE.Group {
       this.isSelectingDevice = false;
       this.devicePage = 0;
       this.expandedAreas = new Set();
+      this.hasBeenMoved = false;
 
       // Hit Mesh (Invisible, for easier raycasting if needed)
       const hitGeo = new THREE.PlaneGeometry(width, height);
@@ -360,6 +402,19 @@ class VirtualLight3D extends THREE.Group {
   
   rebuildPanel() {
       if (this.panel) {
+          // Transfer any local displacement from dragging into the group world transform
+          const worldPos = new THREE.Vector3();
+          const worldQuat = new THREE.Quaternion();
+          this.panel.getWorldPosition(worldPos);
+          this.panel.getWorldQuaternion(worldQuat);
+          if (this.parent) {
+              this.parent.worldToLocal(worldPos);
+          }
+          if (this.position.distanceTo(worldPos) > 0.005) {
+              this.hasBeenMoved = true;
+              this.position.copy(worldPos);
+              this.quaternion.copy(worldQuat);
+          }
           this.remove(this.panel);
       }
       
@@ -376,7 +431,8 @@ class VirtualLight3D extends THREE.Group {
       }
       
       const isOn = this.isOn;
-      const stateColor = this.stateColor !== undefined ? this.stateColor : '#FFFF00';
+      // Do not use yellow or green anymore; default to clean white
+      const stateColor = this.stateColor !== undefined ? this.stateColor : '#FFFFFF';
       
       const labelText = new xb.UIText({
           text: this.labelText,
@@ -409,7 +465,7 @@ class VirtualLight3D extends THREE.Group {
           cardChildren.push(btn);
       } else {
           // --- PAIRED UI ---
-          // 1. Power Toggle & Unpair (Broken link icon)
+          // 1. Power Toggle & Unpair (Clean, guaranteed visible Unpair button)
           const toggleBtn = new xb.UIButton({
               label: isOn ? '⏻ ON' : '⏻ OFF',
               ariaLabel: isOn ? 'Turn Off' : 'Turn On',
@@ -425,15 +481,18 @@ class VirtualLight3D extends THREE.Group {
           });
 
           const unpairBtn = new xb.UIButton({
-              icon: 'link_off',
+              label: '✕ Unpair',
               ariaLabel: 'Unpair device',
               style: {
-                  width: 38,
+                  width: 76,
                   height: 32,
                   borderRadius: 8,
-                  backgroundColor: 'rgba(255, 255, 255, 0.14)',
+                  backgroundColor: 'rgba(255, 255, 255, 0.16)',
                   borderWidth: 1,
-                  borderColor: 'rgba(255, 255, 255, 0.6)',
+                  borderColor: '#FFFFFF',
+                  fontSize: 12,
+                  fontWeight: 'bold',
+                  color: '#FFFFFF',
               },
               onClick: () => this.handleConfigClick()
           });
@@ -465,11 +524,31 @@ class VirtualLight3D extends THREE.Group {
           cardChildren.push(brightnessText);
           cardChildren.push(brightnessSlider);
           
-          // 3. Rainbow Color Slider
-          const rainbowText = new xb.UIText({
-              text: `🌈 Color`,
-              style: { fontSize: 12, color: '#FFFFFF', width: '100%' }
+          // 3. Rainbow Color Slider with Gradient Rainbow Bar & Dynamic Swatch
+          const colorIndicator = new xb.UIPanel({
+              style: {
+                  width: 14,
+                  height: 14,
+                  borderRadius: 7,
+                  backgroundColor: this.stateColor || '#FFFFFF',
+                  borderWidth: 1,
+                  borderColor: '#FFFFFF',
+              }
           });
+          const rainbowLabel = new xb.UIText({
+              text: `🌈 Color (${this.currentHue !== undefined ? this.currentHue : 0}°)`,
+              style: { fontSize: 12, color: '#FFFFFF' }
+          });
+          const rainbowHeader = new xb.UIPanel({
+              style: {
+                  width: '100%',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+              },
+              children: [rainbowLabel, colorIndicator]
+          });
+
           const rainbowSlider = new xb.UISlider({
               ariaLabel: `${this.labelText} rainbow color`,
               min: 0,
@@ -483,6 +562,8 @@ class VirtualLight3D extends THREE.Group {
                   const toHex = (n) => n.toString(16).padStart(2, '0');
                   this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
                   labelText.style.color = this.stateColor;
+                  colorIndicator.style.backgroundColor = this.stateColor;
+                  rainbowLabel.text = `🌈 Color (${this.currentHue}°)`;
               },
               onChange: (val) => {
                   this.currentHue = Math.round(val);
@@ -490,22 +571,51 @@ class VirtualLight3D extends THREE.Group {
                   this.setColor(r, g, b);
               }
           });
-          cardChildren.push(rainbowText);
-          cardChildren.push(rainbowSlider);
 
-          // 4. 6 Common Temperatures (Colour-based selectors, no slider)
+          // Gradient rainbow track bar directly under the color slider
+          const rainbowStops = [
+              '#FF0000', '#FF3B00', '#FF7700', '#FFB300', '#FFEE00',
+              '#A2FF00', '#26FF00', '#00FF66', '#00FFD0', '#00C8FF',
+              '#0055FF', '#3700FF', '#9E00FF', '#FF00C4', '#FF0037'
+          ];
+          const rainbowSegments = rainbowStops.map((c, i) => new xb.UIPanel({
+              style: {
+                  flexGrow: 1,
+                  height: 6,
+                  backgroundColor: c,
+                  borderRadius: i === 0 ? 3 : (i === rainbowStops.length - 1 ? 3 : 0),
+              }
+          }));
+          const rainbowBar = new xb.UIPanel({
+              style: {
+                  width: '100%',
+                  flexDirection: 'row',
+                  height: 6,
+                  borderRadius: 3,
+                  overflow: 'hidden',
+                  marginTop: -2,
+                  marginBottom: 2,
+              },
+              children: rainbowSegments
+          });
+
+          cardChildren.push(rainbowHeader);
+          cardChildren.push(rainbowSlider);
+          cardChildren.push(rainbowBar);
+
+          // 4. 6 Common Temperatures (Faithful physical light colors, no slider)
           const tempText = new xb.UIText({
               text: `🌡️ ${this.colorTemp || 2700}K`,
               style: { fontSize: 12, color: '#FFFFFF', width: '100%' }
           });
 
           const tempPresets = [
-              { kelvin: 2000, hex: '#FF8B1A' },
-              { kelvin: 2700, hex: '#FFB46B' },
-              { kelvin: 3500, hex: '#FFD1A3' },
-              { kelvin: 4500, hex: '#FFF0E4' },
-              { kelvin: 5500, hex: '#F5F7FF' },
-              { kelvin: 6500, hex: '#DCE5FF' },
+              { kelvin: 2000, hex: '#FFA23A' }, // Candlelight warm amber
+              { kelvin: 2700, hex: '#FFBF75' }, // Soft white incandescent
+              { kelvin: 3500, hex: '#FFDDAA' }, // Neutral warm white
+              { kelvin: 4500, hex: '#FFF2E5' }, // Pure neutral white
+              { kelvin: 5500, hex: '#E8F0FE' }, // Daylight
+              { kelvin: 6500, hex: '#A8CDFF' }, // Cool daylight sky blue
           ];
 
           const tempButtons = tempPresets.map(preset => new xb.UIButton({
@@ -523,6 +633,7 @@ class VirtualLight3D extends THREE.Group {
                   this.setColorTemp(preset.kelvin, preset.hex);
                   tempText.text = `🌡️ ${preset.kelvin}K`;
                   labelText.style.color = preset.hex;
+                  colorIndicator.style.backgroundColor = preset.hex;
               }
           }));
 
@@ -561,12 +672,12 @@ class VirtualLight3D extends THREE.Group {
             // UNPAIR
             hud.speak("Unpairing device...");
             const devId = vl.realDevice.id;
-            hud.log(`Unpairing ${devId}...`, '#FFFF00');
+            hud.log(`Unpairing ${devId}...`, '#FFFFFF');
             
             smartHome.unpairDevice(devId).then(success => {
                 if (success) {
                     hud.speak("Device Unpaired.");
-                    hud.log("Unpaired & Removed.", '#00FF00');
+                    hud.log("Unpaired & Removed.", '#FFFFFF');
                     
                     if (auth.db && auth.user) {
                         try {
@@ -642,7 +753,7 @@ class VirtualLight3D extends THREE.Group {
           }
       });
 
-      const ITEMS_PER_PAGE = 5;
+      const ITEMS_PER_PAGE = 8;
       const totalPages = Math.ceil(visibleItems.length / ITEMS_PER_PAGE) || 1;
       if (this.devicePage >= totalPages) this.devicePage = Math.max(0, totalPages - 1);
       
@@ -657,11 +768,11 @@ class VirtualLight3D extends THREE.Group {
               alignItems: 'center',
           },
           children: [
-              new xb.UIText({ text: 'Select Device', style: { fontSize: 14, fontWeight: 'bold', color: '#FFFFFF' } }),
+              new xb.UIText({ text: 'Select Device', style: { fontSize: 16, fontWeight: 'bold', color: '#FFFFFF' } }),
               new xb.UIButton({
                   label: '✕',
                   ariaLabel: 'Cancel selection',
-                  style: { width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: '#FFFFFF', backgroundColor: 'rgba(255, 255, 255, 0.1)' },
+                  style: { width: 30, height: 30, borderRadius: 6, borderWidth: 1, borderColor: '#FFFFFF', backgroundColor: 'rgba(255, 255, 255, 0.12)' },
                   onClick: () => {
                       this.isSelectingDevice = false;
                       this.rebuildPanel();
@@ -673,8 +784,8 @@ class VirtualLight3D extends THREE.Group {
       const bodyChildren = [headerRow];
       
       if (devices.length === 0) {
-          bodyChildren.push(new xb.UIText({ text: 'No Devices Found', style: { fontSize: 13, color: '#FF6666', textAlign: 'center' } }));
-          bodyChildren.push(new xb.UIText({ text: 'Ensure devices are linked in Home Assistant', style: { fontSize: 11, color: '#CCCCCC', textAlign: 'center' } }));
+          bodyChildren.push(new xb.UIText({ text: 'No Devices Found', style: { fontSize: 14, color: 'rgba(255, 255, 255, 0.7)', textAlign: 'center' } }));
+          bodyChildren.push(new xb.UIText({ text: 'Ensure devices are linked in Home Assistant', style: { fontSize: 12, color: 'rgba(255, 255, 255, 0.5)', textAlign: 'center' } }));
       } else {
           pageItems.forEach(item => {
               if (item.type === 'area') {
@@ -682,12 +793,12 @@ class VirtualLight3D extends THREE.Group {
                       label: `${item.isExpanded ? '▼' : '▶'} ${item.area} (${item.count})`,
                       style: {
                           width: '100%',
-                          height: 30,
+                          height: 34,
                           borderRadius: 8,
-                          backgroundColor: 'rgba(255, 255, 255, 0.16)',
+                          backgroundColor: 'rgba(255, 255, 255, 0.18)',
                           borderWidth: 1,
                           borderColor: 'rgba(255, 255, 255, 0.7)',
-                          fontSize: 12,
+                          fontSize: 14,
                           fontWeight: 'bold',
                       },
                       onClick: () => {
@@ -705,12 +816,12 @@ class VirtualLight3D extends THREE.Group {
                       label: `  • ${dev.name || dev.id}`,
                       style: {
                           width: '100%',
-                          height: 28,
+                          height: 32,
                           borderRadius: 6,
                           backgroundColor: 'rgba(255, 255, 255, 0.08)',
                           borderWidth: 1,
                           borderColor: 'rgba(255, 255, 255, 0.35)',
-                          fontSize: 11,
+                          fontSize: 13,
                       },
                       onClick: () => this.pairWithDevice(dev.id)
                   }));
@@ -721,17 +832,17 @@ class VirtualLight3D extends THREE.Group {
               const prevBtn = new xb.UIButton({
                   label: '<',
                   disabled: this.devicePage <= 0,
-                  style: { width: 36, height: 28, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)' },
+                  style: { width: 40, height: 30, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)' },
                   onClick: () => { if (this.devicePage > 0) { this.devicePage--; this.rebuildPanel(); } }
               });
               const pageIndicator = new xb.UIText({
                   text: `${this.devicePage + 1} / ${totalPages}`,
-                  style: { fontSize: 12, color: '#FFFFFF', textAlign: 'center', flexGrow: 1 }
+                  style: { fontSize: 13, color: '#FFFFFF', textAlign: 'center', flexGrow: 1 }
               });
               const nextBtn = new xb.UIButton({
                   label: '>',
                   disabled: this.devicePage >= totalPages - 1,
-                  style: { width: 36, height: 28, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)' },
+                  style: { width: 40, height: 30, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)' },
                   onClick: () => { if (this.devicePage < totalPages - 1) { this.devicePage++; this.rebuildPanel(); } }
               });
               bodyChildren.push(new xb.UIPanel({
@@ -742,7 +853,7 @@ class VirtualLight3D extends THREE.Group {
       }
 
       this.panel = new xb.UICard({
-          size: { width: this.panelWidth, height: 'auto' },
+          size: { width: 0.38, height: 'auto' },
           manipulation: false,
           style: {
               flexDirection: 'column',
@@ -762,7 +873,7 @@ class VirtualLight3D extends THREE.Group {
 
   pairWithDevice(deviceId) {
       hud.speak("Pairing device...");
-      hud.log(`Pairing to ${deviceId}...`, '#FFFF00');
+      hud.log(`Pairing to ${deviceId}...`, '#FFFFFF');
       
       const device = smartHome.devices.get(deviceId);
       if (device) {
@@ -782,7 +893,7 @@ class VirtualLight3D extends THREE.Group {
                   quaternion: { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
                   timestamp: firebase.database.ServerValue.TIMESTAMP
               }).then(() => {
-                  hud.log(`Saved coordinates`, '#00FF00');
+                  hud.log(`Saved coordinates`, '#FFFFFF');
               }).catch(err => {
                   console.error("Failed to save anchor", err);
               });
@@ -809,9 +920,9 @@ class VirtualLight3D extends THREE.Group {
       
       const isOn = this.isOn;
       
-      let colorStr = '#FFFF00'; // Yellow (Unpaired)
+      let colorStr = '#FFFFFF';
       if (isPaired) {
-          colorStr = isOn ? (this.colorTemp ? kelvinToHex(this.colorTemp) : '#FFFFFF') : '#00FF00';
+          colorStr = isOn ? (this.colorTemp ? kelvinToHex(this.colorTemp) : '#FFFFFF') : 'rgba(255, 255, 255, 0.55)';
       }
       
       this.stateColor = colorStr;
@@ -832,7 +943,7 @@ class VirtualLight3D extends THREE.Group {
           console.log(`[Toggle] 3D Light ${this.labelText} -> ${nextOn}`);
           
           const stateStr = nextOn ? "ON" : "OFF";
-          const colorStr = nextOn ? '#FFFFFF' : '#00FF00';
+          const colorStr = nextOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.55)';
           hud.log(`${this.labelText} turned ${stateStr}`, colorStr);
           
           smartHome.toggleLight(this.realDevice.id, nextOn).then((success) => {
@@ -1621,9 +1732,9 @@ async function spawnVirtualLights(lights, cameraMatrix) {
     const keptLights = [];
     const newCandidates = [];
     
-    // Keep lights that are already linked (Paired)
+    // Keep lights that are already linked (Paired), or being selected/moved by user
     for (const vl of virtualLights) {
-        if (vl.linkedNodeId) {
+        if (vl.linkedNodeId || vl.isSelectingDevice || vl.hasBeenMoved) {
             keptLights.push(vl);
         } else {
             // Remove unlinked ones from scene to be replaced
