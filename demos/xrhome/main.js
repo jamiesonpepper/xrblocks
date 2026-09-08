@@ -46,11 +46,34 @@ class HUDInteraction extends xb.Script {
 function onXRSelectStart(event) {
     const controller = event.target;
     
+    function isDescendant(obj, root) {
+        let curr = obj;
+        while (curr) {
+            if (curr === root) return true;
+            curr = curr.parent;
+        }
+        return false;
+    }
+
     // Helper to see if user clicked a button or interactive slider
     function isInteractive(obj, root) {
+        // 1. Check logical mapping via UIBlocks interaction registry if available
+        try {
+            if (typeof xb !== 'undefined' && xb.core && xb.core.interaction && xb.core.interaction.registry) {
+                const resolved = xb.core.interaction.registry.resolve(obj);
+                if (resolved && resolved.logical) {
+                    const el = resolved.logical;
+                    if (el.onClick || el.onInput || el.onChange || el.name === 'UIButton' || el.name === 'UISlider' || (el.userData && el.userData.interactive)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (e) {}
+
+        // 2. Walk up Three.js parent hierarchy
         let curr = obj;
         while (curr && curr !== root) {
-            if (curr.onClick || curr.onInput || curr.onChange || (curr.userData && curr.userData.interactive)) {
+            if (curr.onClick || curr.onInput || curr.onChange || curr.name === 'UIButton' || curr.name === 'UISlider' || (curr.userData && curr.userData.interactive)) {
                 return true;
             }
             curr = curr.parent;
@@ -80,7 +103,7 @@ function onXRSelectStart(event) {
         const hit = intersects[0];
         
         // 1. HUD Panel (Grab anywhere on card, unless clicking scan or toggle button)
-        if (hud && hud.panel && (hit.object === hud.panel || hud.panel.children.includes(hit.object))) {
+        if (hud && hud.panel && (hit.object === hud.panel || isDescendant(hit.object, hud.panel))) {
             if (!isInteractive(hit.object, hud.panel)) {
                 dragController = controller;
                 const objectToMove = hud.panel;
@@ -98,7 +121,7 @@ function onXRSelectStart(event) {
         }
 
         // 2. Keypad Panel
-        if (keypad && keypad.panel && (hit.object === keypad.panel || keypad.panel.children.includes(hit.object))) {
+        if (keypad && keypad.panel && (hit.object === keypad.panel || isDescendant(hit.object, keypad.panel))) {
             if (!isInteractive(hit.object, keypad.panel)) {
                 dragController = controller;
                 const objectToMove = keypad.panel;
@@ -118,7 +141,7 @@ function onXRSelectStart(event) {
         // 3. Unlinked Virtual Light: Move the entire VirtualLight3D group directly so position is preserved!
         if (virtualLights && virtualLights.length > 0) {
             for (const vl of virtualLights) {
-                if (!vl.linkedNodeId && vl.panel && (hit.object === vl.panel || vl.panel.children.includes(hit.object))) {
+                if (!vl.linkedNodeId && vl.panel && (hit.object === vl.panel || isDescendant(hit.object, vl.panel))) {
                     if (!isInteractive(hit.object, vl.panel)) {
                         dragController = controller;
                         const objectToMove = vl; // Move group in world space
@@ -162,49 +185,23 @@ function onXRSelect(event) {
             const hit = keypadIntersects[0];
             // UV to 0..1
             if (hit.uv) {
-                // UV y is inverted in Three.js plane mapping relative to Canvas? 
-                // texture.flipY usually defaults.
-                // Our VirtualKeypad.handleClick expects UV where (0,0) is bottom-left? 
-                // Let's pass raw UV and let handleClick handle it (it does 1-y).
                 keypad.handleClick(hit.uv);
             }
             return; // Consume event
         }
     }
-
-    // 2. Check Virtual Lights (Legacy Logic preserved)
-
-    // Target the hitMesh (invisible plane) for easier clicking
-    const meshes = virtualLights.map(vl => vl.hitMesh).filter(m => m);
-    const intersects = raycaster.intersectObjects(meshes);
-    
-    if (intersects.length > 0) {
-        const hit = intersects[0];
-        // Find VL that owns this hitMesh
-        const vl = virtualLights.find(v => v.hitMesh === hit.object);
-        
-        if (vl) {
-            console.log("XR Pinch on Light:", vl.labelText);
-            vl.toggle();
-            // hud.speak(vl.isOn ? "On" : "Off"); // moved to toggle()
-        }
-    }
-    
-    // Note: xb.SpatialPanel buttons handle their own clicks via xb's system usually.
-    // If not, we might need to manually trigger them here.
-    // We'll trust xb first.
 }
 
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=23';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=23';
+import { VisionManager } from './vision.js?v=24';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=24';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=23';
-import { VirtualKeypad } from './keypad.js?v=23';
+import { HUDManager } from './hud.js?v=24';
+import { VirtualKeypad } from './keypad.js?v=24';
 
 // Globals
 const auth = new AuthManager();
@@ -376,17 +373,6 @@ class VirtualLight3D extends THREE.Group {
       this.expandedAreas = new Set();
       this.hasBeenMoved = false;
 
-      // Hit Mesh (Invisible, for easier raycasting if needed)
-      const hitGeo = new THREE.PlaneGeometry(width, height);
-      const hitMat = new THREE.MeshBasicMaterial({ visible: false });
-      this.hitMesh = new THREE.Mesh(hitGeo, hitMat);
-      
-      // CRITICAL: Lock the Hit Mesh too
-      this.hitMesh.isDraggable = false;
-      this.hitMesh.isRotatable = false;
-      
-      this.add(this.hitMesh);
-      
       // 3. Label + Interface (UICard)
       this.panelWidth = width;
       this.panelHeight = height;
@@ -452,6 +438,8 @@ class VirtualLight3D extends THREE.Group {
           const btn = new xb.UIButton({
               label: 'Pair Device',
               icon: 'add_circle',
+              ariaLabel: 'Pair Device',
+              userData: { interactive: true },
               style: {
                   width: '100%',
                   height: 40,
@@ -467,10 +455,12 @@ class VirtualLight3D extends THREE.Group {
           cardChildren.push(btn);
       } else {
           // --- PAIRED UI ---
-          // 1. Power Toggle & Unpair (Clean, guaranteed visible Unpair button)
+          // 1. Power Toggle & Unpair (Clean, guaranteed visible icons and text)
           const toggleBtn = new xb.UIButton({
-              label: isOn ? '⏻ ON' : '⏻ OFF',
+              label: isOn ? 'ON' : 'OFF',
+              icon: 'power_settings_new',
               ariaLabel: isOn ? 'Turn Off' : 'Turn On',
+              userData: { interactive: true },
               style: {
                   flexGrow: 1,
                   height: 36,
@@ -485,10 +475,12 @@ class VirtualLight3D extends THREE.Group {
           });
 
           const unpairBtn = new xb.UIButton({
-              label: '✕ Unpair',
+              label: 'Unpair',
+              icon: 'link_off',
               ariaLabel: 'Unpair device',
+              userData: { interactive: true },
               style: {
-                  width: 84,
+                  width: 96,
                   height: 36,
                   borderRadius: 8,
                   backgroundColor: 'rgba(255, 255, 255, 0.16)',
@@ -1871,8 +1863,15 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                  vLight.updateMatrixWorld(true);
             }
             
-            // Allow Interaction Logic to be governed fully by the internal rebuildPanel state logic natively
-            
+            // Check if this candidate overlaps an already paired light bulb (within 0.4m)
+            const overlapsPaired = keptLights.some(kl => {
+                return (kl.realDevice || kl.linkedNodeId) && kl.position && kl.position.distanceTo(vLight.position) < 0.4;
+            });
+            if (overlapsPaired) {
+                console.log(`[Spawn] Skipping candidate '${label}' overlapping already paired device at`, vLight.position);
+                continue;
+            }
+
             virtualLights.push(vLight);
             xb.add(vLight); 
             console.log(`[Spawn] Added 3D Light '${label}' at ${vLight.position.x.toFixed(2)}, ${vLight.position.y.toFixed(2)}, ${vLight.position.z.toFixed(2)}`);
