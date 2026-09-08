@@ -198,13 +198,13 @@ function onXRSelect(event) {
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=22';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=22';
+import { VisionManager } from './vision.js?v=23';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=23';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=22';
-import { VirtualKeypad } from './keypad.js?v=22';
+import { HUDManager } from './hud.js?v=23';
+import { VirtualKeypad } from './keypad.js?v=23';
 
 // Globals
 const auth = new AuthManager();
@@ -437,7 +437,7 @@ class VirtualLight3D extends THREE.Group {
       const labelText = new xb.UIText({
           text: this.labelText,
           style: {
-              fontSize: 14,
+              fontSize: 17,
               fontWeight: 'bold',
               color: stateColor,
               textAlign: 'center',
@@ -454,11 +454,13 @@ class VirtualLight3D extends THREE.Group {
               icon: 'add_circle',
               style: {
                   width: '100%',
-                  height: 36,
+                  height: 40,
                   borderRadius: 10,
                   backgroundColor: 'rgba(255, 255, 255, 0.18)',
                   borderWidth: 1,
                   borderColor: '#FFFFFF',
+                  fontSize: 14,
+                  fontWeight: 'bold',
               },
               onClick: () => this.handleConfigClick()
           });
@@ -471,11 +473,13 @@ class VirtualLight3D extends THREE.Group {
               ariaLabel: isOn ? 'Turn Off' : 'Turn On',
               style: {
                   flexGrow: 1,
-                  height: 32,
+                  height: 36,
                   borderRadius: 8,
                   backgroundColor: isOn ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.12)',
                   borderWidth: 1,
                   borderColor: isOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.5)',
+                  fontSize: 14,
+                  fontWeight: 'bold',
               },
               onClick: () => this.toggle()
           });
@@ -484,13 +488,13 @@ class VirtualLight3D extends THREE.Group {
               label: '✕ Unpair',
               ariaLabel: 'Unpair device',
               style: {
-                  width: 76,
-                  height: 32,
+                  width: 84,
+                  height: 36,
                   borderRadius: 8,
                   backgroundColor: 'rgba(255, 255, 255, 0.16)',
                   borderWidth: 1,
                   borderColor: '#FFFFFF',
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: 'bold',
                   color: '#FFFFFF',
               },
@@ -505,7 +509,7 @@ class VirtualLight3D extends THREE.Group {
           // 2. Brightness Slider
           const brightnessText = new xb.UIText({
               text: `☀️ ${this.brightness}%`,
-              style: { fontSize: 12, color: '#FFFFFF', width: '100%' }
+              style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF', width: '100%' }
           });
           const brightnessSlider = new xb.UISlider({
               ariaLabel: `${this.labelText} brightness`,
@@ -537,7 +541,7 @@ class VirtualLight3D extends THREE.Group {
           });
           const rainbowLabel = new xb.UIText({
               text: `🌈 Color (${this.currentHue !== undefined ? this.currentHue : 0}°)`,
-              style: { fontSize: 12, color: '#FFFFFF' }
+              style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' }
           });
           const rainbowHeader = new xb.UIPanel({
               style: {
@@ -606,7 +610,7 @@ class VirtualLight3D extends THREE.Group {
           // 4. 6 Common Temperatures (Faithful physical light colors, no slider)
           const tempText = new xb.UIText({
               text: `🌡️ ${this.colorTemp || 2700}K`,
-              style: { fontSize: 12, color: '#FFFFFF', width: '100%' }
+              style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF', width: '100%' }
           });
 
           const tempPresets = [
@@ -623,7 +627,7 @@ class VirtualLight3D extends THREE.Group {
               ariaLabel: `${preset.kelvin}K`,
               style: {
                   flexGrow: 1,
-                  height: 22,
+                  height: 26,
                   borderRadius: 6,
                   backgroundColor: preset.hex,
                   borderWidth: this.colorTemp === preset.kelvin ? 2 : 1,
@@ -1786,14 +1790,15 @@ async function spawnVirtualLights(lights, cameraMatrix) {
     
 
             // Estimate depth based on bounding box size using true perspective inversion.
-            // Assuming average physical detected object (lamp, keypad) is ~0.28 meters wide.
-            // Z ≈ true_physical_width / normalized_image_size
+            // Typical smart home devices (switches, bulbs, lamps) average ~0.15m in physical scale.
+            // Clamped to a comfortable, easily readable near-field MR range (0.75m - 1.45m) so panels
+            // sit right next to physical objects instead of floating far away in physical space.
             const boxSize = Math.max(l.xmax - l.xmin, l.ymax - l.ymin);
             
-            let z = -1.8; 
+            let z = -1.15; 
             if (boxSize > 0) {
-                 const size = Math.max(0.04, boxSize); // floor at 0.04 to prevent infinite depth
-                 z = -Math.max(0.8, Math.min(2.8, 0.28 / size)); 
+                 const size = Math.max(0.05, boxSize);
+                 z = -Math.max(0.75, Math.min(1.45, 0.15 / size)); 
             }
             
             // Get Camera
@@ -1807,8 +1812,6 @@ async function spawnVirtualLights(lights, cameraMatrix) {
             if (!cam) {
                 cam = xb.camera; // Fallback to main camera
             }
-            // Force a valid camera object if missing? 
-            // If xb.camera is also null, we are in trouble.
 
             let vH = 1.8; 
             let vW = 3.2; 
@@ -1821,12 +1824,12 @@ async function spawnVirtualLights(lights, cameraMatrix) {
             const x = (cx - 0.5) * vW; 
             const y = -(cy - 0.5) * vH; 
             
-            // Create a compact 3D panel with base width 0.36m
+            // Create a 3D panel with base width 0.36m
             const vLight = new VirtualLight3D(l, label, 0.36, 0.5);
             
-            // Keep uniform scale constrained to a natural viewing size (0.85 - 1.15)
-            const targetVisibleWidth = Math.max(0.28, (l.xmax - l.xmin) * vW * 1.1);
-            const uniformScale = Math.max(0.85, Math.min(1.15, targetVisibleWidth / 0.36));
+            // Keep uniform scale at full size or slightly larger for effortless readability (1.0 - 1.25)
+            const targetVisibleWidth = Math.max(0.36, (l.xmax - l.xmin) * vW * 1.2);
+            const uniformScale = Math.max(1.0, Math.min(1.25, targetVisibleWidth / 0.36));
             vLight.scale.setScalar(uniformScale);
             
             // POSITIONING: Use Historical Camera Matrix with true local-floor coordinates
