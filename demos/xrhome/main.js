@@ -64,6 +64,17 @@ class HUDInteraction extends xb.Script {
                     continue;
                 }
 
+                // Freeze orientation while selecting device in the tree menu
+                if (vl.isSelectingDevice) {
+                    continue;
+                }
+
+                // ONLY pivot after a device is paired! Initial UICards must remain stationary
+                const isPaired = !!(vl.realDevice || vl.linkedNodeId);
+                if (!isPaired) {
+                    continue;
+                }
+
                 // Pivot to face camera horizontally (upright billboard)
                 const cardWorldPos = new THREE.Vector3();
                 vl.getWorldPosition(cardWorldPos);
@@ -77,10 +88,12 @@ class HUDInteraction extends xb.Script {
             }
         }
 
-        // --- Animated Depth Mesh Scanning Web ---
+        // --- Animated Depth Mesh Scanning Web --- (Disabled per user request)
+        /*
         if (typeof scanningWeb !== 'undefined' && scanningWeb && scanningWeb.mesh && scanningWeb.mesh.visible && activeCam) {
             scanningWeb.update(activeCam);
         }
+        */
     }
 
     onUpdate() {
@@ -535,39 +548,17 @@ class ScanningWebEffect {
     }
 
     update(activeCam) {
-        if (!this.mesh.visible || !activeCam) return;
-        
-        const camPos = new THREE.Vector3();
-        activeCam.getWorldPosition(camPos);
-        this.mesh.position.copy(camPos);
-        this.mesh.quaternion.copy(activeCam.quaternion);
-
-        this.uniforms.uTime.value = performance.now() * 0.001;
-
-        // Also if native depthMesh exists, synchronize it
-        if (typeof xb !== 'undefined' && xb.core && xb.core.depth && xb.core.depth.depthMesh) {
-            xb.core.depth.depthMesh.visible = true;
-            if (xb.core.depth.depthMesh.material) {
-                xb.core.depth.depthMesh.material.wireframe = true;
-            }
-        }
+        // Disabled per user request
+        return;
     }
 
     show() {
-        this.mesh.visible = true;
-        if (typeof xb !== 'undefined' && xb.core && xb.core.depth && xb.core.depth.depthMesh) {
-            xb.core.depth.depthMesh.visible = true;
-            if (xb.core.depth.depthMesh.material) {
-                xb.core.depth.depthMesh.material.wireframe = true;
-            }
-        }
+        // Disabled per user request
+        this.mesh.visible = false;
     }
 
     hide() {
         this.mesh.visible = false;
-        if (typeof xb !== 'undefined' && xb.core && xb.core.depth && xb.core.depth.depthMesh) {
-            xb.core.depth.depthMesh.visible = false;
-        }
     }
 }
 const scanningWeb = new ScanningWebEffect();
@@ -865,6 +856,8 @@ class VirtualLight3D extends THREE.Group {
 
       this.panel = new xb.UICard({
           size: { width: this.panelWidth, height: 'auto' },
+          anchorX: 'center',
+          anchorY: 'top',
           manipulation: canDrag,
           style: {
               flexDirection: 'column',
@@ -878,7 +871,6 @@ class VirtualLight3D extends THREE.Group {
           children: cardChildren
       });
 
-      // Center panel at 3D anchor position (closer to physical device)
       this.panel.position.set(0, 0, 0);
       this.add(this.panel);
   }
@@ -926,6 +918,20 @@ class VirtualLight3D extends THREE.Group {
             });
       } else {
             // ENTER SELECTION MODE
+            // Tree menu takes its exact positional and rotational reference from the UICard when Pair Device is clicked
+            if (this.panel) {
+                const worldPos = new THREE.Vector3();
+                const worldQuat = new THREE.Quaternion();
+                this.panel.getWorldPosition(worldPos);
+                this.panel.getWorldQuaternion(worldQuat);
+                if (this.parent) {
+                    this.parent.worldToLocal(worldPos);
+                }
+                this.position.copy(worldPos);
+                this.quaternion.copy(worldQuat);
+                this.panel.position.set(0, 0, 0);
+                this.panel.quaternion.identity();
+            }
             this.isSelectingDevice = true;
             this.devicePage = 0;
             this.rebuildPanel();
@@ -1079,7 +1085,9 @@ class VirtualLight3D extends THREE.Group {
       }
 
       this.panel = new xb.UICard({
-          size: { width: 0.38, height: 'auto' },
+          size: { width: this.panelWidth, height: 'auto' },
+          anchorX: 'center',
+          anchorY: 'top',
           manipulation: false,
           style: {
               flexDirection: 'column',
@@ -1359,15 +1367,14 @@ async function initApp(preloadedConfig = null) {
     o.hands.enabled = true; // Use Hands
     o.simulator.defaultMode = xb.SimulatorMode.POSE; // Or generic
 
-    // Enable WebXR Depth Mesh Visualization (TurboColormap)
+    // Depth mesh disabled per user request
     if (xb.xrDepthMeshVisualizationOptions) {
         o.depth = new xb.DepthOptions(xb.xrDepthMeshVisualizationOptions);
-        o.depth.enabled = true;
+        o.depth.enabled = false;
         if (o.depth.depthMesh) {
-            o.depth.depthMesh.enabled = true;
+            o.depth.depthMesh.enabled = false;
             o.depth.depthMesh.showDebugTexture = false;
-            o.depth.depthMesh.useDepthTexture = true;
-            o.depth.depthMesh.opacity = 0.5;
+            o.depth.depthMesh.renderShadow = false;
         }
     }
 
