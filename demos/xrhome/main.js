@@ -145,7 +145,8 @@ function onXRSelectStart(event) {
     if (keypad && keypad.panel) draggables.push(keypad.panel);
     if (virtualLights && virtualLights.length > 0) {
         for (const vl of virtualLights) {
-            if (!vl.linkedNodeId && vl.panel) {
+            const isPaired = !!(vl.realDevice || vl.linkedNodeId);
+            if (!isPaired && !vl.isSelectingDevice && vl.panel) {
                 draggables.push(vl.panel);
             }
         }
@@ -197,9 +198,11 @@ function onXRSelectStart(event) {
         }
 
         // 3. Virtual Light: Move the entire VirtualLight3D group directly so position is preserved!
+        // Only allow dragging initial unpaired cards (never paired cards or device selection tree)
         if (virtualLights && virtualLights.length > 0) {
             for (const vl of virtualLights) {
-                if (vl.panel && (hit.object === vl.panel || isDescendant(hit.object, vl.panel))) {
+                const isPaired = !!(vl.realDevice || vl.linkedNodeId);
+                if (!isPaired && !vl.isSelectingDevice && vl.panel && (hit.object === vl.panel || isDescendant(hit.object, vl.panel))) {
                     if (!isInteractive(hit.object, vl.panel)) {
                         dragController = controller;
                         const objectToMove = vl; // Move group in world space
@@ -601,7 +604,7 @@ class VirtualLight3D extends THREE.Group {
       }
       
       const isPaired = !!(this.realDevice || this.linkedNodeId);
-      const canDrag = !isScanning;
+      const canDrag = !isScanning && !isPaired && !this.isSelectingDevice;
       
       this.draggable = canDrag;
       this.draggingMode = 'TRANSLATING';
