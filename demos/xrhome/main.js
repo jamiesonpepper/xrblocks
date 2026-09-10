@@ -21,7 +21,7 @@ let latestFrameBlob = null;
 let latestCameraMatrix = null;
 
 class HUDInteraction extends xb.Script {
-    onUpdate() {
+    update(time, frame) {
         if (dragController && dragController.userData.selected) {
             const objectToMove = dragController.userData.selected;
             
@@ -64,14 +64,16 @@ class HUDInteraction extends xb.Script {
                     continue;
                 }
 
-                // Pivot to face camera
+                // Pivot to face camera horizontally (upright billboard)
                 const cardWorldPos = new THREE.Vector3();
                 vl.getWorldPosition(cardWorldPos);
 
-                _dummyLookObj.position.copy(cardWorldPos);
-                _dummyLookObj.lookAt(camPos);
-
-                vl.quaternion.slerp(_dummyLookObj.quaternion, 0.08);
+                const targetPos = new THREE.Vector3(camPos.x, cardWorldPos.y, camPos.z);
+                if (cardWorldPos.distanceToSquared(targetPos) > 0.005) {
+                    _dummyLookObj.position.copy(cardWorldPos);
+                    _dummyLookObj.lookAt(targetPos);
+                    vl.quaternion.slerp(_dummyLookObj.quaternion, 0.1);
+                }
             }
         }
 
@@ -79,6 +81,10 @@ class HUDInteraction extends xb.Script {
         if (typeof scanningWeb !== 'undefined' && scanningWeb && scanningWeb.mesh && scanningWeb.mesh.visible && activeCam) {
             scanningWeb.update(activeCam);
         }
+    }
+
+    onUpdate() {
+        this.update();
     }
 }
 
@@ -452,69 +458,116 @@ function kelvinToHex(k) {
 // --- Animated Depth Mesh Scanning Web ---
 class ScanningWebEffect {
     constructor() {
-        const geom = new THREE.IcosahedronGeometry(2.4, 3);
-        const wireframeGeom = new THREE.WireframeGeometry(geom);
+        // Wide-angle hemispherical dome covering the user's active camera space
+        const geom = new THREE.SphereGeometry(3.5, 48, 36, 0, Math.PI * 2, 0, Math.PI * 0.7);
         
-        const count = wireframeGeom.attributes.position.count;
-        const colorArray = new Float32Array(count * 3);
-        wireframeGeom.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
-        
-        const mat = new THREE.LineBasicMaterial({
-            vertexColors: true,
+        const vertexShader = `
+            varying vec3 vWorldPos;
+            varying float vDist;
+            void main() {
+                vec4 wp = modelMatrix * vec4(position, 1.0);
+                vWorldPos = wp.xyz;
+                vDist = length(position);
+                gl_Position = projectionMatrix * viewMatrix * wp;
+            }
+        `;
+
+        const fragmentShader = `
+            uniform float uTime;
+            uniform float uOpacity;
+            varying vec3 vWorldPos;
+            varying float vDist;
+
+            // Google Turbo Colormap polynomial (authentic multi-color rainbow)
+            vec3 TurboColormap(in float x) {
+                const vec4 kRedVec4 = vec4(0.55305649, 3.00913185, -5.46192616, -11.11819092);
+                const vec4 kGreenVec4 = vec4(0.16207513, 0.17712472, 15.24091500, -36.50657960);
+                const vec4 kBlueVec4 = vec4(-0.05195877, 5.18000081, -30.94853351, 81.96403246);
+                const vec2 kRedVec2 = vec2(27.81927491, -14.87899417);
+                const vec2 kGreenVec2 = vec2(25.95549545, -5.02738237);
+                const vec2 kBlueVec2 = vec2(-86.53476570, 30.23299484);
+
+                vec4 v4 = vec4(1.0, x, x * x, x * x * x);
+                vec2 v2 = v4.zw * v4.z;
+                return clamp(vec3(
+                    dot(v4, kRedVec4)   + dot(v2, kRedVec2),
+                    dot(v4, kGreenVec4) + dot(v2, kGreenVec2),
+                    dot(v4, kBlueVec4)  + dot(v2, kBlueVec2)
+                ), 0.0, 1.0);
+            }
+
+            void main() {
+                // Outward traveling phasing wave across the scanning web
+                float wavePhase = fract(vDist * 0.35 - uTime * 0.8);
+                float wavePulse = smoothstep(0.0, 0.3, wavePhase) * smoothstep(1.0, 0.5, wavePhase);
+                
+                // Color shifts dynamically through Turbo Colormap spectrum
+                float colorCoord = fract(wavePhase + uTime * 0.25 + vWorldPos.y * 0.15);
+                vec3 col = TurboColormap(colorCoord);
+                
+                // Fine cybernetic grid ripple
+                float ripple = 0.6 + 0.4 * sin(vDist * 14.0 - uTime * 6.0);
+                vec3 finalColor = col * (1.3 * ripple + 0.5);
+
+                gl_FragColor = vec4(finalColor, uOpacity * (0.4 + 0.6 * wavePulse));
+            }
+        `;
+
+        this.uniforms = {
+            uTime: { value: 0 },
+            uOpacity: { value: 0.85 }
+        };
+
+        const mat = new THREE.ShaderMaterial({
+            uniforms: this.uniforms,
+            vertexShader,
+            fragmentShader,
+            wireframe: true,
             transparent: true,
-            opacity: 0.8,
             blending: THREE.AdditiveBlending,
-            depthWrite: false
+            depthWrite: false,
+            side: THREE.DoubleSide
         });
 
-        this.mesh = new THREE.LineSegments(wireframeGeom, mat);
+        this.mesh = new THREE.Mesh(geom, mat);
         this.mesh.visible = false;
         this.mesh.renderOrder = 999;
-        this.cycleTime = 0;
     }
 
     update(activeCam) {
         if (!this.mesh.visible || !activeCam) return;
         
         const camPos = new THREE.Vector3();
-        const camDir = new THREE.Vector3();
         activeCam.getWorldPosition(camPos);
-        activeCam.getWorldDirection(camDir);
-        
-        // Project 1.8m out in front of user's gaze
-        this.mesh.position.copy(camPos).add(camDir.multiplyScalar(1.8));
+        this.mesh.position.copy(camPos);
         this.mesh.quaternion.copy(activeCam.quaternion);
 
-        this.cycleTime += 0.02;
-        // Sonar expanding sweep
-        const pulse = 0.85 + 0.3 * Math.sin(this.cycleTime * 2.5);
-        this.mesh.scale.setScalar(pulse);
+        this.uniforms.uTime.value = performance.now() * 0.001;
 
-        // Animate rainbow vertex wave
-        const geom = this.mesh.geometry;
-        const pos = geom.attributes.position;
-        const col = geom.attributes.color;
-        const count = pos.count;
-
-        for (let i = 0; i < count; i++) {
-            const x = pos.getX(i);
-            const y = pos.getY(i);
-            const z = pos.getZ(i);
-            const dist = Math.sqrt(x * x + y * y + z * z);
-            const hue = ((this.cycleTime * 0.7) + (dist * 0.5) + (y * 0.25) + 1.0) % 1.0;
-            const [r, g, b] = hslToRgb(hue * 360);
-            col.setXYZ(i, r / 255, g / 255, b / 255);
+        // Also if native depthMesh exists, synchronize it
+        if (typeof xb !== 'undefined' && xb.core && xb.core.depth && xb.core.depth.depthMesh) {
+            xb.core.depth.depthMesh.visible = true;
+            if (xb.core.depth.depthMesh.material) {
+                xb.core.depth.depthMesh.material.wireframe = true;
+            }
         }
-        col.needsUpdate = true;
     }
 
     show() {
         this.mesh.visible = true;
-        this.cycleTime = 0;
+        if (typeof xb !== 'undefined' && xb.core && xb.core.depth && xb.core.depth.depthMesh) {
+            xb.core.depth.depthMesh.visible = true;
+            if (xb.core.depth.depthMesh.material) {
+                xb.core.depth.depthMesh.material.wireframe = true;
+            }
+        }
     }
 
     hide() {
         this.mesh.visible = false;
+        if (typeof xb !== 'undefined' && xb.core && xb.core.depth && xb.core.depth.depthMesh) {
+            xb.core.depth.depthMesh.visible = false;
+        }
     }
 }
 const scanningWeb = new ScanningWebEffect();
@@ -553,30 +606,6 @@ class VirtualLight3D extends THREE.Group {
   
   rebuildPanel() {
       if (this.panel) {
-          // Transfer any local displacement from dragging into the group world transform
-          const worldPos = new THREE.Vector3();
-          const worldQuat = new THREE.Quaternion();
-          this.panel.getWorldPosition(worldPos);
-          this.panel.getWorldQuaternion(worldQuat);
-          if (this.parent) {
-              this.parent.worldToLocal(worldPos);
-          }
-          if (this.position.distanceTo(worldPos) > 0.005) {
-              this.hasBeenMoved = true;
-              this.position.copy(worldPos);
-              this.quaternion.copy(worldQuat);
-              if (this.realDevice && smartHome && smartHome.saveDeviceAnchor) {
-                  smartHome.saveDeviceAnchor({
-                      id: this.realDevice.id,
-                      entity_id: this.realDevice.id,
-                      name: this.realDevice.name || this.realDevice.id,
-                      area: this.realDevice.area || 'Other',
-                      position: { x: this.position.x, y: this.position.y, z: this.position.z },
-                      quaternion: { x: this.quaternion.x, y: this.quaternion.y, z: this.quaternion.z, w: this.quaternion.w },
-                      label: this.label
-                  }).catch(e => console.warn("Update anchor error:", e));
-              }
-          }
           this.remove(this.panel);
       }
       
@@ -1330,6 +1359,18 @@ async function initApp(preloadedConfig = null) {
     o.hands.enabled = true; // Use Hands
     o.simulator.defaultMode = xb.SimulatorMode.POSE; // Or generic
 
+    // Enable WebXR Depth Mesh Visualization (TurboColormap)
+    if (xb.xrDepthMeshVisualizationOptions) {
+        o.depth = new xb.DepthOptions(xb.xrDepthMeshVisualizationOptions);
+        o.depth.enabled = true;
+        if (o.depth.depthMesh) {
+            o.depth.depthMesh.enabled = true;
+            o.depth.depthMesh.showDebugTexture = false;
+            o.depth.depthMesh.useDepthTexture = true;
+            o.depth.depthMesh.opacity = 0.5;
+        }
+    }
+
     xb.init(o);
 
     if (xb.scene && typeof scanningWeb !== 'undefined' && scanningWeb && scanningWeb.mesh) {
@@ -1338,11 +1379,12 @@ async function initApp(preloadedConfig = null) {
         xb.add(scanningWeb.mesh);
     }
 
-    // Mount custom heuristic Easter Egg
+    // Mount Scripts immediately to start per-frame loops
     const getDeps = () => ({ virtualLights, smartHome, hud, VirtualLight3D });
     xb.add(new EasterEggManager(getDeps));
+    xb.add(new HUDInteraction());
 
-    // Attach XR Interaction Listeners & Dragging Script
+    // Attach XR Controller Listeners
     setTimeout(() => {
         if (xb.renderer && xb.renderer.xr) {
             const controller0 = xb.renderer.xr.getController(0);
@@ -1360,7 +1402,6 @@ async function initApp(preloadedConfig = null) {
                 
                 console.log("XR Interaction Listeners Attached to controllers");
             }
-            xb.add(new HUDInteraction());
         }
     }, 1000);
 
