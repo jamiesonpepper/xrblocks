@@ -150,4 +150,64 @@ export class FirebaseHAIntegration {
     console.log("Unpairing HA device:", deviceId);
     return true;
   }
+
+  // --- Anchor Persistence (Firestore) ---
+  async getSavedAnchors() {
+    try {
+      const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/getAnchors');
+      if (!response.ok) throw new Error("Failed to fetch saved anchors");
+      const data = await response.json();
+      return data.anchors || [];
+    } catch (e) {
+      console.error("Failed to get saved anchors:", e);
+      return [];
+    }
+  }
+
+  async saveDeviceAnchor(anchorData) {
+    try {
+      const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/saveAnchor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(anchorData)
+      });
+      if (!response.ok) throw new Error("Failed to save device anchor");
+      const data = await response.json();
+      return data.success;
+    } catch (e) {
+      console.error("Failed to save device anchor:", e);
+      return false;
+    }
+  }
+
+  async deleteDeviceAnchor(entityId) {
+    try {
+      const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/deleteAnchor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entity_id: entityId })
+      });
+      if (!response.ok) throw new Error("Failed to delete device anchor");
+      const data = await response.json();
+      return data.success;
+    } catch (e) {
+      console.error("Failed to delete device anchor:", e);
+      return false;
+    }
+  }
+
+  async resetAllAnchors() {
+    try {
+      const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/resetAnchors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (!response.ok) throw new Error("Failed to reset anchors");
+      const data = await response.json();
+      return data.success;
+    } catch (e) {
+      console.error("Failed to reset anchors:", e);
+      return false;
+    }
+  }
 }

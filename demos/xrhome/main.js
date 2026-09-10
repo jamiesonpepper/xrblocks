@@ -9,6 +9,7 @@ import { EasterEggManager } from './managers.js';
 // XR Interaction Logic
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
+const _dummyLookObj = new THREE.Object3D();
 
 // Drag State
 let dragController = null;
@@ -34,11 +35,49 @@ class HUDInteraction extends xb.Script {
             const v = dragOffset.clone().applyQuaternion(cQuat);
             objectToMove.position.copy(cPos).add(v);
             
-            // Lock rotation to face user or keep relative? Keep relative to controller is naturally easiest for "grabbing"
+            // Lock rotation to controller
             objectToMove.quaternion.copy(cQuat).multiply(dragQuaternion);
             
             // Force Panel Matrix World sync to ensure hitting raycasts align with visible location immediately
             if (objectToMove.updateMatrixWorld) objectToMove.updateMatrixWorld(true);
+        }
+
+        // --- Card Pivoting: UICards smoothly pivot to always face the camera/user ---
+        let activeCam = null;
+        try {
+            if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                activeCam = xb.renderer.xr.getCamera();
+            } else if (xb.camera) {
+                activeCam = xb.camera;
+            } else if (typeof camera !== 'undefined' && camera) {
+                activeCam = camera;
+            }
+        } catch (e) {}
+
+        if (activeCam && virtualLights && virtualLights.length > 0) {
+            const camPos = new THREE.Vector3();
+            activeCam.getWorldPosition(camPos);
+
+            for (const vl of virtualLights) {
+                // If actively dragging this card, skip pivoting so the drag feels natural
+                if (dragController && dragController.userData && (dragController.userData.selected === vl || dragController.userData.selected === vl.panel)) {
+                    continue;
+                }
+
+                // Pivot to face camera
+                const cardWorldPos = new THREE.Vector3();
+                vl.getWorldPosition(cardWorldPos);
+
+                _dummyLookObj.position.copy(cardWorldPos);
+                _dummyLookObj.lookAt(camPos);
+
+                vl.quaternion.slerp(_dummyLookObj.quaternion, 0.08);
+            }
+        }
+
+        // --- Animated Depth Mesh Scanning Web ---
+        if (typeof scanningWeb !== 'undefined' && scanningWeb && scanningWeb.mesh && scanningWeb.mesh.visible && activeCam) {
+            scanningWeb.update(activeCam);
         }
     }
 }
@@ -138,10 +177,10 @@ function onXRSelectStart(event) {
             }
         }
 
-        // 3. Unlinked Virtual Light: Move the entire VirtualLight3D group directly so position is preserved!
+        // 3. Virtual Light: Move the entire VirtualLight3D group directly so position is preserved!
         if (virtualLights && virtualLights.length > 0) {
             for (const vl of virtualLights) {
-                if (!vl.linkedNodeId && vl.panel && (hit.object === vl.panel || isDescendant(hit.object, vl.panel))) {
+                if (vl.panel && (hit.object === vl.panel || isDescendant(hit.object, vl.panel))) {
                     if (!isInteractive(hit.object, vl.panel)) {
                         dragController = controller;
                         const objectToMove = vl; // Move group in world space
@@ -165,7 +204,32 @@ function onXRSelectStart(event) {
 
 function onXRSelectEnd(event) {
     if (dragController === event.target) {
+        const selected = dragController.userData ? dragController.userData.selected : null;
         dragController = null;
+
+        if (selected) {
+            let targetVL = null;
+            if (typeof VirtualLight3D !== 'undefined' && selected instanceof VirtualLight3D) {
+                targetVL = selected;
+            } else if (virtualLights) {
+                targetVL = virtualLights.find(vl => vl.panel === selected || vl === selected);
+            }
+
+            if (targetVL && targetVL.realDevice && smartHome && smartHome.saveDeviceAnchor) {
+                const dev = targetVL.realDevice;
+                smartHome.saveDeviceAnchor({
+                    id: dev.id,
+                    entity_id: dev.id,
+                    name: dev.name || dev.id,
+                    area: dev.area || 'Other',
+                    position: { x: targetVL.position.x, y: targetVL.position.y, z: targetVL.position.z },
+                    quaternion: { x: targetVL.quaternion.x, y: targetVL.quaternion.y, z: targetVL.quaternion.z, w: targetVL.quaternion.w },
+                    label: targetVL.label
+                }).then(() => {
+                    console.log(`[Persistence] Updated anchor after drag for ${dev.id}`);
+                }).catch(e => console.warn("Save anchor after drag error:", e));
+            }
+        }
     }
 }
 
@@ -195,13 +259,13 @@ function onXRSelect(event) {
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=25';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=25';
+import { VisionManager } from './vision.js?v=26';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=26';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=25';
-import { VirtualKeypad } from './keypad.js?v=25';
+import { HUDManager } from './hud.js?v=26';
+import { VirtualKeypad } from './keypad.js?v=26';
 
 // Globals
 const auth = new AuthManager();
@@ -217,6 +281,37 @@ const SCAN_INTERVAL = 30000;
 const hud = new HUDManager();
 // Wire up HUD Scan Event
 hud.onScanToggle = () => toggleScan();
+hud.onResetPairings = async () => {
+    hud.speak("Clearing all saved pairings...");
+    hud.log("Clearing pairings...", '#FFFFFF');
+    try {
+        if (smartHome && smartHome.resetAllAnchors) {
+            await smartHome.resetAllAnchors();
+        }
+        
+        // Remove paired virtual lights from scene
+        const remaining = [];
+        for (const vl of virtualLights) {
+            if (vl.realDevice || vl.linkedNodeId) {
+                if (vl.parent) {
+                    vl.parent.remove(vl);
+                } else if (xb.scene) {
+                    xb.scene.remove(vl);
+                } else if (xb.remove) {
+                    xb.remove(vl);
+                }
+            } else {
+                remaining.push(vl);
+            }
+        }
+        virtualLights = remaining;
+        hud.speak("All pairings cleared.");
+        hud.log("All pairings cleared.", '#FFFFFF');
+    } catch (err) {
+        console.error("Reset pairings error:", err);
+        hud.log("Error clearing pairings", '#FF5555');
+    }
+};
 
 const keypad = new VirtualKeypad();
 let videoPlane = null;
@@ -354,6 +449,76 @@ function kelvinToHex(k) {
     return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
+// --- Animated Depth Mesh Scanning Web ---
+class ScanningWebEffect {
+    constructor() {
+        const geom = new THREE.IcosahedronGeometry(2.4, 3);
+        const wireframeGeom = new THREE.WireframeGeometry(geom);
+        
+        const count = wireframeGeom.attributes.position.count;
+        const colorArray = new Float32Array(count * 3);
+        wireframeGeom.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
+        
+        const mat = new THREE.LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        this.mesh = new THREE.LineSegments(wireframeGeom, mat);
+        this.mesh.visible = false;
+        this.mesh.renderOrder = 999;
+        this.cycleTime = 0;
+    }
+
+    update(activeCam) {
+        if (!this.mesh.visible || !activeCam) return;
+        
+        const camPos = new THREE.Vector3();
+        const camDir = new THREE.Vector3();
+        activeCam.getWorldPosition(camPos);
+        activeCam.getWorldDirection(camDir);
+        
+        // Project 1.8m out in front of user's gaze
+        this.mesh.position.copy(camPos).add(camDir.multiplyScalar(1.8));
+        this.mesh.quaternion.copy(activeCam.quaternion);
+
+        this.cycleTime += 0.02;
+        // Sonar expanding sweep
+        const pulse = 0.85 + 0.3 * Math.sin(this.cycleTime * 2.5);
+        this.mesh.scale.setScalar(pulse);
+
+        // Animate rainbow vertex wave
+        const geom = this.mesh.geometry;
+        const pos = geom.attributes.position;
+        const col = geom.attributes.color;
+        const count = pos.count;
+
+        for (let i = 0; i < count; i++) {
+            const x = pos.getX(i);
+            const y = pos.getY(i);
+            const z = pos.getZ(i);
+            const dist = Math.sqrt(x * x + y * y + z * z);
+            const hue = ((this.cycleTime * 0.7) + (dist * 0.5) + (y * 0.25) + 1.0) % 1.0;
+            const [r, g, b] = hslToRgb(hue * 360);
+            col.setXYZ(i, r / 255, g / 255, b / 255);
+        }
+        col.needsUpdate = true;
+    }
+
+    show() {
+        this.mesh.visible = true;
+        this.cycleTime = 0;
+    }
+
+    hide() {
+        this.mesh.visible = false;
+    }
+}
+const scanningWeb = new ScanningWebEffect();
+
 // --- 3D Virtual Light (AR/XR) ---
 class VirtualLight3D extends THREE.Group {
   constructor(geminiData, labelText, width = 0.36, height = 0.5) {
@@ -400,12 +565,23 @@ class VirtualLight3D extends THREE.Group {
               this.hasBeenMoved = true;
               this.position.copy(worldPos);
               this.quaternion.copy(worldQuat);
+              if (this.realDevice && smartHome && smartHome.saveDeviceAnchor) {
+                  smartHome.saveDeviceAnchor({
+                      id: this.realDevice.id,
+                      entity_id: this.realDevice.id,
+                      name: this.realDevice.name || this.realDevice.id,
+                      area: this.realDevice.area || 'Other',
+                      position: { x: this.position.x, y: this.position.y, z: this.position.z },
+                      quaternion: { x: this.quaternion.x, y: this.quaternion.y, z: this.quaternion.z, w: this.quaternion.w },
+                      label: this.label
+                  }).catch(e => console.warn("Update anchor error:", e));
+              }
           }
           this.remove(this.panel);
       }
       
       const isPaired = !!(this.realDevice || this.linkedNodeId);
-      const canDrag = !isPaired && !isScanning;
+      const canDrag = !isScanning;
       
       this.draggable = canDrag;
       this.draggingMode = 'TRANSLATING';
@@ -693,6 +869,10 @@ class VirtualLight3D extends THREE.Group {
                     hud.speak("Device Unpaired.");
                     hud.log("Unpaired & Removed.", '#FFFFFF');
                     
+                    if (smartHome && smartHome.deleteDeviceAnchor) {
+                        smartHome.deleteDeviceAnchor(devId).catch(e => console.warn("Cloud anchor remove error:", e));
+                    }
+                    
                     if (auth.db && auth.user) {
                         try {
                             const ref = auth.db.ref(`users/${auth.user.uid}/anchors/${devId.replace(/\./g, '_')}`);
@@ -901,18 +1081,21 @@ class VirtualLight3D extends THREE.Group {
           this.label = this.labelText;
           this.isSelectingDevice = false;
           
-          if (auth.db && auth.user) {
+          if (smartHome && smartHome.saveDeviceAnchor) {
               const pos = this.position;
               const quat = this.quaternion;
-              const ref = auth.db.ref(`users/${auth.user.uid}/anchors/${deviceId.replace(/\./g, '_')}`);
-              ref.set({
+              smartHome.saveDeviceAnchor({
+                  id: deviceId,
+                  entity_id: deviceId,
+                  name: device.name || deviceId,
+                  area: device.area || 'Other',
                   position: { x: pos.x, y: pos.y, z: pos.z },
                   quaternion: { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
-                  timestamp: firebase.database.ServerValue.TIMESTAMP
-              }).then(() => {
-                  hud.log(`Saved coordinates`, '#FFFFFF');
+                  label: this.label
+              }).then(saved => {
+                  if (saved) hud.log(`Saved coordinates: ${deviceId}`, '#FFFFFF');
               }).catch(err => {
-                  console.error("Failed to save anchor", err);
+                  console.warn("Failed to save anchor", err);
               });
           }
           
@@ -1149,6 +1332,12 @@ async function initApp(preloadedConfig = null) {
 
     xb.init(o);
 
+    if (xb.scene && typeof scanningWeb !== 'undefined' && scanningWeb && scanningWeb.mesh) {
+        xb.scene.add(scanningWeb.mesh);
+    } else if (xb.add && typeof scanningWeb !== 'undefined' && scanningWeb && scanningWeb.mesh) {
+        xb.add(scanningWeb.mesh);
+    }
+
     // Mount custom heuristic Easter Egg
     const getDeps = () => ({ virtualLights, smartHome, hud, VirtualLight3D });
     xb.add(new EasterEggManager(getDeps));
@@ -1224,6 +1413,9 @@ async function initApp(preloadedConfig = null) {
     const activeGeminiKey = auth.config.geminiKey || apiConfig.geminiKey;
     vision.init(activeGeminiKey);
     startVisionLoop();
+
+    // 7. Load saved pairings from Firestore Native
+    await loadSavedAnchors();
 }
 
 function startVisionLoop() {
@@ -1397,6 +1589,71 @@ function startVisionLoop() {
     // Voice Command Setup removed
 }
 
+// --- Firestore Anchor Restoration ---
+async function loadSavedAnchors() {
+    if (!smartHome || !smartHome.getSavedAnchors) return;
+    try {
+        console.log("[Persistence] Checking Firestore for saved anchors...");
+        const anchors = await smartHome.getSavedAnchors();
+        if (!anchors || anchors.length === 0) {
+            console.log("[Persistence] No saved anchors found.");
+            return;
+        }
+
+        console.log(`[Persistence] Loaded ${anchors.length} saved anchors:`, anchors);
+        let restoredCount = 0;
+
+        for (const anchor of anchors) {
+            const devId = anchor.id || anchor.entity_id;
+            if (!devId) continue;
+
+            const existing = virtualLights.find(vl => vl.linkedNodeId === devId);
+            if (existing) continue;
+
+            const device = (smartHome.devices && smartHome.devices.get(devId)) || {
+                id: devId,
+                name: anchor.name || devId,
+                area: anchor.area || 'Other',
+                isOn: false
+            };
+
+            const label = anchor.name || anchor.label || device.name || devId;
+            const mockGemini = { xmin: 0.4, xmax: 0.6, ymin: 0.4, ymax: 0.6 };
+            const vLight = new VirtualLight3D(mockGemini, label, 0.36, 0.5);
+
+            if (anchor.position) {
+                vLight.position.set(anchor.position.x, anchor.position.y, anchor.position.z);
+            }
+            if (anchor.quaternion) {
+                vLight.quaternion.set(anchor.quaternion.x, anchor.quaternion.y, anchor.quaternion.z, anchor.quaternion.w);
+            }
+
+            vLight.unpaired = false;
+            vLight.linkedNodeId = devId;
+            vLight.realDevice = device;
+            vLight.labelText = label;
+            vLight.label = label;
+            vLight.hasBeenMoved = true;
+            vLight.updateVisuals();
+
+            virtualLights.push(vLight);
+            if (xb.scene) {
+                xb.scene.add(vLight);
+            } else if (xb.add) {
+                xb.add(vLight);
+            }
+            restoredCount++;
+        }
+
+        if (restoredCount > 0) {
+            hud.speak(`Restored ${restoredCount} saved devices.`);
+            hud.log(`Restored ${restoredCount} saved devices`, '#FFFFFF');
+        }
+    } catch (e) {
+        console.warn("[Persistence] Error loading saved anchors:", e);
+    }
+}
+
 // Keep-alive reference for AR Video frames
 let hiddenCameraKeepalive = null;
 
@@ -1501,6 +1758,9 @@ async function toggleScan() {
 
         // 2. Enable Scanning (Now safe)
         isScanning = true;
+        if (typeof scanningWeb !== 'undefined' && scanningWeb) {
+            scanningWeb.show();
+        }
         
         // Update all visual lights to toggle draggability OFF
         virtualLights.forEach(vl => vl.updateVisuals());
@@ -1513,6 +1773,9 @@ async function toggleScan() {
     } else {
         // --- STOPPING SCAN ---
         isScanning = false;
+        if (typeof scanningWeb !== 'undefined' && scanningWeb) {
+            scanningWeb.hide();
+        }
         
         // Anchor cleanup moved to STARTING SCAN so anchors persist for pairing
         

@@ -22,6 +22,8 @@ export class HUDManager {
         // 3D UI Refs
         this.statusText = null;
         this.scanButton = null;
+        this.clearPairingsButton = null;
+        this.onResetPairings = null;
         this.logGrid = null;
     }
 
@@ -196,6 +198,26 @@ export class HUDManager {
             children: logChildren
         });
 
+        const actionButtons = [this.scanButton];
+        if (this.isMenuExpanded) {
+            this.clearPairingsButton = new xb.UIButton({
+                label: "CLEAR PAIRINGS",
+                icon: "delete_sweep",
+                style: {
+                    width: '100%',
+                    height: 38,
+                    borderRadius: 12,
+                    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                    borderWidth: 1,
+                    borderColor: 'rgba(255, 255, 255, 0.6)',
+                },
+                onClick: () => {
+                    if (this.onResetPairings) this.onResetPairings();
+                }
+            });
+            actionButtons.push(this.clearPairingsButton);
+        }
+
         this.panel = new xb.UICard({
             size: { width: 0.54, height: 'auto' },
             manipulation: true,
@@ -211,7 +233,7 @@ export class HUDManager {
             children: [
                 headerRow,
                 logPanel,
-                this.scanButton
+                ...actionButtons
             ]
         });
 

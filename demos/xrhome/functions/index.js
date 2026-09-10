@@ -1,4 +1,12 @@
 const functions = require("firebase-functions/v1");
+const admin = require("firebase-admin");
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+const { getFirestore } = require("firebase-admin/firestore");
+// Target the Native Firestore database for XRHome
+const db = getFirestore("ai-studio-8ca7d151-310e-4e21-b325-b8b7ea3b1886");
 
 exports.getConfig = functions.https.onRequest((req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
@@ -8,7 +16,7 @@ exports.getConfig = functions.https.onRequest((req, res) => {
   });
 });
 
-// Helper to make Home Assistant REST API calls
+// Helper to make Home Assistant REST API calls with retries on transient connection drops
 async function callHaApi(endpoint, method = 'GET', body = null) {
   const haUrl = process.env.HA_URL;
   const haToken = process.env.HA_TOKEN;
@@ -19,25 +27,39 @@ async function callHaApi(endpoint, method = 'GET', body = null) {
 
   const url = `${haUrl.replace(/\/$/, '')}${endpoint}`;
   
-  const options = {
-    method,
-    headers: {
-      'Authorization': `Bearer ${haToken}`,
-      'Content-Type': 'application/json',
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const options = {
+        method,
+        headers: {
+          'Authorization': `Bearer ${haToken}`,
+          'Content-Type': 'application/json',
+          'Connection': 'close',
+        }
+      };
+
+      if (body) {
+        options.body = JSON.stringify(body);
+      }
+
+      const response = await fetch(url, options);
+      
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`HA API Error: ${response.status} ${response.statusText} ${errorText}`);
+      }
+
+      return await response.json();
+    } catch (err) {
+      lastError = err;
+      console.warn(`callHaApi attempt ${attempt} failed:`, err.message || err);
+      if (attempt < 3) {
+        await new Promise(resolve => setTimeout(resolve, 200 * attempt));
+      }
     }
-  };
-
-  if (body) {
-    options.body = JSON.stringify(body);
   }
-
-  const response = await fetch(url, options);
-  
-  if (!response.ok) {
-    throw new Error(`HA API Error: ${response.status} ${response.statusText}`);
-  }
-
-  return response.json();
+  throw lastError;
 }
 
 // 1. Fetch devices from Home Assistant
@@ -69,7 +91,8 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${process.env.HA_TOKEN}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Connection': 'close'
         },
         body: JSON.stringify({ template: templateQuery })
       });
@@ -135,6 +158,116 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
     return res.status(200).json({ success: true, result });
   } catch (error) {
     console.error("controlHaDevice Error:", error);
+    return res.status(500).json({ error: error.message || error });
+  }
+});
+
+// 3. Firestore Anchor Persistence Endpoints
+
+// Get all saved anchors
+exports.getAnchors = functions.https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+  
+  if (req.method === "OPTIONS") {
+    return res.status(204).send("");
+  }
+
+  try {
+    const snapshot = await db.collection("anchors").get();
+    const anchors = [];
+    snapshot.forEach(doc => {
+      anchors.push({ id: doc.id, ...doc.data() });
+    });
+    return res.status(200).json({ anchors });
+  } catch (error) {
+    console.error("getAnchors Error:", error);
+    return res.status(500).json({ error: error.message || error });
+  }
+});
+
+// Save or update an anchor
+exports.saveAnchor = functions.https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+  
+  if (req.method === "OPTIONS") {
+    return res.status(204).send("");
+  }
+
+  const anchorData = req.body || {};
+  const docId = anchorData.id || anchorData.entity_id;
+
+  if (!docId) {
+    return res.status(400).json({ error: "Missing anchor id or entity_id." });
+  }
+
+  try {
+    await db.collection("anchors").doc(docId).set({
+      ...anchorData,
+      id: docId,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    return res.status(200).json({ success: true, id: docId });
+  } catch (error) {
+    console.error("saveAnchor Error:", error);
+    return res.status(500).json({ error: error.message || error });
+  }
+});
+
+// Delete a specific anchor
+exports.deleteAnchor = functions.https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST, DELETE, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+  
+  if (req.method === "OPTIONS") {
+    return res.status(204).send("");
+  }
+
+  const { id, entity_id } = req.body || {};
+  const docId = id || entity_id;
+
+  if (!docId) {
+    return res.status(400).json({ error: "Missing anchor id or entity_id." });
+  }
+
+  try {
+    await db.collection("anchors").doc(docId).delete();
+    return res.status(200).json({ success: true, deleted: docId });
+  } catch (error) {
+    console.error("deleteAnchor Error:", error);
+    return res.status(500).json({ error: error.message || error });
+  }
+});
+
+// Reset / wipe all saved anchors
+exports.resetAnchors = functions.https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+  
+  if (req.method === "OPTIONS") {
+    return res.status(204).send("");
+  }
+
+  try {
+    const snapshot = await db.collection("anchors").get();
+    if (snapshot.empty) {
+      return res.status(200).json({ success: true, count: 0 });
+    }
+
+    const batch = db.batch();
+    snapshot.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
+
+    return res.status(200).json({ success: true, count: snapshot.size });
+  } catch (error) {
+    console.error("resetAnchors Error:", error);
     return res.status(500).json({ error: error.message || error });
   }
 });
