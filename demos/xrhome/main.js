@@ -195,13 +195,13 @@ function onXRSelect(event) {
 import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=24';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=24';
+import { VisionManager } from './vision.js?v=25';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=25';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=24';
-import { VirtualKeypad } from './keypad.js?v=24';
+import { HUDManager } from './hud.js?v=25';
+import { VirtualKeypad } from './keypad.js?v=25';
 
 // Globals
 const auth = new AuthManager();
@@ -455,10 +455,8 @@ class VirtualLight3D extends THREE.Group {
           cardChildren.push(btn);
       } else {
           // --- PAIRED UI ---
-          // 1. Power Toggle & Unpair (Clean, guaranteed visible icons and text)
+          // 1. Power Toggle & Unpair (Equal size buttons with clean icons and text)
           const toggleBtn = new xb.UIButton({
-              label: isOn ? 'ON' : 'OFF',
-              icon: 'power_settings_new',
               ariaLabel: isOn ? 'Turn Off' : 'Turn On',
               userData: { interactive: true },
               style: {
@@ -468,28 +466,49 @@ class VirtualLight3D extends THREE.Group {
                   backgroundColor: isOn ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.12)',
                   borderWidth: 1,
                   borderColor: isOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.5)',
-                  fontSize: 14,
-                  fontWeight: 'bold',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
               },
+              children: [
+                  new xb.UIIcon({
+                      icon: 'power_settings_new',
+                      style: { width: 18, height: 18, color: '#FFFFFF' }
+                  }),
+                  new xb.UIText({
+                      text: isOn ? 'ON' : 'OFF',
+                      style: { fontSize: 14, fontWeight: 'bold', color: '#FFFFFF' }
+                  })
+              ],
               onClick: () => this.toggle()
           });
 
           const unpairBtn = new xb.UIButton({
-              label: 'Unpair',
-              icon: 'link_off',
               ariaLabel: 'Unpair device',
               userData: { interactive: true },
               style: {
-                  width: 96,
+                  flexGrow: 1,
                   height: 36,
                   borderRadius: 8,
                   backgroundColor: 'rgba(255, 255, 255, 0.16)',
                   borderWidth: 1,
                   borderColor: '#FFFFFF',
-                  fontSize: 13,
-                  fontWeight: 'bold',
-                  color: '#FFFFFF',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
               },
+              children: [
+                  new xb.UIIcon({
+                      icon: 'link_off',
+                      style: { width: 18, height: 18, color: '#FFFFFF' }
+                  }),
+                  new xb.UIText({
+                      text: 'Unpair',
+                      style: { fontSize: 14, fontWeight: 'bold', color: '#FFFFFF' }
+                  })
+              ],
               onClick: () => this.handleConfigClick()
           });
           
@@ -532,7 +551,7 @@ class VirtualLight3D extends THREE.Group {
               }
           });
           const rainbowLabel = new xb.UIText({
-              text: `🌈 Color (${this.currentHue !== undefined ? this.currentHue : 0}°)`,
+              text: '🌈 Color',
               style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' }
           });
           const rainbowHeader = new xb.UIPanel({
@@ -559,7 +578,6 @@ class VirtualLight3D extends THREE.Group {
                   this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
                   labelText.style.color = this.stateColor;
                   colorIndicator.style.backgroundColor = this.stateColor;
-                  rainbowLabel.text = `🌈 Color (${this.currentHue}°)`;
               },
               onChange: (val) => {
                   this.currentHue = Math.round(val);
@@ -810,14 +828,17 @@ class VirtualLight3D extends THREE.Group {
                   const dev = item.device;
                   bodyChildren.push(new xb.UIButton({
                       label: `  • ${dev.name || dev.id}`,
+                      userData: { interactive: true },
                       style: {
                           width: '100%',
-                          height: 32,
+                          height: 34,
                           borderRadius: 6,
                           backgroundColor: 'rgba(255, 255, 255, 0.08)',
                           borderWidth: 1,
                           borderColor: 'rgba(255, 255, 255, 0.35)',
-                          fontSize: 13,
+                          fontSize: 14,
+                          fontWeight: 'bold',
+                          color: '#FFFFFF',
                       },
                       onClick: () => this.pairWithDevice(dev.id)
                   }));
