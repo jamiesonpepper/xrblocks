@@ -282,7 +282,7 @@ import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
 import { VisionManager } from './vision.js?v=26';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=26';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=38';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
@@ -566,12 +566,27 @@ class ScanningWebEffect {
 }
 const scanningWeb = new ScanningWebEffect();
 
-// --- 3D Virtual Light (AR/XR) ---
+// Category icon helper for smart appliances and devices
+function getCategoryIcon(cat, domain) {
+    const key = (domain || cat || '').toLowerCase();
+    if (key.includes('lock')) return 'lock';
+    if (key.includes('vacuum') || key.includes('roborock') || key.includes('roomba')) return 'cleaning_services';
+    if (key.includes('dish')) return 'kitchen';
+    if (key.includes('oven') || key.includes('stove') || key.includes('range')) return 'microwave';
+    if (key.includes('washer') || key.includes('dryer') || key.includes('laundry')) return 'local_laundry_service';
+    if (key.includes('climate') || key.includes('thermostat')) return 'thermostat';
+    if (key.includes('media') || key.includes('tv')) return 'tv';
+    if (key.includes('switch') || key.includes('plug')) return 'toggle_on';
+    return 'lightbulb';
+}
+
+// --- 3D Virtual Device / Light (AR/XR) ---
 class VirtualLight3D extends THREE.Group {
   constructor(geminiData, labelText, width = 0.36, height = 0.5) {
       super();
       this.geminiData = geminiData; // Keep for xmin/xmax/ymin/ymax
-      this.originalLabel = labelText || "Light";
+      this.category = (geminiData && geminiData.category) || 'light';
+      this.originalLabel = labelText || (this.category ? `Smart ${this.category.charAt(0).toUpperCase() + this.category.slice(1)}` : "Device");
       this.labelText = this.originalLabel;
       this.label = this.labelText; // Alias for pairing logic
       this.isOn = false;
@@ -583,6 +598,7 @@ class VirtualLight3D extends THREE.Group {
       this.isSelectingDevice = false;
       this.devicePage = 0;
       this.expandedAreas = new Set();
+      this.hasCollapsedRecommended = false;
       this.hasBeenMoved = false;
 
       // 3. Label + Interface (UICard)
@@ -616,22 +632,69 @@ class VirtualLight3D extends THREE.Group {
       }
       
       const isOn = this.isOn;
-      // Do not use yellow or green anymore; default to clean white
       const stateColor = this.stateColor !== undefined ? this.stateColor : '#FFFFFF';
       
-      const labelText = new xb.UIText({
-          text: this.labelText,
+      const domain = (this.realDevice && this.realDevice.domain) ? this.realDevice.domain : (this.realDevice && this.realDevice.id ? this.realDevice.id.split('.')[0] : (this.category || 'light'));
+      const cat = (this.category || domain || 'light').toLowerCase();
+      const catIcon = getCategoryIcon(cat, domain);
+
+      // Card Header: Category Icon + Device Label
+      const headerRow = new xb.UIPanel({
           style: {
-              fontSize: 17,
-              fontWeight: 'bold',
-              color: stateColor,
-              textAlign: 'center',
               width: '100%',
-          }
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+          },
+          children: [
+              new xb.UIIcon({
+                  icon: catIcon,
+                  style: { width: 20, height: 20, color: stateColor }
+              }),
+              new xb.UIText({
+                  text: this.labelText,
+                  style: {
+                      fontSize: 17,
+                      fontWeight: 'bold',
+                      color: stateColor,
+                      textAlign: 'center',
+                  }
+              })
+          ]
       });
-      
-      const cardChildren = [labelText];
-      
+
+      const cardChildren = [headerRow];
+
+      // Reusable Unpair Button
+      const makeUnpairBtn = () => new xb.UIButton({
+          ariaLabel: 'Unpair device',
+          userData: { interactive: true },
+          style: {
+              width: '100%',
+              height: 36,
+              borderRadius: 8,
+              backgroundColor: 'rgba(255, 255, 255, 0.16)',
+              borderWidth: 1,
+              borderColor: '#FFFFFF',
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+          },
+          children: [
+              new xb.UIIcon({
+                  icon: 'link_off',
+                  style: { width: 18, height: 18, color: '#FFFFFF' }
+              }),
+              new xb.UIText({
+                  text: 'Unpair',
+                  style: { fontSize: 14, fontWeight: 'bold', color: '#FFFFFF' }
+              })
+          ],
+          onClick: () => this.handleConfigClick()
+      });
+
       if (!isPaired) {
           // --- UNPAIRED UI ---
           const btn = new xb.UIButton({
@@ -652,8 +715,533 @@ class VirtualLight3D extends THREE.Group {
               onClick: () => this.handleConfigClick()
           });
           cardChildren.push(btn);
+      } else if (domain === 'lock' || cat === 'lock') {
+          // --- DOOR LOCK UI ---
+          const lockState = (this.realDevice?.state || 'locked').toLowerCase();
+          const isLocked = lockState === 'locked';
+          const isJammed = lockState === 'jammed';
+          const statusColor = isJammed ? '#FFCC00' : (isLocked ? '#00FF88' : '#FF5555');
+          const statusBg = isJammed ? 'rgba(255, 204, 0, 0.2)' : (isLocked ? 'rgba(0, 255, 136, 0.2)' : 'rgba(255, 85, 85, 0.2)');
+          const statusText = isJammed ? '⚠️ JAMMED' : (isLocked ? '🔒 LOCKED' : '🔓 UNLOCKED');
+
+          const statusRowChildren = [
+              new xb.UIPanel({
+                  style: {
+                      padding: 8,
+                      borderRadius: 8,
+                      backgroundColor: statusBg,
+                      borderWidth: 1,
+                      borderColor: statusColor,
+                      flexGrow: 1,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                  },
+                  children: [
+                      new xb.UIText({ text: statusText, style: { fontSize: 13, fontWeight: 'bold', color: statusColor } })
+                  ]
+              })
+          ];
+
+          if (this.realDevice?.battery !== null && this.realDevice?.battery !== undefined) {
+              statusRowChildren.push(new xb.UIPanel({
+                  style: {
+                      padding: 6,
+                      borderRadius: 8,
+                      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                      borderWidth: 1,
+                      borderColor: 'rgba(255, 255, 255, 0.4)',
+                  },
+                  children: [
+                      new xb.UIText({ text: `🔋 ${this.realDevice?.battery}%`, style: { fontSize: 13, color: '#FFFFFF' } })
+                  ]
+              }));
+          }
+
+          cardChildren.push(new xb.UIPanel({
+              style: { width: '100%', flexDirection: 'row', gap: 6, alignItems: 'center' },
+              children: statusRowChildren
+          }));
+
+          const lockActionBtn = new xb.UIButton({
+              ariaLabel: isLocked ? 'Unlock Door' : 'Lock Door',
+              userData: { interactive: true },
+              style: {
+                  width: '100%',
+                  height: 42,
+                  borderRadius: 10,
+                  backgroundColor: isLocked ? 'rgba(255, 85, 85, 0.25)' : 'rgba(0, 255, 136, 0.25)',
+                  borderWidth: 1.5,
+                  borderColor: isLocked ? '#FF5555' : '#00FF88',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+              },
+              children: [
+                  new xb.UIIcon({
+                      icon: isLocked ? 'lock_open' : 'lock',
+                      style: { width: 22, height: 22, color: '#FFFFFF' }
+                  }),
+                  new xb.UIText({
+                      text: isLocked ? 'Unlock Door' : 'Lock Door',
+                      style: { fontSize: 15, fontWeight: 'bold', color: '#FFFFFF' }
+                  })
+              ],
+              onClick: () => this.toggleLock()
+          });
+
+          cardChildren.push(lockActionBtn);
+          cardChildren.push(makeUnpairBtn());
+
+      } else if (domain === 'vacuum' || cat === 'vacuum') {
+          // --- ROBOT VACUUM & DOCK UI ---
+          const vacState = (this.realDevice?.state || 'docked').toUpperCase();
+          const isCleaning = (this.realDevice?.state === 'cleaning');
+          const isDocked = (this.realDevice?.state === 'docked');
+          const statusColor = isCleaning ? '#00FF88' : (isDocked ? '#00DDFF' : '#FFCC00');
+
+          const statusRow = new xb.UIPanel({
+              style: { width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 6 },
+              children: [
+                  new xb.UIPanel({
+                      style: {
+                          padding: 6,
+                          borderRadius: 8,
+                          backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                          borderWidth: 1,
+                          borderColor: statusColor,
+                      },
+                      children: [
+                          new xb.UIText({ text: `🌀 ${vacState}`, style: { fontSize: 12, fontWeight: 'bold', color: statusColor } })
+                      ]
+                  }),
+                  new xb.UIPanel({
+                      style: {
+                          padding: 6,
+                          borderRadius: 8,
+                          backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                          borderWidth: 1,
+                          borderColor: 'rgba(255, 255, 255, 0.4)',
+                      },
+                      children: [
+                          new xb.UIText({ text: `🔋 ${this.realDevice?.battery ?? 100}%`, style: { fontSize: 12, color: '#FFFFFF' } })
+                      ]
+                  })
+              ]
+          });
+          cardChildren.push(statusRow);
+
+          // Primary Controls: Start/Pause, Dock, Spot
+          const startBtn = new xb.UIButton({
+              ariaLabel: isCleaning ? 'Pause Vacuum' : 'Start Vacuum',
+              userData: { interactive: true },
+              style: {
+                  flexGrow: 2,
+                  height: 36,
+                  borderRadius: 8,
+                  backgroundColor: isCleaning ? 'rgba(255, 204, 0, 0.25)' : 'rgba(0, 255, 136, 0.25)',
+                  borderWidth: 1,
+                  borderColor: '#FFFFFF',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6
+              },
+              children: [
+                  new xb.UIIcon({ icon: isCleaning ? 'pause' : 'play_arrow', style: { width: 18, height: 18, color: '#FFFFFF' } }),
+                  new xb.UIText({ text: isCleaning ? 'Pause' : 'Clean', style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
+              ],
+              onClick: () => this.toggleVacuum()
+          });
+
+          const dockBtn = new xb.UIButton({
+              ariaLabel: 'Dock Vacuum',
+              userData: { interactive: true },
+              style: {
+                  flexGrow: 1,
+                  height: 36,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.14)',
+                  borderWidth: 1,
+                  borderColor: '#FFFFFF',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 4
+              },
+              children: [
+                  new xb.UIIcon({ icon: 'home', style: { width: 18, height: 18, color: '#FFFFFF' } }),
+                  new xb.UIText({ text: 'Dock', style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
+              ],
+              onClick: () => this.dockVacuum()
+          });
+
+          const spotBtn = new xb.UIButton({
+              ariaLabel: 'Spot Clean Vacuum',
+              userData: { interactive: true },
+              style: {
+                  flexGrow: 1,
+                  height: 36,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.14)',
+                  borderWidth: 1,
+                  borderColor: '#FFFFFF',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 4
+              },
+              children: [
+                  new xb.UIIcon({ icon: 'center_focus_strong', style: { width: 16, height: 16, color: '#FFFFFF' } }),
+                  new xb.UIText({ text: 'Spot', style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
+              ],
+              onClick: () => this.spotCleanVacuum()
+          });
+
+          cardChildren.push(new xb.UIPanel({
+              style: { width: '100%', flexDirection: 'row', gap: 6 },
+              children: [startBtn, dockBtn, spotBtn]
+          }));
+
+          // Dock Station Empty Dustbin Action - ONLY render if obtained from HA
+          if (this.realDevice?.attributes && this.realDevice.attributes.dock_empty_entity) {
+              const emptyDustbinBtn = new xb.UIButton({
+                  ariaLabel: 'Empty Dustbin (Dock)',
+                  userData: { interactive: true },
+                  style: {
+                      width: '100%',
+                      height: 34,
+                      borderRadius: 8,
+                      backgroundColor: 'rgba(255, 255, 255, 0.15)',
+                      borderWidth: 1,
+                      borderColor: 'rgba(255, 255, 255, 0.6)',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6
+                  },
+                  children: [
+                      new xb.UIIcon({ icon: 'delete_sweep', style: { width: 18, height: 18, color: '#FFFFFF' } }),
+                      new xb.UIText({ text: 'Empty Dustbin (Dock)', style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
+                  ],
+                  onClick: () => this.emptyVacuumDock()
+              });
+              cardChildren.push(emptyDustbinBtn);
+          }
+
+          // Optional Dock Telemetry Alert Badges (only if reported by HA)
+          const vacAlerts = [];
+          if (this.realDevice?.attributes && this.realDevice.attributes.water_shortage) {
+              vacAlerts.push(new xb.UIText({ text: '⚠️ Refill Water Tank', style: { fontSize: 12, color: '#FFCC00', fontWeight: 'bold' } }));
+          }
+          if (this.realDevice?.attributes && this.realDevice.attributes.mop_attached) {
+              vacAlerts.push(new xb.UIText({ text: '🧹 Mop Module Attached', style: { fontSize: 12, color: 'rgba(255, 255, 255, 0.8)' } }));
+          }
+          if (vacAlerts.length > 0) {
+              cardChildren.push(new xb.UIPanel({
+                  style: { width: '100%', padding: 6, backgroundColor: 'rgba(255, 255, 255, 0.08)', borderRadius: 6, gap: 2 },
+                  children: vacAlerts
+              }));
+          }
+
+          // Fan Speed Selection Row - ONLY render if fan_speed_list is obtained from HA
+          const speeds = this.realDevice?.attributes?.fan_speed_list || ['quiet', 'balanced', 'turbo', 'max'];
+          if (Array.isArray(speeds) && speeds.length > 0) {
+              const currentSpeed = (this.realDevice?.fanSpeed || 'balanced').toLowerCase();
+              const displaySpeeds = speeds.slice(0, 4); // Take up to 4 for clean fit
+              const speedBtns = displaySpeeds.map(s => {
+                  const sLabel = s.charAt(0).toUpperCase() + s.slice(1);
+                  const isSelected = currentSpeed === s.toLowerCase();
+                  return new xb.UIButton({
+                      ariaLabel: `Fan speed ${sLabel}`,
+                      userData: { interactive: true },
+                      style: {
+                          flexGrow: 1,
+                          height: 26,
+                          borderRadius: 6,
+                          backgroundColor: isSelected ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)',
+                          borderWidth: isSelected ? 1.5 : 1,
+                          borderColor: '#FFFFFF',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                      },
+                      children: [
+                          new xb.UIText({ text: sLabel, style: { fontSize: 11, fontWeight: 'bold', color: '#FFFFFF' } })
+                      ],
+                      onClick: () => this.setVacuumFanSpeed(s)
+                  });
+              });
+
+              cardChildren.push(new xb.UIPanel({
+                  style: { width: '100%', flexDirection: 'row', gap: 4, alignItems: 'center' },
+                  children: speedBtns
+              }));
+          }
+
+          cardChildren.push(makeUnpairBtn());
+
+      } else if (domain === 'dishwasher' || cat === 'dishwasher') {
+          // --- UNIFIED DISHWASHER UI ---
+          const attrs = this.realDevice?.attributes || {};
+          const rawState = String(attrs.status || this.realDevice?.state || 'Ready').replace(/_/g, ' ').toUpperCase();
+          const isRunning = rawState.includes('RUN') || rawState.includes('WASH') || rawState.includes('ON') || rawState.includes('ACTIVE');
+          const statusColor = isRunning ? '#00FF88' : '#00DDFF';
+
+          const statusBadge = new xb.UIPanel({
+              style: {
+                  width: '100%',
+                  padding: 8,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                  borderWidth: 1,
+                  borderColor: statusColor,
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+              },
+              children: [
+                  new xb.UIText({ text: `🍽️ Status: ${rawState}`, style: { fontSize: 13, fontWeight: 'bold', color: statusColor } })
+              ]
+          });
+          cardChildren.push(statusBadge);
+
+          // Dynamic Telemetry List - ONLY render fields obtained from HA
+          const dishTelemetry = [];
+
+          if (attrs.cycle && attrs.cycle !== 'unknown') {
+              const cycleStr = String(attrs.cycle).replace(/_/g, ' ').toUpperCase();
+              dishTelemetry.push(new xb.UIText({ text: `🔄 Cycle: ${cycleStr}`, style: { fontSize: 13, color: '#FFFFFF' } }));
+          }
+
+          if (attrs.remaining_time && attrs.remaining_time !== 'unknown' && attrs.remaining_time !== 'unavailable') {
+              let timeStr = String(attrs.remaining_time);
+              const num = Number(attrs.remaining_time);
+              if (!isNaN(num)) {
+                  timeStr = num > 60 ? `${Math.floor(num / 60)}h ${Math.round(num % 60)}m` : `${Math.round(num)} min`;
+              }
+              dishTelemetry.push(new xb.UIText({ text: `⏱️ ${timeStr} remaining`, style: { fontSize: 13, color: '#00FF88', fontWeight: 'bold' } }));
+          }
+
+          if (attrs.door_open !== undefined) {
+              const doorStr = attrs.door_open ? '⚠️ Door Open' : '🚪 Door Closed';
+              const doorCol = attrs.door_open ? '#FFCC00' : '#FFFFFF';
+              dishTelemetry.push(new xb.UIText({ text: doorStr, style: { fontSize: 13, color: doorCol } }));
+          }
+
+          if (attrs.rinse_refill_needed) {
+              dishTelemetry.push(new xb.UIText({ text: '💧 Refill Rinse Aid', style: { fontSize: 13, color: '#FFCC00' } }));
+          }
+
+          if (attrs.clean_complete) {
+              dishTelemetry.push(new xb.UIText({ text: '✨ Clean Cycle Complete', style: { fontSize: 13, color: '#00FF88' } }));
+          }
+
+          if (dishTelemetry.length > 0) {
+              cardChildren.push(new xb.UIPanel({
+                  style: { width: '100%', flexDirection: 'column', gap: 4, padding: 8, backgroundColor: 'rgba(255, 255, 255, 0.08)', borderRadius: 8 },
+                  children: dishTelemetry
+              }));
+          }
+
+          cardChildren.push(makeUnpairBtn());
+
+      } else if (domain === 'oven' || cat === 'oven') {
+          // --- UNIFIED OVEN UI ---
+          const attrs = this.realDevice?.attributes || {};
+          const rawState = String(attrs.operating_state || attrs.job_state || this.realDevice?.state || 'Ready').replace(/_/g, ' ').toUpperCase();
+          const isHeating = rawState.includes('HEAT') || rawState.includes('RUN') || rawState.includes('BAKE') || rawState.includes('ON');
+          const statusColor = isHeating ? '#FF7700' : '#00DDFF';
+
+          const statusBadge = new xb.UIPanel({
+              style: {
+                  width: '100%',
+                  padding: 8,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                  borderWidth: 1,
+                  borderColor: statusColor,
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+              },
+              children: [
+                  new xb.UIText({ text: `🍳 Status: ${rawState}`, style: { fontSize: 13, fontWeight: 'bold', color: statusColor } })
+              ]
+          });
+          cardChildren.push(statusBadge);
+
+          // Dynamic Telemetry List - ONLY render fields obtained from HA
+          const ovenTelemetry = [];
+
+          if (attrs.temperature !== undefined && attrs.temperature !== null) {
+              const tempStr = `🌡️ Temp: ${Math.round(attrs.temperature)}°C` + (attrs.setpoint ? ` / Set: ${Math.round(attrs.setpoint)}°C` : '');
+              ovenTelemetry.push(new xb.UIText({ text: tempStr, style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } }));
+          }
+
+          if (attrs.second_cavity_temperature !== undefined && attrs.second_cavity_temperature !== null) {
+              const secTempStr = `🍳 Cavity 2: ${Math.round(attrs.second_cavity_temperature)}°C` + (attrs.second_cavity_setpoint ? ` / Set: ${Math.round(attrs.second_cavity_setpoint)}°C` : '');
+              ovenTelemetry.push(new xb.UIText({ text: secTempStr, style: { fontSize: 13, color: '#FFFFFF' } }));
+          }
+
+          if (attrs.mode && attrs.mode !== 'unknown' && attrs.mode !== 'others') {
+              const modeStr = String(attrs.mode).replace(/_/g, ' ').toUpperCase();
+              ovenTelemetry.push(new xb.UIText({ text: `♨️ Mode: ${modeStr}`, style: { fontSize: 13, color: '#FFFFFF' } }));
+          }
+
+          if (attrs.completion_time) {
+              let compStr = attrs.completion_time;
+              try {
+                  const d = new Date(attrs.completion_time);
+                  if (!isNaN(d.getTime())) {
+                      compStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  }
+              } catch(e) {}
+              ovenTelemetry.push(new xb.UIText({ text: `⏱️ Completes: ${compStr}`, style: { fontSize: 13, color: '#FFFFFF' } }));
+          }
+
+          if (attrs.door_open !== undefined) {
+              const doorStr = attrs.door_open ? '⚠️ Door Open' : '🚪 Door Closed';
+              const doorCol = attrs.door_open ? '#FFCC00' : '#FFFFFF';
+              ovenTelemetry.push(new xb.UIText({ text: doorStr, style: { fontSize: 13, color: doorCol } }));
+          }
+
+          if (attrs.child_lock) {
+              ovenTelemetry.push(new xb.UIText({ text: '🔒 Child Lock: Active', style: { fontSize: 13, color: '#00FF88' } }));
+          }
+
+          if (ovenTelemetry.length > 0) {
+              cardChildren.push(new xb.UIPanel({
+                  style: { width: '100%', flexDirection: 'column', gap: 4, padding: 8, backgroundColor: 'rgba(255, 255, 255, 0.08)', borderRadius: 8 },
+                  children: ovenTelemetry
+              }));
+          }
+
+          // Action Buttons: Stop Button and Lamp Toggle (ONLY render if available in HA)
+          const ovenControls = [];
+
+          if (attrs.stop_entity) {
+              const stopBtn = new xb.UIButton({
+                  ariaLabel: 'Stop Oven',
+                  userData: { interactive: true },
+                  style: {
+                      flexGrow: 1,
+                      height: 36,
+                      borderRadius: 8,
+                      backgroundColor: 'rgba(255, 85, 85, 0.25)',
+                      borderWidth: 1,
+                      borderColor: '#FF5555',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6
+                  },
+                  children: [
+                      new xb.UIIcon({ icon: 'stop', style: { width: 18, height: 18, color: '#FFFFFF' } }),
+                      new xb.UIText({ text: 'Stop Oven', style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
+                  ],
+                  onClick: () => this.stopOven()
+              });
+              ovenControls.push(stopBtn);
+          }
+
+          if (attrs.lamp_entity) {
+              const lampOn = (attrs.lamp_state === 'on' || attrs.lamp_state === 'lamp_on');
+              const lampBtn = new xb.UIButton({
+                  ariaLabel: 'Oven Lamp',
+                  userData: { interactive: true },
+                  style: {
+                      flexGrow: 1,
+                      height: 36,
+                      borderRadius: 8,
+                      backgroundColor: lampOn ? 'rgba(255, 204, 0, 0.35)' : 'rgba(255, 255, 255, 0.14)',
+                      borderWidth: 1,
+                      borderColor: lampOn ? '#FFCC00' : 'rgba(255, 255, 255, 0.5)',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6
+                  },
+                  children: [
+                      new xb.UIIcon({ icon: 'lightbulb', style: { width: 18, height: 18, color: '#FFFFFF' } }),
+                      new xb.UIText({ text: lampOn ? 'Lamp ON' : 'Lamp OFF', style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
+                  ],
+                  onClick: () => this.toggleOvenLamp()
+              });
+              ovenControls.push(lampBtn);
+          }
+
+          if (ovenControls.length > 0) {
+              cardChildren.push(new xb.UIPanel({
+                  style: { width: '100%', flexDirection: 'row', gap: 6 },
+                  children: ovenControls
+              }));
+          }
+
+          cardChildren.push(makeUnpairBtn());
+
+      } else if (cat === 'appliance') {
+          // --- GENERIC APPLIANCE FALLBACK ---
+          const appState = String(this.realDevice?.state || 'Ready').toUpperCase();
+          const isRunning = appState.includes('RUN') || appState.includes('ON');
+          const statusColor = isRunning ? '#00FF88' : '#00DDFF';
+
+          cardChildren.push(new xb.UIPanel({
+              style: {
+                  width: '100%',
+                  padding: 8,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                  borderWidth: 1,
+                  borderColor: statusColor,
+                  alignItems: 'center',
+                  justifyContent: 'center'
+              },
+              children: [
+                  new xb.UIText({ text: `⚙️ Status: ${appState}`, style: { fontSize: 13, fontWeight: 'bold', color: statusColor } })
+              ]
+          }));
+
+          cardChildren.push(makeUnpairBtn());
+
+      } else if (domain === 'sensor') {
+          // --- STANDALONE SENSOR / TELEMETRY CARD (e.g. Dishwasher run time left) ---
+          const stateVal = String(this.realDevice?.state || 'Unknown');
+          const unit = this.realDevice?.attributes?.unit_of_measurement || '';
+          let displayVal = unit ? `${stateVal} ${unit}` : stateVal;
+          
+          // Nicely format duration/time if numeric
+          const num = Number(stateVal);
+          if (!isNaN(num) && (unit.includes('min') || unit.includes('s') || this.labelText.toLowerCase().includes('time') || this.labelText.toLowerCase().includes('remaining'))) {
+              if (num > 60 && !unit.includes('h')) {
+                  displayVal = `${Math.floor(num / 60)}h ${Math.round(num % 60)}m`;
+              } else {
+                  displayVal = `${Math.round(num)} ${unit || 'min'}`;
+              }
+          }
+
+          cardChildren.push(new xb.UIPanel({
+              style: {
+                  width: '100%',
+                  padding: 10,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                  borderWidth: 1,
+                  borderColor: '#00DDFF',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 4
+              },
+              children: [
+                  new xb.UIText({ text: `⏱️ ${this.labelText}`, style: { fontSize: 12, color: 'rgba(255, 255, 255, 0.8)' } }),
+                  new xb.UIText({ text: displayVal, style: { fontSize: 18, fontWeight: 'bold', color: '#00FF88' } })
+              ]
+          }));
+
+          cardChildren.push(makeUnpairBtn());
+
       } else {
-          // --- PAIRED UI ---
+          // --- LIGHT OR GENERIC SWITCH UI ---
           // 1. Power Toggle & Unpair (Equal size buttons with clean icons and text)
           const toggleBtn = new xb.UIButton({
               ariaLabel: isOn ? 'Turn Off' : 'Turn On',
@@ -716,145 +1304,147 @@ class VirtualLight3D extends THREE.Group {
               children: [toggleBtn, unpairBtn]
           }));
           
-          // 2. Brightness Slider
-          const brightnessText = new xb.UIText({
-              text: `☀️ ${this.brightness}%`,
-              style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF', width: '100%' }
-          });
-          const brightnessSlider = new xb.UISlider({
-              ariaLabel: `${this.labelText} brightness`,
-              min: 1,
-              max: 100,
-              step: 1,
-              value: this.brightness,
-              style: { width: '100%', height: 26 },
-              onInput: (val) => {
-                  brightnessText.text = `☀️ ${Math.round(val)}%`;
-              },
-              onChange: (val) => {
-                  this.setBrightness(val);
-              }
-          });
-          cardChildren.push(brightnessText);
-          cardChildren.push(brightnessSlider);
-          
-          // 3. Rainbow Color Slider with Gradient Rainbow Bar & Dynamic Swatch
-          const colorIndicator = new xb.UIPanel({
-              style: {
-                  width: 14,
-                  height: 14,
-                  borderRadius: 7,
-                  backgroundColor: this.stateColor || '#FFFFFF',
-                  borderWidth: 1,
-                  borderColor: '#FFFFFF',
-              }
-          });
-          const rainbowLabel = new xb.UIText({
-              text: '🌈 Color',
-              style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' }
-          });
-          const rainbowHeader = new xb.UIPanel({
-              style: {
-                  width: '100%',
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-              },
-              children: [rainbowLabel, colorIndicator]
-          });
+          // If light, include brightness, color, and temperature controls
+          if (domain === 'light' || (this.realDevice && this.realDevice.attributes && this.realDevice.attributes.brightness !== undefined)) {
+              // 2. Brightness Slider
+              const brightnessText = new xb.UIText({
+                  text: `☀️ ${this.brightness}%`,
+                  style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF', width: '100%' }
+              });
+              const brightnessSlider = new xb.UISlider({
+                  ariaLabel: `${this.labelText} brightness`,
+                  min: 1,
+                  max: 100,
+                  step: 1,
+                  value: this.brightness,
+                  style: { width: '100%', height: 26 },
+                  onInput: (val) => {
+                      brightnessText.text = `☀️ ${Math.round(val)}%`;
+                  },
+                  onChange: (val) => {
+                      this.setBrightness(val);
+                  }
+              });
+              cardChildren.push(brightnessText);
+              cardChildren.push(brightnessSlider);
+              
+              // 3. Rainbow Color Slider with Gradient Rainbow Bar & Dynamic Swatch
+              const colorIndicator = new xb.UIPanel({
+                  style: {
+                      width: 14,
+                      height: 14,
+                      borderRadius: 7,
+                      backgroundColor: this.stateColor || '#FFFFFF',
+                      borderWidth: 1,
+                      borderColor: '#FFFFFF',
+                  }
+              });
+              const rainbowLabel = new xb.UIText({
+                  text: '🌈 Color',
+                  style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' }
+              });
+              const rainbowHeader = new xb.UIPanel({
+                  style: {
+                      width: '100%',
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                  },
+                  children: [rainbowLabel, colorIndicator]
+              });
 
-          const rainbowSlider = new xb.UISlider({
-              ariaLabel: `${this.labelText} rainbow color`,
-              min: 0,
-              max: 360,
-              step: 1,
-              value: this.currentHue !== undefined ? this.currentHue : 0,
-              style: { width: '100%', height: 26 },
-              onInput: (val) => {
-                  this.currentHue = Math.round(val);
-                  const [r, g, b] = hslToRgb(this.currentHue);
-                  const toHex = (n) => n.toString(16).padStart(2, '0');
-                  this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-                  labelText.style.color = this.stateColor;
-                  colorIndicator.style.backgroundColor = this.stateColor;
-              },
-              onChange: (val) => {
-                  this.currentHue = Math.round(val);
-                  const [r, g, b] = hslToRgb(this.currentHue);
-                  this.setColor(r, g, b);
-              }
-          });
+              const rainbowSlider = new xb.UISlider({
+                  ariaLabel: `${this.labelText} rainbow color`,
+                  min: 0,
+                  max: 360,
+                  step: 1,
+                  value: this.currentHue !== undefined ? this.currentHue : 0,
+                  style: { width: '100%', height: 26 },
+                  onInput: (val) => {
+                      this.currentHue = Math.round(val);
+                      const [r, g, b] = hslToRgb(this.currentHue);
+                      const toHex = (n) => n.toString(16).padStart(2, '0');
+                      this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+                      labelText.style.color = this.stateColor;
+                      colorIndicator.style.backgroundColor = this.stateColor;
+                  },
+                  onChange: (val) => {
+                      this.currentHue = Math.round(val);
+                      const [r, g, b] = hslToRgb(this.currentHue);
+                      this.setColor(r, g, b);
+                  }
+              });
 
-          // Gradient rainbow track bar directly under the color slider
-          const rainbowStops = [
-              '#FF0000', '#FF3B00', '#FF7700', '#FFB300', '#FFEE00',
-              '#A2FF00', '#26FF00', '#00FF66', '#00FFD0', '#00C8FF',
-              '#0055FF', '#3700FF', '#9E00FF', '#FF00C4', '#FF0037'
-          ];
-          const rainbowSegments = rainbowStops.map((c, i) => new xb.UIPanel({
-              style: {
-                  flexGrow: 1,
-                  height: 6,
-                  backgroundColor: c,
-                  borderRadius: i === 0 ? 3 : (i === rainbowStops.length - 1 ? 3 : 0),
-              }
-          }));
-          const rainbowBar = new xb.UIPanel({
-              style: {
-                  width: '100%',
-                  flexDirection: 'row',
-                  height: 6,
-                  borderRadius: 3,
-                  overflow: 'hidden',
-                  marginTop: -2,
-                  marginBottom: 2,
-              },
-              children: rainbowSegments
-          });
+              // Gradient rainbow track bar directly under the color slider
+              const rainbowStops = [
+                  '#FF0000', '#FF3B00', '#FF7700', '#FFB300', '#FFEE00',
+                  '#A2FF00', '#26FF00', '#00FF66', '#00FFD0', '#00C8FF',
+                  '#0055FF', '#3700FF', '#9E00FF', '#FF00C4', '#FF0037'
+              ];
+              const rainbowSegments = rainbowStops.map((c, i) => new xb.UIPanel({
+                  style: {
+                      flexGrow: 1,
+                      height: 6,
+                      backgroundColor: c,
+                      borderRadius: i === 0 ? 3 : (i === rainbowStops.length - 1 ? 3 : 0),
+                  }
+              }));
+              const rainbowBar = new xb.UIPanel({
+                  style: {
+                      width: '100%',
+                      flexDirection: 'row',
+                      height: 6,
+                      borderRadius: 3,
+                      marginTop: -2,
+                      marginBottom: 2,
+                  },
+                  children: rainbowSegments
+              });
 
-          cardChildren.push(rainbowHeader);
-          cardChildren.push(rainbowSlider);
-          cardChildren.push(rainbowBar);
+              cardChildren.push(rainbowHeader);
+              cardChildren.push(rainbowSlider);
+              cardChildren.push(rainbowBar);
 
-          // 4. 6 Common Temperatures (Faithful physical light colors, no slider)
-          const tempText = new xb.UIText({
-              text: `🌡️ ${this.colorTemp || 2700}K`,
-              style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF', width: '100%' }
-          });
+              // 4. 6 Common Temperatures
+              const tempText = new xb.UIText({
+                  text: `🌡️ ${this.colorTemp || 2700}K`,
+                  style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF', width: '100%' }
+              });
 
-          const tempPresets = [
-              { kelvin: 2000, hex: '#FFA23A' }, // Candlelight warm amber
-              { kelvin: 2700, hex: '#FFBF75' }, // Soft white incandescent
-              { kelvin: 3500, hex: '#FFDDAA' }, // Neutral warm white
-              { kelvin: 4500, hex: '#FFF2E5' }, // Pure neutral white
-              { kelvin: 5500, hex: '#E8F0FE' }, // Daylight
-              { kelvin: 6500, hex: '#A8CDFF' }, // Cool daylight sky blue
-          ];
+              const tempPresets = [
+                  { kelvin: 2000, hex: '#FFA23A' }, // Candlelight warm amber
+                  { kelvin: 2700, hex: '#FFBF75' }, // Soft white incandescent
+                  { kelvin: 3500, hex: '#FFDDAA' }, // Neutral warm white
+                  { kelvin: 4500, hex: '#FFF2E5' }, // Pure neutral white
+                  { kelvin: 5500, hex: '#E8F0FE' }, // Daylight
+                  { kelvin: 6500, hex: '#A8CDFF' }, // Cool daylight sky blue
+              ];
 
-          const tempButtons = tempPresets.map(preset => new xb.UIButton({
-              label: '',
-              ariaLabel: `${preset.kelvin}K`,
-              style: {
-                  flexGrow: 1,
-                  height: 26,
-                  borderRadius: 6,
-                  backgroundColor: preset.hex,
-                  borderWidth: this.colorTemp === preset.kelvin ? 2 : 1,
-                  borderColor: '#FFFFFF',
-              },
-              onClick: () => {
-                  this.setColorTemp(preset.kelvin, preset.hex);
-                  tempText.text = `🌡️ ${preset.kelvin}K`;
-                  labelText.style.color = preset.hex;
-                  colorIndicator.style.backgroundColor = preset.hex;
-              }
-          }));
+              const tempButtons = tempPresets.map(preset => new xb.UIButton({
+                  label: '',
+                  ariaLabel: `${preset.kelvin}K`,
+                  style: {
+                      flexGrow: 1,
+                      height: 26,
+                      borderRadius: 6,
+                      backgroundColor: preset.hex,
+                      borderWidth: this.colorTemp === preset.kelvin ? 2 : 1,
+                      borderColor: '#FFFFFF',
+                  },
+                  onClick: () => {
+                      this.setColorTemp(preset.kelvin, preset.hex);
+                      tempText.text = `🌡️ ${preset.kelvin}K`;
+                      labelText.style.color = preset.hex;
+                      colorIndicator.style.backgroundColor = preset.hex;
+                  }
+              }));
 
-          cardChildren.push(tempText);
-          cardChildren.push(new xb.UIPanel({
-              style: { width: '100%', flexDirection: 'row', gap: 4 },
-              children: tempButtons
-          }));
+              cardChildren.push(tempText);
+              cardChildren.push(new xb.UIPanel({
+                  style: { width: '100%', flexDirection: 'row', gap: 4 },
+                  children: tempButtons
+              }));
+          }
       }
 
       this.panel = new xb.UICard({
@@ -943,11 +1533,32 @@ class VirtualLight3D extends THREE.Group {
 
   _buildDeviceListUI() {
       const allDevices = Array.from(smartHome.devices.values());
-      const devices = allDevices.filter(d => d.id.startsWith('light.') || d.id.startsWith('switch.'));
+      // Filter out helper buttons and selects from the main pairing list (they are linked to parent devices)
+      // Filter out helper buttons, selects, and binary sensors from the main pairing list (they are linked to parent devices)
+      const devices = allDevices.filter(d => !d.id.startsWith('button.') && !d.id.startsWith('select.') && !d.id.startsWith('binary_sensor.'));
       
-      // 1. Group devices by Area
+      const targetCat = (this.category || '').toLowerCase();
+      const recommended = [];
       const areaGroups = {};
+
       devices.forEach(d => {
+          const domain = d.domain || d.id.split('.')[0];
+          const name = (d.name || d.id).toLowerCase();
+          const isMatch = (targetCat && (
+              domain.includes(targetCat) ||
+              name.includes(targetCat) ||
+              (targetCat === 'lock' && (domain === 'lock' || name.includes('lock') || name.includes('deadbolt'))) ||
+              (targetCat === 'vacuum' && (domain === 'vacuum' || name.includes('vacuum') || name.includes('roborock') || name.includes('roomba') || name.includes('q8'))) ||
+              (targetCat === 'dishwasher' && (domain === 'dishwasher' || name.includes('dishwasher') || name.includes('dish'))) ||
+              (targetCat === 'oven' && (domain === 'oven' || name.includes('oven') || name.includes('stove') || name.includes('range') || name.includes('microwave'))) ||
+              (targetCat === 'appliance' && (domain === 'appliance' || domain === 'dishwasher' || domain === 'oven' || name.includes('washer') || name.includes('dryer') || name.includes('fridge') || name.includes('refrigerator'))) ||
+              (targetCat === 'light' && (domain === 'light' || name.includes('lamp') || name.includes('light'))) ||
+              (targetCat === 'switch' && (domain === 'switch' || name.includes('plug') || name.includes('switch'))) ||
+              (targetCat === 'climate' && (domain === 'climate' || name.includes('thermostat')))
+          ));
+          if (isMatch) {
+              recommended.push(d);
+          }
           const area = d.area || 'Other';
           if (!areaGroups[area]) areaGroups[area] = [];
           areaGroups[area].push(d);
@@ -960,11 +1571,35 @@ class VirtualLight3D extends THREE.Group {
       sortedAreas.forEach(area => {
           areaGroups[area].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
       });
+      recommended.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
 
       if (!this.expandedAreas) this.expandedAreas = new Set();
 
       // 4. Build flattened list of visible tree nodes
       const visibleItems = [];
+
+      // Add Recommended section at top if matches found
+      if (recommended.length > 0) {
+          const recAreaName = `⭐ Recommended (${targetCat.toUpperCase()})`;
+          const isRecExpanded = !this.hasCollapsedRecommended;
+          visibleItems.push({
+              type: 'area',
+              area: recAreaName,
+              count: recommended.length,
+              isExpanded: isRecExpanded,
+              isRecommended: true
+          });
+          if (isRecExpanded) {
+              recommended.forEach(dev => {
+                  visibleItems.push({
+                      type: 'device',
+                      device: dev,
+                      area: recAreaName
+                  });
+              });
+          }
+      }
+
       sortedAreas.forEach(area => {
           const isExpanded = this.expandedAreas.has(area);
           const count = areaGroups[area].length;
@@ -1027,13 +1662,18 @@ class VirtualLight3D extends THREE.Group {
                           width: '100%',
                           height: 34,
                           borderRadius: 8,
-                          backgroundColor: 'rgba(255, 255, 255, 0.18)',
+                          backgroundColor: item.isRecommended ? 'rgba(0, 255, 136, 0.22)' : 'rgba(255, 255, 255, 0.18)',
                           borderWidth: 1,
-                          borderColor: 'rgba(255, 255, 255, 0.7)',
+                          borderColor: item.isRecommended ? '#00FF88' : 'rgba(255, 255, 255, 0.7)',
                           fontSize: 14,
                           fontWeight: 'bold',
                       },
                       onClick: () => {
+                          if (item.isRecommended) {
+                              this.hasCollapsedRecommended = !this.hasCollapsedRecommended;
+                              this.rebuildPanel();
+                              return;
+                          }
                           if (this.expandedAreas.has(item.area)) {
                               this.expandedAreas.delete(item.area);
                           } else {
@@ -1044,6 +1684,8 @@ class VirtualLight3D extends THREE.Group {
                   }));
               } else if (item.type === 'device') {
                   const dev = item.device;
+                  const devDomain = dev.domain || dev.id.split('.')[0];
+                  const icon = getCategoryIcon(devDomain, devDomain);
                   bodyChildren.push(new xb.UIButton({
                       label: `  • ${dev.name || dev.id}`,
                       userData: { interactive: true },
@@ -1131,7 +1773,8 @@ class VirtualLight3D extends THREE.Group {
                   area: device.area || 'Other',
                   position: { x: pos.x, y: pos.y, z: pos.z },
                   quaternion: { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
-                  label: this.label
+                  label: this.label,
+                  category: this.category || device.domain || 'light'
               }).then(saved => {
                   if (saved) hud.log(`Saved coordinates: ${deviceId}`, '#FFFFFF');
               }).catch(err => {
@@ -1159,10 +1802,25 @@ class VirtualLight3D extends THREE.Group {
       }
       
       const isOn = this.isOn;
-      
+      const domain = (this.realDevice && this.realDevice.domain) ? this.realDevice.domain : (this.realDevice && this.realDevice.id ? this.realDevice.id.split('.')[0] : (this.category || 'light'));
+
       let colorStr = '#FFFFFF';
       if (isPaired) {
-          colorStr = isOn ? (this.colorTemp ? kelvinToHex(this.colorTemp) : '#FFFFFF') : 'rgba(255, 255, 255, 0.55)';
+          if (domain === 'lock') {
+              colorStr = (this.realDevice?.state === 'locked') ? '#00FF88' : '#FF5555';
+          } else if (domain === 'vacuum') {
+              colorStr = (this.realDevice?.state === 'cleaning') ? '#00FF88' : '#00DDFF';
+          } else if (domain === 'dishwasher') {
+              const dState = String(this.realDevice?.attributes?.status || this.realDevice?.state || '').toLowerCase();
+              const isWash = dState.includes('run') || dState.includes('wash') || dState.includes('active');
+              colorStr = isWash ? '#00FF88' : '#00DDFF';
+          } else if (domain === 'oven') {
+              const oState = String(this.realDevice?.attributes?.operating_state || this.realDevice?.state || '').toLowerCase();
+              const isHeat = oState.includes('heat') || oState.includes('run') || oState.includes('bake');
+              colorStr = isHeat ? '#FF7700' : '#00DDFF';
+          } else {
+              colorStr = isOn ? (this.colorTemp ? kelvinToHex(this.colorTemp) : '#FFFFFF') : 'rgba(255, 255, 255, 0.55)';
+          }
       }
       
       this.stateColor = colorStr;
@@ -1172,6 +1830,16 @@ class VirtualLight3D extends THREE.Group {
   }
 
   toggle() {
+      const domain = (this.realDevice && this.realDevice.domain) ? this.realDevice.domain : (this.realDevice && this.realDevice.id ? this.realDevice.id.split('.')[0] : (this.category || 'light'));
+      if (domain === 'lock') {
+          this.toggleLock();
+          return;
+      }
+      if (domain === 'vacuum') {
+          this.toggleVacuum();
+          return;
+      }
+
       const nextOn = !this.isOn;
       this.isOn = nextOn;
       if (this.realDevice) {
@@ -1180,13 +1848,14 @@ class VirtualLight3D extends THREE.Group {
       this.updateVisuals();
       
       if (this.realDevice && smartHome) {
-          console.log(`[Toggle] 3D Light ${this.labelText} -> ${nextOn}`);
+          console.log(`[Toggle] 3D Device ${this.labelText} -> ${nextOn}`);
           
           const stateStr = nextOn ? "ON" : "OFF";
           const colorStr = nextOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.55)';
           hud.log(`${this.labelText} turned ${stateStr}`, colorStr);
           
-          smartHome.toggleLight(this.realDevice.id, nextOn).then((success) => {
+          const togglePromise = (domain === 'switch') ? smartHome.toggleSwitch(this.realDevice.id, nextOn) : smartHome.toggleLight(this.realDevice.id, nextOn);
+          togglePromise.then((success) => {
               if (success !== false) {
                   hud.speak(nextOn ? "Turning On" : "Turning Off");
               } else {
@@ -1204,6 +1873,108 @@ class VirtualLight3D extends THREE.Group {
               this.updateVisuals();
           });
       } 
+  }
+
+  toggleLock() {
+      if (!this.realDevice || !smartHome) return;
+      const isLocked = (this.realDevice.state === 'locked');
+      const nextAction = isLocked ? 'unlock' : 'lock';
+      hud.speak(isLocked ? "Unlocking Door" : "Locking Door");
+      smartHome.controlLock(this.realDevice.id, nextAction).then(success => {
+          if (success !== false) {
+              this.realDevice.state = nextAction === 'lock' ? 'locked' : 'unlocked';
+              this.realDevice.isOn = (nextAction === 'lock');
+              this.updateVisuals();
+              hud.log(`${this.labelText} ${nextAction}ed`, nextAction === 'lock' ? '#00FF88' : '#FF5555');
+          } else {
+              hud.log(`Failed to ${nextAction} ${this.labelText}`, '#FF0000');
+          }
+      }).catch(err => console.warn("Lock error:", err));
+  }
+
+  toggleVacuum() {
+      if (!this.realDevice || !smartHome) return;
+      const isCleaning = (this.realDevice.state === 'cleaning');
+      const nextAction = isCleaning ? 'pause' : 'start';
+      hud.speak(isCleaning ? "Pausing Vacuum" : "Starting Vacuum");
+      smartHome.controlVacuum(this.realDevice.id, nextAction).then(success => {
+          if (success !== false) {
+              this.realDevice.state = isCleaning ? 'paused' : 'cleaning';
+              this.updateVisuals();
+              hud.log(`Vacuum ${nextAction}ed`, '#00FF88');
+          }
+      }).catch(err => console.warn("Vacuum toggle error:", err));
+  }
+
+  dockVacuum() {
+      if (!this.realDevice || !smartHome) return;
+      hud.speak("Returning Vacuum to Dock");
+      smartHome.controlVacuum(this.realDevice.id, 'return_to_base').then(success => {
+          if (success !== false) {
+              this.realDevice.state = 'returning';
+              this.updateVisuals();
+              hud.log("Vacuum returning to dock", '#00DDFF');
+          }
+      }).catch(err => console.warn("Vacuum dock error:", err));
+  }
+
+  spotCleanVacuum() {
+      if (!this.realDevice || !smartHome) return;
+      hud.speak("Spot Cleaning");
+      smartHome.controlVacuum(this.realDevice.id, 'clean_spot').then(success => {
+          if (success !== false) {
+              this.realDevice.state = 'cleaning';
+              this.updateVisuals();
+              hud.log("Vacuum spot cleaning", '#00FF88');
+          }
+      }).catch(err => console.warn("Vacuum spot clean error:", err));
+  }
+
+  emptyVacuumDock() {
+      if (!this.realDevice || !smartHome) return;
+      hud.speak("Emptying Dustbin");
+      smartHome.triggerVacuumDockEmpty(this.realDevice.id).then(() => {
+          hud.log("Dock Auto-Empty Triggered", '#00FF88');
+      }).catch(err => console.warn("Dock empty error:", err));
+  }
+
+  setVacuumFanSpeed(speed) {
+      if (!this.realDevice || !smartHome) return;
+      hud.speak(`Suction: ${speed}`);
+      smartHome.setVacuumFanSpeed(this.realDevice.id, speed.toLowerCase()).then(success => {
+          if (success !== false) {
+              this.realDevice.fanSpeed = speed.toLowerCase();
+              this.updateVisuals();
+              hud.log(`Vacuum suction set to ${speed}`, '#FFFFFF');
+          }
+      }).catch(err => console.warn("Vacuum fan speed error:", err));
+  }
+
+  stopOven() {
+      if (!this.realDevice || !smartHome) return;
+      hud.speak("Stopping Oven");
+      smartHome.stopAppliance(this.realDevice.id).then(() => {
+          hud.log("Oven Stop Triggered", '#FF5555');
+          this.realDevice.state = 'off';
+          if (this.realDevice.attributes) {
+              this.realDevice.attributes.operating_state = 'off';
+              this.realDevice.attributes.status = 'off';
+          }
+          this.updateVisuals();
+      }).catch(err => console.warn("Oven stop error:", err));
+  }
+
+  toggleOvenLamp() {
+      if (!this.realDevice || !smartHome) return;
+      const currentLamp = this.realDevice.attributes?.lamp_state || 'off';
+      const nextLamp = (currentLamp === 'on' || currentLamp === 'lamp_on') ? 'off' : 'on';
+      hud.speak(`Oven Lamp ${nextLamp}`);
+      const lampEnt = this.realDevice.attributes?.lamp_entity || null;
+      smartHome.toggleOvenLamp(this.realDevice.id, nextLamp, lampEnt).then(() => {
+          if (this.realDevice.attributes) this.realDevice.attributes.lamp_state = nextLamp;
+          this.updateVisuals();
+          hud.log(`Oven Lamp ${nextLamp.toUpperCase()}`, '#FFFFFF');
+      }).catch(err => console.warn("Oven lamp error:", err));
   }
 
   setBrightness(val) {
@@ -1261,6 +2032,8 @@ class VirtualLight3D extends THREE.Group {
   
   checkClick() { return false; }
 }
+
+const VirtualDevice3D = VirtualLight3D;
 
 
 // --- Main App Logic ---
@@ -1669,7 +2442,8 @@ async function loadSavedAnchors() {
             };
 
             const label = anchor.name || anchor.label || device.name || devId;
-            const mockGemini = { xmin: 0.4, xmax: 0.6, ymin: 0.4, ymax: 0.6 };
+            const cat = anchor.category || (device.domain || 'light');
+            const mockGemini = { xmin: 0.4, xmax: 0.6, ymin: 0.4, ymax: 0.6, category: cat };
             const vLight = new VirtualLight3D(mockGemini, label, 0.36, 0.5);
 
             if (anchor.position) {
@@ -1921,15 +2695,9 @@ async function refreshRealDevices() {
         const devices = await smartHome.listDevices();
         console.log("Raw Devices Returned:", devices);
         
-        realDevices = devices.filter(d => 
-            d.id?.startsWith('light.') || 
-            d.id?.startsWith('switch.') ||
-            d.type === 'sdm.devices.types.LIGHT' || 
-            d.type === 'LIGHT' || // Matter Client default
-            (d.traits && d.traits['sdm.devices.traits.OnOff'])
-        );
+        realDevices = devices;
         
-        console.log(`Filtered Devices: ${realDevices.length} (from ${devices.length} raw)`);
+        console.log(`Loaded Devices: ${realDevices.length}`);
 
         if (realDevices.length === 0) {
             console.log("No existing devices found. User can pair later.");
@@ -2243,9 +3011,10 @@ async function spawnVirtualLights(lights, cameraMatrix) {
              continue;
          }
 
-         // A. Check Explicit Link (nodeId)
+         // A. Check Explicit Link (nodeId or entity_id)
          if (vl.linkedNodeId) {
-             matchedDevice = realDevices.find(d => d.id === vl.linkedNodeId || d.nodeId === vl.linkedNodeId);
+              matchedDevice = (smartHome && smartHome.devices && smartHome.devices.get(vl.linkedNodeId)) ||
+                  realDevices.find(d => d.id === vl.linkedNodeId || d.nodeId === vl.linkedNodeId);
          }
          
          // B. Check Label Match (Name-based) - only if explicit and not original label
@@ -2266,7 +3035,8 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                   if (vl.updateVisuals) vl.updateVisuals();
               }
          } else {
-              if (vl.realDevice) {
+              const stillInSmartHome = vl.linkedNodeId && smartHome && smartHome.devices && smartHome.devices.has(vl.linkedNodeId);
+              if (!stillInSmartHome && vl.realDevice && realDevices.length > 0) {
                    console.log(`[Link] Unlinked '${vl.labelText}'`);
                    vl.realDevice = null;
                    if (vl.mesh) vl.mesh.material.color.setHex(0xFFFF00); // Yellow (Unlinked)
@@ -2274,29 +3044,31 @@ async function spawnVirtualLights(lights, cameraMatrix) {
               }
           }
 
-          // Poll State if linked (Throttle during scan?)
+          // Poll State if linked (Throttle during scan)
           if (vl.realDevice && smartHome && !isScanning) {
-              smartHome.getLightState(vl.realDevice.id).then(isOn => {
-                 if (isOn !== null && vl.isOn !== isOn) {
-                     // ... (State Sync Logic)
-                     console.log(`[Poll] Syncing State for ${vl.labelText}: ${isOn ? 'ON' : 'OFF'}`);
-                     vl.isOn = isOn;
-                     if (vl.mesh) {
-                         const color = vl.isOn ? 0xFFFFFF : 0x00FF00;
-                         vl.mesh.material.color.setHex(color);
-                         vl.mesh.material.emissive.setHex(color);
-                         vl.mesh.material.emissiveIntensity = vl.isOn ? 1.0 : 0.2;
-                     }
-                     // For 3D panel update, we should call updateVisuals()
-                     if (vl.updateVisuals) {
+              const currentDev = smartHome.devices.get(vl.realDevice.id);
+              if (currentDev) {
+                  const stateChanged = (vl.realDevice.state !== currentDev.state) ||
+                                       (vl.isOn !== currentDev.isOn) ||
+                                       (vl.realDevice.battery !== currentDev.battery) ||
+                                       (vl.realDevice.fanSpeed !== currentDev.fanSpeed);
+                  if (stateChanged) {
+                      console.log(`[Poll] Syncing State for ${vl.labelText}: ${currentDev.state || (currentDev.isOn ? 'ON' : 'OFF')}`);
+                      vl.realDevice = currentDev;
+                      vl.isOn = currentDev.isOn;
+                      if (vl.mesh) {
+                          const color = vl.isOn ? 0xFFFFFF : 0x00FF00;
+                          vl.mesh.material.color.setHex(color);
+                          vl.mesh.material.emissive.setHex(color);
+                          vl.mesh.material.emissiveIntensity = vl.isOn ? 1.0 : 0.2;
+                      }
+                      if (vl.updateVisuals) {
                           vl.updateVisuals();
-                     }
-                     
-                     // Force HUD Refresh (2D) to reflect color change immediately
-                     if (hud && hud.drawLights) hud.drawLights(virtualLights);
-                 }
-             });
-         }
+                      }
+                      if (hud && hud.drawLights) hud.drawLights(virtualLights);
+                  }
+              }
+          }
      }
      
      // Update HUD

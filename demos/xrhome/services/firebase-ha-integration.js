@@ -25,14 +25,20 @@ export class FirebaseHAIntegration {
       this.devices.clear();
       if (data.devices) {
         data.devices.forEach(entity => {
+          const domain = entity.domain || entity.entity_id.split('.')[0];
+          const battery = entity.attributes?.battery_level !== undefined ? entity.attributes.battery_level : (entity.attributes?.battery !== undefined ? entity.attributes.battery : null);
           this.devices.set(entity.entity_id, {
             id: entity.entity_id,
-            name: entity.attributes.friendly_name || entity.entity_id,
-            area: entity.area || entity.attributes.area || 'Other',
+            domain: domain,
+            name: entity.attributes?.friendly_name || entity.entity_id,
+            area: entity.area || entity.attributes?.area || 'Other',
             state: entity.state,
-            attributes: entity.attributes,
-            isOn: entity.state === 'on',
-            brightness: entity.attributes.brightness ? Math.round((entity.attributes.brightness / 255) * 100) : 100
+            attributes: entity.attributes || {},
+            isOn: entity.state === 'on' || entity.state === 'cleaning' || entity.state === 'locked' || entity.state === 'running',
+            brightness: entity.attributes?.brightness ? Math.round((entity.attributes.brightness / 255) * 100) : 100,
+            battery: battery,
+            fanSpeed: entity.attributes?.fan_speed || null,
+            related: entity.related || []
           });
         });
       }
@@ -71,19 +77,70 @@ export class FirebaseHAIntegration {
   async setColorTemp(deviceId, kelvin) {
     return await this.controlDevice(deviceId, 'turn_on', { color_temp_kelvin: kelvin });
   }
+
+  // --- Lock Controls ---
+  async controlLock(deviceId, action) {
+    // action: 'lock' | 'unlock' | 'open'
+    return await this.controlDevice(deviceId, action);
+  }
+
+  // --- Vacuum Controls & Station Commands ---
+  async controlVacuum(deviceId, command, serviceData = {}) {
+    // command: 'start' | 'pause' | 'stop' | 'return_to_base' | 'clean_spot' | 'locate'
+    return await this.controlDevice(deviceId, command, serviceData);
+  }
+
+  async setVacuumFanSpeed(deviceId, fanSpeed) {
+    return await this.controlDevice(deviceId, 'set_fan_speed', { fan_speed: fanSpeed });
+  }
+
+  async triggerVacuumDockEmpty(deviceId) {
+    const d = this.devices.get(deviceId);
+    const dockEntity = d?.attributes?.dock_empty_entity;
+    return await this.controlDevice(deviceId, 'empty_dock', { dock_empty_entity: dockEntity }, 'vacuum');
+  }
+
+  async triggerVacuumMopWash(deviceId) {
+    const d = this.devices.get(deviceId);
+    if (d && d.related && d.related.length > 0) {
+      const washBtn = d.related.find(r => r.domain === 'button' && (r.entity_id.includes('wash') || (r.name && r.name.toLowerCase().includes('wash'))));
+      if (washBtn) {
+        return await this.controlDevice(washBtn.entity_id, 'press');
+      }
+    }
+    // Fallback to vacuum.send_command
+    return await this.controlDevice(deviceId, 'send_command', { command: 'app_start_wash' });
+  }
+
+  // --- Appliance Controls ---
+  async stopAppliance(deviceId) {
+    return await this.controlDevice(deviceId, 'stop');
+  }
+
+  async toggleOvenLamp(deviceId, option = 'on', lampEntity = null) {
+    return await this.controlDevice(deviceId, 'toggle_lamp', { option, lamp_entity: lampEntity });
+  }
+
+  // --- Switch / Generic Appliance Controls ---
+  async toggleSwitch(deviceId, isOn) {
+    return await this.controlDevice(deviceId, isOn ? 'turn_on' : 'turn_off');
+  }
   
-  async controlDevice(entity_id, service, service_data = {}) {
+  async controlDevice(entity_id, service, service_data = {}, domain = null) {
       try {
+          const payload = {
+              entity_id,
+              service,
+              service_data
+          };
+          if (domain) payload.domain = domain;
+
           const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/controlHaDevice', {
               method: 'POST',
               headers: {
                   'Content-Type': 'application/json'
               },
-              body: JSON.stringify({
-                  entity_id,
-                  service,
-                  service_data
-              })
+              body: JSON.stringify(payload)
           });
           
           if (!response.ok) {
@@ -95,8 +152,14 @@ export class FirebaseHAIntegration {
           // Optimistically update local state
           const d = this.devices.get(entity_id);
           if (d) {
-              if (service === 'turn_on') d.isOn = true;
-              if (service === 'turn_off') d.isOn = false;
+              if (service === 'turn_on') { d.isOn = true; d.state = 'on'; }
+              if (service === 'turn_off') { d.isOn = false; d.state = 'off'; }
+              if (service === 'lock') { d.state = 'locked'; d.isOn = true; }
+              if (service === 'unlock') { d.state = 'unlocked'; d.isOn = false; }
+              if (service === 'start' || service === 'start_pause') { d.state = 'cleaning'; d.isOn = true; }
+              if (service === 'pause') { d.state = 'paused'; }
+              if (service === 'stop' || service === 'return_to_base') { d.state = 'returning'; }
+              if (service === 'set_fan_speed' && service_data.fan_speed) { d.fanSpeed = service_data.fan_speed; }
               if (service_data.brightness !== undefined) {
                   d.brightness = Math.round((service_data.brightness / 255) * 100);
               }

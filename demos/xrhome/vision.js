@@ -43,7 +43,7 @@ export class VisionManager {
             const payload = {
                 contents: [{
                     parts: [
-                        { text: "Analyze this image from a wide-angle room camera. Find all rigid Smart Home appliances (switches, Smart TV's, appliances, and smart bulbs in lamps, ceiling, lights and elsewhere) even if they are currently turned OFF. Look carefully for any visible devices. Return a JSON array of objects with keys: label, ymin, xmin, ymax, xmax. Coordinates are normalized 0-1. If none, return empty array." },
+                        { text: "Analyze this image from a wide-angle room camera. Detect all smart home devices, appliances, and fixtures even if they are currently turned off. Specifically identify: door locks and smart deadbolts (lock), robot vacuums and charging/auto-empty docks (vacuum), dishwashers (dishwasher), ovens/stoves/ranges/microwaves (oven), refrigerators/washers/dryers/other appliances (appliance), lights/lamps/ceiling lights (light), wall switches/smart plugs (switch), thermostats/AC units (climate), and smart TVs/speakers (media_player). Return a JSON array of objects with keys: label, category, ymin, xmin, ymax, xmax. Coordinates are normalized 0-1. If none, return an empty array." },
                         {
                             inline_data: {
                                 mime_type: "image/jpeg",
@@ -60,12 +60,16 @@ export class VisionManager {
                             type: "OBJECT",
                             properties: {
                                 label: { type: "STRING" },
+                                category: {
+                                    type: "STRING",
+                                    enum: ["lock", "vacuum", "dishwasher", "oven", "appliance", "light", "switch", "climate", "media_player"]
+                                },
                                 ymin: { type: "NUMBER" },
                                 xmin: { type: "NUMBER" },
                                 ymax: { type: "NUMBER" },
                                 xmax: { type: "NUMBER" }
                             },
-                            required: ["label", "ymin", "xmin", "ymax", "xmax"]
+                            required: ["label", "category", "ymin", "xmin", "ymax", "xmax"]
                         }
                     }
                 }
