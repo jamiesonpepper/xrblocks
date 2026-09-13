@@ -148,6 +148,12 @@ export class FirebaseHAIntegration {
               console.error("Control HA Device failed", errText);
               return false;
           }
+
+          const resData = await response.json().catch(() => ({}));
+          if (resData && resData.success === false) {
+              console.warn("HA Device control reported unsuccessful:", resData);
+              return false;
+          }
           
           // Optimistically update local state
           const d = this.devices.get(entity_id);

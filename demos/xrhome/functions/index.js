@@ -203,8 +203,30 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
       const childLockSensor = ovenEntities.find(e => e.entity_id === 'binary_sensor.oven_child_lock');
       const modeSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_oven_mode');
       const stopButton = ovenEntities.find(e => e.entity_id === 'button.oven_stop');
-      const lampSelect = ovenEntities.find(e => e.entity_id === 'select.oven_lamp');
-      const ovenLight = ovenEntities.find(e => e.entity_id === 'light.oven_light');
+      const lampSelect = ovenEntities.find(e => e.entity_id === 'select.oven_lamp' || (e.entity_id.startsWith('select.') && e.entity_id.includes('lamp')));
+      const ovenLight = ovenEntities.find(e => e.entity_id === 'light.oven_light' || (e.entity_id.startsWith('light.') && e.entity_id.includes('oven')));
+      const lampSensor = ovenEntities.find(e => 
+        (e.entity_id.startsWith('sensor.') || e.entity_id.startsWith('binary_sensor.')) &&
+        (e.entity_id.includes('lamp') || e.entity_id.includes('light'))
+      );
+
+      let lampEntity = undefined;
+      let lampState = undefined;
+      let lampControllable = false;
+
+      if (ovenLight) {
+        lampEntity = ovenLight.entity_id;
+        lampState = ovenLight.state;
+        lampControllable = true;
+      } else if (lampSelect) {
+        lampEntity = lampSelect.entity_id;
+        lampState = lampSelect.state;
+        lampControllable = true;
+      } else if (lampSensor) {
+        lampEntity = lampSensor.entity_id;
+        lampState = lampSensor.state;
+        lampControllable = false;
+      }
       
       const secTempSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_second_cavity_temperature');
       const secSetpointSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_second_cavity_setpoint');
@@ -232,8 +254,9 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
           door_open: doorSensor ? (doorSensor.state === 'on') : undefined,
           child_lock: childLockSensor ? (childLockSensor.state === 'on') : undefined,
           mode: (modeSensor && modeSensor.state !== 'unknown') ? modeSensor.state : undefined,
-          lamp_entity: lampSelect ? lampSelect.entity_id : (ovenLight ? ovenLight.entity_id : undefined),
-          lamp_state: lampSelect?.state || ovenLight?.state,
+          lamp_entity: lampEntity,
+          lamp_state: lampState,
+          lamp_controllable: lampControllable,
           stop_entity: stopButton ? stopButton.entity_id : undefined,
           second_cavity_temperature: (secTempSensor && secTempSensor.state !== 'unavailable') ? parseFloat(secTempSensor.state) : undefined,
           second_cavity_setpoint: (secSetpointSensor && secSetpointSensor.state !== 'unavailable') ? parseFloat(secSetpointSensor.state) : undefined,
@@ -385,6 +408,9 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
           const option = service_data?.option || 'on';
           const lampEntity = service_data?.lamp_entity || 'select.oven_lamp';
           const lDomain = lampEntity.split('.')[0];
+          if (lDomain === 'sensor' || lDomain === 'binary_sensor') {
+            return res.status(200).json({ success: false, controllable: false, error: "Oven light is a read-only indicator" });
+          }
           try {
             let result;
             if (lDomain === 'light') {
@@ -393,10 +419,10 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
             } else {
               result = await callHaApi('/api/services/select/select_option', 'POST', { entity_id: lampEntity, option });
             }
-            return res.status(200).json({ success: true, result });
+            return res.status(200).json({ success: true, controllable: true, result });
           } catch (lampErr) {
             console.warn("Could not toggle oven lamp:", lampErr);
-            return res.status(200).json({ success: false, error: lampErr.message });
+            return res.status(200).json({ success: false, controllable: false, error: lampErr.message });
           }
         }
       }

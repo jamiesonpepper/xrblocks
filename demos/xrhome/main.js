@@ -282,7 +282,7 @@ import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
 import { VisionManager } from './vision.js?v=26';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=38';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=41';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
@@ -1146,28 +1146,56 @@ class VirtualLight3D extends THREE.Group {
 
           if (attrs.lamp_entity) {
               const lampOn = (attrs.lamp_state === 'on' || attrs.lamp_state === 'lamp_on');
-              const lampBtn = new xb.UIButton({
-                  ariaLabel: 'Oven Lamp',
-                  userData: { interactive: true },
-                  style: {
-                      flexGrow: 1,
-                      height: 36,
-                      borderRadius: 8,
-                      backgroundColor: lampOn ? 'rgba(255, 204, 0, 0.35)' : 'rgba(255, 255, 255, 0.14)',
-                      borderWidth: 1,
-                      borderColor: lampOn ? '#FFCC00' : 'rgba(255, 255, 255, 0.5)',
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 6
-                  },
-                  children: [
-                      new xb.UIIcon({ icon: 'lightbulb', style: { width: 18, height: 18, color: '#FFFFFF' } }),
-                      new xb.UIText({ text: lampOn ? 'Lamp ON' : 'Lamp OFF', style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
-                  ],
-                  onClick: () => this.toggleOvenLamp()
-              });
-              ovenControls.push(lampBtn);
+              const isLampControllable = (attrs.lamp_controllable !== false) &&
+                                         !attrs.lamp_entity.startsWith('binary_sensor.') &&
+                                         !attrs.lamp_entity.startsWith('sensor.') &&
+                                         !this.lampControlFailed;
+
+              if (isLampControllable) {
+                  const lampBtn = new xb.UIButton({
+                      ariaLabel: 'Oven Lamp',
+                      userData: { interactive: true },
+                      style: {
+                          flexGrow: 1,
+                          height: 36,
+                          borderRadius: 8,
+                          backgroundColor: lampOn ? 'rgba(255, 204, 0, 0.35)' : 'rgba(255, 255, 255, 0.14)',
+                          borderWidth: 1,
+                          borderColor: lampOn ? '#FFCC00' : 'rgba(255, 255, 255, 0.5)',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6
+                      },
+                      children: [
+                          new xb.UIIcon({ icon: 'lightbulb', style: { width: 18, height: 18, color: '#FFFFFF' } }),
+                          new xb.UIText({ text: lampOn ? 'Lamp ON' : 'Lamp OFF', style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
+                      ],
+                      onClick: () => this.toggleOvenLamp()
+                  });
+                  ovenControls.push(lampBtn);
+              } else {
+                  // Non-interactive status badge
+                  const lampBadge = new xb.UIPanel({
+                      style: {
+                          flexGrow: 1,
+                          height: 36,
+                          borderRadius: 8,
+                          backgroundColor: lampOn ? 'rgba(255, 204, 0, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                          borderWidth: 1,
+                          borderColor: lampOn ? '#FFCC00' : 'rgba(255, 255, 255, 0.2)',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6
+                      },
+                      children: [
+                          new xb.UIIcon({ icon: 'lightbulb', style: { width: 18, height: 18, color: lampOn ? '#FFCC00' : 'rgba(255, 255, 255, 0.6)' } }),
+                          new xb.UIText({ text: lampOn ? 'Lamp: ON' : 'Lamp: OFF', style: { fontSize: 13, fontWeight: 'bold', color: lampOn ? '#FFE875' : 'rgba(255, 255, 255, 0.6)' } })
+                      ]
+                  });
+                  ovenControls.push(lampBadge);
+              }
           }
 
           if (ovenControls.length > 0) {
@@ -1970,11 +1998,28 @@ class VirtualLight3D extends THREE.Group {
       const nextLamp = (currentLamp === 'on' || currentLamp === 'lamp_on') ? 'off' : 'on';
       hud.speak(`Oven Lamp ${nextLamp}`);
       const lampEnt = this.realDevice.attributes?.lamp_entity || null;
-      smartHome.toggleOvenLamp(this.realDevice.id, nextLamp, lampEnt).then(() => {
+      smartHome.toggleOvenLamp(this.realDevice.id, nextLamp, lampEnt).then((res) => {
+          if (res === false) {
+              this.lampControlFailed = true;
+              if (this.realDevice.attributes) {
+                  this.realDevice.attributes.lamp_controllable = false;
+              }
+              this.updateVisuals();
+              hud.log('Oven lamp is read-only', '#FFAA00');
+              return;
+          }
           if (this.realDevice.attributes) this.realDevice.attributes.lamp_state = nextLamp;
           this.updateVisuals();
           hud.log(`Oven Lamp ${nextLamp.toUpperCase()}`, '#FFFFFF');
-      }).catch(err => console.warn("Oven lamp error:", err));
+      }).catch(err => {
+          console.warn("Oven lamp error:", err);
+          this.lampControlFailed = true;
+          if (this.realDevice.attributes) {
+              this.realDevice.attributes.lamp_controllable = false;
+          }
+          this.updateVisuals();
+          hud.log('Oven lamp is read-only', '#FFAA00');
+      });
   }
 
   setBrightness(val) {
