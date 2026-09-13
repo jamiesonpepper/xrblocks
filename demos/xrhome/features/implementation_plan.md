@@ -1,91 +1,77 @@
-# Home Assistant Cloud Integration via Long-Lived Access Token
+# Home Assistant Cloud WebSocket & Spatial Integration Plan
 
-This plan refactors the device integration to use Home Assistant Cloud (Nabu Casa or remote access) instead of Google Home Graph. We will use a Long-Lived Access Token to authenticate with the Home Assistant API. This will allow us to retrieve a complete list of devices (entities) and assign thto spatial coordinates within the XR environment.
+This document outlines the architecture and implementation for integrating Home Assistant Cloud (Nabu Casa) with XRHome using a **Hybrid Client WebSocket** architecture. This enables sub-millisecond, push-based real-time state telemetry (e.g., live countdowns, temperatures, toggles) directly on spatial UICards in AR/VR, while utilizing Firebase Cloud Functions for secure credential distribution, complex entity aggregation, and Firestore spatial anchor persistence.
 
-## Open Questions
+## Architecture Overview
 
-> [!WARNING]
-> **API Choice: REST vs WebSocket**
-> Home Assistant offers both a REST API (`/api/states`) and a WebSocket API.
->
-> - **REST API**: Very easy to fetch the initial device list for coordinate mapping.
-> - **WebSocket API**: More complex to set up, but allows for instant real-time state updates (e.g., if a light is turned on physically, it instantly updates in XR without polling).
->
-> Because we are routing traffic through Firebase Cloud Functions (which are stateless and short-lived), I propose we use the **REST API** for this implementation. This will easily let us fetch the device list for coordinate mapping, and simple REST `POST` calls to control them. Does this sound good?
+```
+┌────────────────────────────────────────────────────────┐
+│                   XRHome Browser / Quest               │
+│                                                        │
+│  1. Fetch initial stitched devices & 3D anchors        │
+│     via Cloud Functions (Secure / Cached)              │
+│                                                        │
+│  2. Open direct WebSocket to Nabu Casa:               │
+│     wss://<remote-id>.ui.nabu.casa/api/websocket       │
+│                                                        │
+│  3. Subscribe to "state_changed" push events           │
+└────────────┬─────────────────────────────▲─────────────┘
+             │ (REST / Firestore)          │ (Direct WSS Push)
+             ▼                             │
+┌─────────────────────────┐   ┌────────────┴─────────────┐
+│ Firebase Cloud Functions│   │ Home Assistant Cloud     │
+│ & Firestore             │   │ (Nabu Casa WebSocket)    │
+│                         │   │                          │
+│ - Anchor Persistence    │   │ - Instant 0ms state push │
+│ - Initial Stitched List │   │ - Real-time countdowns   │
+└─────────────────────────┘   └──────────────────────────┘
+```
 
-## Proposed Changes
+---
 
-### 1. Configuration & Secrets Setup
+## Technical Decisions & Status
 
-We will update the environment configuration to store the Home Assistant URL and Token securely.
+> [!NOTE]
+> **API Decision: Hybrid Client WebSocket (RESOLVED)**
+> - **Initial Aggregation**: Firebase Cloud Function `getHaDevices` fetches the entity list, parses device domains, and stitches related telemetry sensors (e.g., dishwasher program progress, oven cavity lamps, vacuum docking status) into unified device objects.
+> - **Real-Time Push**: The browser establishes a direct WebSocket connection (`wss://<nabu-casa-host>/api/websocket`) to Home Assistant Cloud and subscribes to `state_changed` events.
+> - **Result**: Zero polling overhead, sub-50ms latency for physical wall switches, live timers, and sensor updates reflected immediately in XR.
 
-#### [MODIFY] `.env` and `sample.env`
+---
 
-- Add `HA_URL` (e.g., `https://my-home.ui.nabu.casa`).
-- Add `HA_TOKEN` (The Long-Lived Access Token).
-- These values will be deployed to Firebase Secret Manager, keeping them secure and out of the browser.
+## Detailed Components
 
-### 2. Backend Integration (Firebase Cloud Functions)
+### 1. Configuration & Security Setup
+- **`functions/.env`**: Stores `HA_URL` (e.g., `https://<id>.ui.nabu.casa`) and `HA_TOKEN` (Long-Lived Access Token).
+- **`getConfig` Cloud Function**: Securely supplies the necessary connection endpoints and tokens to authenticated headset/browser client sessions so manual token entry on headset virtual keyboards is unnecessary.
 
-We will route traffic through Firebase to keep the token secure and avoid CORS issues.
+### 2. Backend Integration (`functions/index.js`)
+- **`getConfig`**: Returns runtime configuration (`haUrl`, `haToken`, `geminiKey`, `firebaseApiKey`).
+- **`getHaDevices`**: Aggregates raw Home Assistant entities across domains (`light`, `switch`, `vacuum`, `climate`, `water_heater`, `sensor`, `binary_sensor`) into compound appliances with friendly names, areas, and related telemetry.
+- **`controlHaDevice`**: Handles command execution with validation and graceful error reporting (`{ success, controllable, error }`).
+- **Spatial Anchors**: Manages 3D world poses in native Firestore (`saveAnchor`, `getAnchors`, `deleteAnchor`, `resetAnchors`).
 
-#### [MODIFY] `functions/index.js` (HA Proxy Endpoints)
+### 3. Client WebSocket Event Bus (`services/firebase-ha-integration.js`)
+- **`connectWebSocket(haUrl, haToken)`**:
+  - Establishes a connection to `wss://<ha_host>/api/websocket`.
+  - Handles the authentication handshake (`auth_required` -> `auth` -> `auth_ok`).
+  - Sends `subscribe_events` for `state_changed`.
+  - Auto-reconnects with exponential backoff on network changes or sleep/wake cycles.
+- **Event Dispatcher**:
+  - Updates local entity attributes in the `devices` Map.
+  - Matches child entity changes (e.g., `sensor.dishwasher_remaining_program_time`) to their parent compound appliance.
+  - Emits `onEntityStateChanged(entityId, newState, parentDevice)` to update spatial cards.
 
-- Access `HA_URL` and `HA_TOKEN` from Firebase secrets.
-- `getHaDevices`: A new Cloud Function that securely calls the Home Assistant `/api/states` endpoint and returns the filtered list of devices to the frontend.
-- `controlHaDevice`: A new Cloud Function to send state changes (e.g., `/api/services/light/turn_on`) to Home Assistant.
+### 4. XR Spatial Synchronization (`main.js`)
+- **Initialization**:
+  - Starts the WebSocket stream on boot via `apiConfig` from `getConfig`.
+- **Reactive UI Cards (`VirtualLight3D`)**:
+  - Whenever a `state_changed` event matches a paired device's `entity_id` or any of its `related` telemetry entities, the associated 3D spatial card updates its internal state and triggers `updateVisuals()`.
+  - No flicker, no full DOM/group reconstruction—just instant, fluid telemetry updates (countdown timer ticks, light on/off state, temperature changes).
 
-### 3. Frontend Configuration (`index.html` & `main.js`)
-
-#### [MODIFY] `index.html`
-
-- Remove the Google Home Graph configuration inputs (Agent User ID, etc.) from the config UI completely. No other configuration UI should exist.
-
-#### [MODIFY] `main.js` / `auth.js`
-
-- Update the pairing/linking mode logic (triggered via the associated icon) to call the `/getHaDevices` Cloud Function.
-- Filter the returned entities to relevant domains (e.g., `light.*`, `switch.*`, `media_player.*`).
-- Pass this list to the spatial mapping UI so you can assign XR coordinates to specific HA entity IDs.
-
-### 4. XR Spatial Mapping Integration
-
-#### [MODIFY] `services/firebase-home-graph.js` (Rename to `firebase-ha-integration.js` or similar)
-
-- Update the data model to store HA `entity_id`s mapped to spatial anchors in Firestore, rather than Google Home IDs.
-- Update the execution logic: when a user interacts with a virtual device, trigger the HA service call via the `controlHaDevice` Cloud Function.
-
-#### [MODIFY] `main.js` (Scanning Lifecycle Cleanup & Committing Anchors)
-
-- Add logic to hook into the `toggleScan()` function.
-- When the user **starts** a new "House Scan" session, iterate through all detected `virtualLights`.
-- Any light from the previous session that does not have a `linkedNodeId` or `realDevice` (i.e., remains unmapped) should be destroyed from the scene to prevent ghostly artifacts.
-- When a device is successfully mapped via the UI, immediately commit its XR coordinates to the Firebase Realtime Database.
-
-#### [MODIFY] `main.js` (Selectable Device List UI)
-
-- Update `VirtualLight3D` to handle a new "Selection Mode".
-- When the user clicks the "link" icon on an unmapped spatial anchor, it should temporarily rebuild the spatial panel to show a paginated list of Home Assistant devices (e.g., 10 devices per page with Next/Prev buttons).
-- Clicking a device in this list maps the anchor to that Home Assistant `entity_id`, exits selection mode, and restores the standard control UI.
-
-## Verification Plan
-
-### Manual Verification
-
-1. Update your local `.env` with your `HA_URL` and `HA_TOKEN`.
-2. Deploy the updated Cloud Functions (with the new secrets).
-3. Open the XR application and click the icon to enter pairing/linking mode.
-4. Verify that a list of your actual home devices is queried automatically and populates in the mapping wizard.
-5. Assign a spatial coordinate to a specific HA entity (e.g., `light.office_lamp`).
-6. Interact with the virtual device in XR and verify that the physical device state changes via the Home Assistant API.
-
-### 5. HUD Refactor to `uiblocks` (Jetpack Glimmer)
-The current HUD uses native `xb.SpatialPanel` instead of the newer `uiblocks` standard.
-- **`index.html`**: Add `@pmndrs/uikit` and `yoga-layout` dependencies to the import map to support the `uiblocks` UI rendering engine.
-- **`hud.js`**: Rewrite `HUDManager` to use `UICard`, `UIPanel`, `UIText`, and `UIIcon`.
-- **Jetpack Glimmer Aesthetic**: We will replace the failing `#ffffff33` hex color with proper `uikit` translucent properties (e.g., solid colors with `opacity`, or dark glassmorphism effects) to achieve the premium Jetpack Compose Glimmer look.
-
-### 6. Fixing Invisible Spatial Labels
-The scanner detects 3 devices, but `VirtualLight3D` panels are not visible.
-- **Scale & Sizing**: The `VirtualLight3D` is currently initializing with a tiny `0.15m` width. We will significantly increase the default dimensions and font sizes.
-- **Font Scaling Lock**: As documented in the XRBlocks KI, we will ensure `mode: 'center'` is strictly enforced on all `addText` calls in `VirtualLight3D` to prevent the `fitWidth` scaling lock from crushing the text into a microscopic size.
-- **Z-Depth Ordering**: Ensure the labels are pushed to the correct render layer so they don't clip inside the wall meshes.
+### 5. Spatial Mapping & Scanning Lifecycle
+- **HUD Integration**:
+  - Unmapped spatial anchors can be linked to any Home Assistant device from the stitched list.
+  - Paired positions and rotations are saved directly to Firestore.
+- **Ghost Elimination**:
+  - Scanning resets and house-scale re-scans purge unmapped placeholders, retaining physical anchors.

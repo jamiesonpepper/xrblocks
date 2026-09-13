@@ -282,7 +282,7 @@ import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
 import { VisionManager } from './vision.js?v=26';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=41';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=42';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
@@ -2118,13 +2118,37 @@ async function initApp(preloadedConfig = null) {
             projectId: apiConfig.projectId,
         };
         smartHome = new FirebaseHAIntegration(apiConfig.projectId);
-        await smartHome.listen();
+        await smartHome.listen(apiConfig.haUrl, apiConfig.haToken);
         console.log(`Home Assistant Connected! Successfully retrieved ${smartHome.devices.size} devices.`);
         
         // Listen for device changes
         smartHome.onDevicesChanged = (devices) => {
             console.log("Devices updated via HA:", devices);
             refreshRealDevices();
+        };
+
+        // Real-time Push State & Telemetry Updates via WebSocket
+        smartHome.onEntityStateChanged = (entityId, newState, dev) => {
+            virtualLights.forEach(vl => {
+                if (!vl.realDevice) return;
+                const isDirectMatch = (vl.realDevice.id === entityId || vl.linkedNodeId === entityId);
+                const isRelatedMatch = (dev && vl.realDevice.id === dev.id) ||
+                                       (vl.realDevice.attributes?.lamp_entity === entityId) ||
+                                       (vl.realDevice.related && vl.realDevice.related.some(r => r.entity_id === entityId));
+
+                if (isDirectMatch || isRelatedMatch) {
+                    if (dev) {
+                        vl.realDevice = dev;
+                        vl.isOn = dev.isOn;
+                        if (dev.brightness !== undefined) vl.brightness = dev.brightness;
+                    } else if (newState) {
+                        vl.realDevice.state = newState.state;
+                        vl.realDevice.attributes = { ...vl.realDevice.attributes, ...newState.attributes };
+                        vl.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state);
+                    }
+                    vl.updateVisuals();
+                }
+            });
         };
     } else {
         console.warn("No Firebase API Key found, skipping Firebase initialization.");

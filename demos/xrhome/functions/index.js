@@ -12,7 +12,9 @@ exports.getConfig = functions.https.onRequest((req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.json({
     geminiKey: process.env.GEMINI_API_KEY || "",
-    firebaseApiKey: process.env.WEB_API_KEY || ""
+    firebaseApiKey: process.env.WEB_API_KEY || "",
+    haUrl: process.env.HA_URL || "",
+    haToken: process.env.HA_TOKEN || ""
   });
 });
 

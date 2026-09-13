@@ -3,16 +3,199 @@ export class FirebaseHAIntegration {
     this.appId = appId;
     this.devices = new Map();
     this.onDevicesChanged = null;
+    this.onEntityStateChanged = null;
     
-    // We will simulate a listener that periodically fetches devices or relies on manual refresh
-    this.pollInterval = null;
+    // WebSocket state for real-time push updates
+    this.ws = null;
+    this.wsUrl = null;
+    this.wsToken = null;
+    this.wsMsgId = 1;
+    this.wsReconnectTimer = null;
+    this.wsConnected = false;
+    this.reconnectAttempts = 0;
   }
 
-  async listen() {
-    // In a real Home Assistant integration, this would open a WebSocket.
-    // For now, we'll do an initial fetch.
+  async listen(haUrl = null, haToken = null) {
     await this.refreshDevices();
+    if (haUrl && haToken) {
+      this.connectWebSocket(haUrl, haToken);
+    }
     return true;
+  }
+
+  connectWebSocket(haUrl, haToken) {
+    if (!haUrl || !haToken) {
+      console.warn("[HA WebSocket] Missing haUrl or haToken, skipping WebSocket connection.");
+      return;
+    }
+
+    let wsBase = haUrl.trim().replace(/^http/, 'ws').replace(/\/$/, '');
+    if (!wsBase.endsWith('/api/websocket')) {
+      wsBase += '/api/websocket';
+    }
+    this.wsUrl = wsBase;
+    this.wsToken = haToken;
+
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
+    console.log(`[HA WebSocket] Connecting to ${this.wsUrl}...`);
+    try {
+      this.ws = new WebSocket(this.wsUrl);
+
+      this.ws.onopen = () => {
+        console.log("[HA WebSocket] Socket opened, awaiting auth_required...");
+        this.reconnectAttempts = 0;
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          this.handleWebSocketMessage(msg);
+        } catch (err) {
+          console.warn("[HA WebSocket] Failed to parse message:", event.data, err);
+        }
+      };
+
+      this.ws.onerror = (err) => {
+        console.warn("[HA WebSocket] Error:", err);
+      };
+
+      this.ws.onclose = (event) => {
+        console.log(`[HA WebSocket] Connection closed (code: ${event.code}). Scheduling reconnect...`);
+        this.wsConnected = false;
+        this.scheduleWebSocketReconnect();
+      };
+    } catch (err) {
+      console.error("[HA WebSocket] Initialization error:", err);
+      this.scheduleWebSocketReconnect();
+    }
+  }
+
+  disconnectWebSocket() {
+    if (this.wsReconnectTimer) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = null;
+    }
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch (_) {}
+      this.ws = null;
+    }
+    this.wsConnected = false;
+  }
+
+  scheduleWebSocketReconnect() {
+    if (this.wsReconnectTimer) return;
+    this.reconnectAttempts++;
+    const delay = Math.min(30000, Math.max(2000, 1000 * Math.pow(1.5, this.reconnectAttempts)));
+    console.log(`[HA WebSocket] Reconnecting in ${Math.round(delay / 1000)}s (attempt ${this.reconnectAttempts})...`);
+    this.wsReconnectTimer = setTimeout(() => {
+      this.wsReconnectTimer = null;
+      if (this.wsUrl && this.wsToken) {
+        this.connectWebSocket(this.wsUrl, this.wsToken);
+      }
+    }, delay);
+  }
+
+  handleWebSocketMessage(msg) {
+    if (!msg || !msg.type) return;
+
+    if (msg.type === 'auth_required') {
+      console.log("[HA WebSocket] Auth required. Sending token...");
+      this.ws.send(JSON.stringify({
+        type: 'auth',
+        access_token: this.wsToken
+      }));
+    } else if (msg.type === 'auth_ok') {
+      console.log("[HA WebSocket] Authenticated successfully! Subscribing to state_changed events...");
+      this.wsConnected = true;
+      this.wsMsgId++;
+      this.ws.send(JSON.stringify({
+        id: this.wsMsgId,
+        type: 'subscribe_events',
+        event_type: 'state_changed'
+      }));
+    } else if (msg.type === 'auth_invalid') {
+      console.error("[HA WebSocket] Authentication failed:", msg.message);
+      this.wsConnected = false;
+    } else if (msg.type === 'event' && msg.event?.event_type === 'state_changed') {
+      const data = msg.event.data;
+      if (!data) return;
+      this.processStateChangedEvent(data.entity_id, data.new_state, data.old_state);
+    }
+  }
+
+  processStateChangedEvent(entityId, newState, oldState) {
+    if (!newState) return;
+    let targetDevice = null;
+
+    // 1. Direct device match
+    if (this.devices.has(entityId)) {
+      const d = this.devices.get(entityId);
+      d.state = newState.state;
+      d.attributes = { ...d.attributes, ...newState.attributes };
+      d.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state);
+      if (newState.attributes?.brightness !== undefined) {
+        d.brightness = Math.round((newState.attributes.brightness / 255) * 100);
+      }
+      if (newState.attributes?.battery_level !== undefined) {
+        d.battery = newState.attributes.battery_level;
+      } else if (newState.attributes?.battery !== undefined) {
+        d.battery = newState.attributes.battery;
+      }
+      if (newState.attributes?.fan_speed !== undefined) {
+        d.fanSpeed = newState.attributes.fan_speed;
+      }
+      targetDevice = d;
+    }
+
+    // 2. Check if this entity is associated with a compound appliance (dishwasher, oven, vacuum station, etc.)
+    for (const d of this.devices.values()) {
+      let isRelated = false;
+
+      // Match via related list
+      if (d.related && d.related.some(r => r.entity_id === entityId)) {
+        isRelated = true;
+      }
+
+      // Match via specific attributes
+      if (d.attributes?.lamp_entity === entityId) {
+        d.attributes.lamp_state = newState.state;
+        isRelated = true;
+      }
+      if (d.attributes?.countdown_entity === entityId || 
+          entityId.includes('remaining_program_time') || 
+          entityId.includes('program_progress') || 
+          entityId.includes('remaining_time')) {
+        if (d.domain === 'dishwasher' || d.domain === 'oven' || d.entity_id.includes('dishwasher') || d.entity_id.includes('oven')) {
+          d.attributes.remaining_time = newState.state;
+          isRelated = true;
+        }
+      }
+      if (entityId.includes('operation_state') || entityId.includes('operating_state')) {
+        if (d.domain === 'dishwasher' || d.domain === 'oven') {
+          d.attributes.operating_state = newState.state;
+          d.state = newState.state;
+          isRelated = true;
+        }
+      }
+      if (entityId.includes('temperature') && (d.domain === 'oven' || d.domain === 'climate')) {
+        d.attributes.current_temperature = newState.state;
+        isRelated = true;
+      }
+
+      if (isRelated && !targetDevice) {
+        targetDevice = d;
+      }
+    }
+
+    // 3. Emit notification for spatial cards
+    if (this.onEntityStateChanged) {
+      this.onEntityStateChanged(entityId, newState, targetDevice);
+    }
   }
 
   async refreshDevices() {
