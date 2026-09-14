@@ -600,6 +600,8 @@ class VirtualLight3D extends THREE.Group {
       this.expandedAreas = new Set();
       this.hasCollapsedRecommended = false;
       this.hasBeenMoved = false;
+      const cat = (this.category || '').toLowerCase();
+      this.deviceFilterMode = (cat === 'light' || cat === 'switch') ? 'room' : 'recommended';
 
       // 3. Label + Interface (UICard)
       this.panelWidth = width;
@@ -1602,12 +1604,17 @@ class VirtualLight3D extends THREE.Group {
       recommended.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
 
       if (!this.expandedAreas) this.expandedAreas = new Set();
+      if (!this.deviceFilterMode) {
+          const cat = (this.category || '').toLowerCase();
+          this.deviceFilterMode = (cat === 'light' || cat === 'switch') ? 'room' : 'recommended';
+      }
+      const isRecMode = (this.deviceFilterMode === 'recommended');
 
       // 4. Build flattened list of visible tree nodes
       const visibleItems = [];
 
-      // Add Recommended section at top if matches found
-      if (recommended.length > 0) {
+      // Add Recommended section at top only if filter mode is 'recommended' and matches found
+      if (isRecMode && recommended.length > 0) {
           const recAreaName = `⭐ Recommended (${targetCat.toUpperCase()})`;
           const isRecExpanded = !this.hasCollapsedRecommended;
           visibleItems.push({
@@ -1663,15 +1670,44 @@ class VirtualLight3D extends THREE.Group {
               alignItems: 'center',
           },
           children: [
-              new xb.UIText({ text: 'Select Device', style: { fontSize: 16, fontWeight: 'bold', color: '#FFFFFF' } }),
-              new xb.UIButton({
-                  label: '✕',
-                  ariaLabel: 'Cancel selection',
-                  style: { width: 30, height: 30, borderRadius: 6, borderWidth: 1, borderColor: '#FFFFFF', backgroundColor: 'rgba(255, 255, 255, 0.12)' },
-                  onClick: () => {
-                      this.isSelectingDevice = false;
-                      this.rebuildPanel();
-                  }
+              new xb.UIText({ text: 'Select Device', style: { fontSize: 15, fontWeight: 'bold', color: '#FFFFFF' } }),
+              new xb.UIPanel({
+                  style: {
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6
+                  },
+                  children: [
+                      new xb.UIButton({
+                          label: isRecMode ? '⭐ Recommended' : '🏠 By Room',
+                          ariaLabel: `Filter mode: ${isRecMode ? 'Recommended' : 'Room'}. Click to toggle.`,
+                          userData: { interactive: true },
+                          style: {
+                              height: 28,
+                              borderRadius: 6,
+                              borderWidth: 1,
+                              borderColor: isRecMode ? '#00FF88' : 'rgba(255, 255, 255, 0.7)',
+                              backgroundColor: isRecMode ? 'rgba(0, 255, 136, 0.22)' : 'rgba(255, 255, 255, 0.14)',
+                              fontSize: 11,
+                              fontWeight: 'bold',
+                              color: '#FFFFFF'
+                          },
+                          onClick: () => {
+                              this.deviceFilterMode = isRecMode ? 'room' : 'recommended';
+                              this.devicePage = 0;
+                              this.rebuildPanel();
+                          }
+                      }),
+                      new xb.UIButton({
+                          label: '✕',
+                          ariaLabel: 'Cancel selection',
+                          style: { width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: '#FFFFFF', backgroundColor: 'rgba(255, 255, 255, 0.12)' },
+                          onClick: () => {
+                              this.isSelectingDevice = false;
+                              this.rebuildPanel();
+                          }
+                      })
+                  ]
               })
           ]
       });
