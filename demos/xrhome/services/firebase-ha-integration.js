@@ -172,22 +172,67 @@ export class FirebaseHAIntegration {
           entityId.includes('remaining_time')) {
         if (d.domain === 'dishwasher' || d.domain === 'oven' || d.entity_id.includes('dishwasher') || d.entity_id.includes('oven')) {
           d.attributes.remaining_time = newState.state;
+          if (newState.attributes?.unit_of_measurement) {
+            d.attributes.remaining_time_unit = newState.attributes.unit_of_measurement;
+          }
           isRelated = true;
         }
       }
-      if (entityId.includes('operation_state') || entityId.includes('operating_state')) {
+      if (entityId.includes('completion_time') || entityId.includes('end_time') || entityId.includes('completion')) {
+        if (d.domain === 'dishwasher' || d.domain === 'oven' || d.entity_id.includes('dishwasher') || d.entity_id.includes('oven')) {
+          d.attributes.completion_time = newState.state;
+          isRelated = true;
+        }
+      }
+      if (entityId.includes('child_lock')) {
+        if (d.domain === 'oven' || d.domain === 'dishwasher' || d.entity_id.includes('oven')) {
+          d.attributes.child_lock = (newState.state === 'on' || newState.state === 'true');
+          isRelated = true;
+        }
+      }
+      if (entityId.includes('door')) {
+        if (d.domain === 'oven' || d.domain === 'dishwasher' || d.entity_id.includes('oven') || d.entity_id.includes('dishwasher')) {
+          d.attributes.door_open = (newState.state === 'on' || newState.state === 'open');
+          isRelated = true;
+        }
+      }
+      if (entityId.includes('second_cavity_setpoint')) {
+        if (d.domain === 'oven') {
+          d.attributes.second_cavity_setpoint = parseFloat(newState.state);
+          isRelated = true;
+        }
+      } else if (entityId.includes('setpoint') || entityId.includes('target_temperature')) {
+        if (d.domain === 'oven' || d.domain === 'climate') {
+          d.attributes.setpoint = parseFloat(newState.state);
+          if (newState.attributes?.unit_of_measurement) {
+            d.attributes.setpoint_unit = newState.attributes.unit_of_measurement;
+          }
+          isRelated = true;
+        }
+      }
+      if (entityId.includes('operation_state') || entityId.includes('operating_state') || entityId.includes('job_state') || entityId.includes('current_status')) {
         if (d.domain === 'dishwasher' || d.domain === 'oven') {
           d.attributes.operating_state = newState.state;
+          d.attributes.status = newState.state;
           d.state = newState.state;
           isRelated = true;
         }
       }
-      if (entityId.includes('temperature') && (d.domain === 'oven' || d.domain === 'climate')) {
-        d.attributes.current_temperature = newState.state;
-        isRelated = true;
+      if (entityId.includes('rinse_refill')) {
+        if (d.domain === 'dishwasher') {
+          d.attributes.rinse_refill_needed = (newState.state === 'on');
+          isRelated = true;
+        }
+      }
+      if (entityId.includes('clean_indicator') || entityId.includes('clean_complete')) {
+        if (d.domain === 'dishwasher') {
+          d.attributes.clean_complete = (newState.state === 'on');
+          isRelated = true;
+        }
       }
 
-      if (isRelated && !targetDevice) {
+      if (isRelated) {
+        // Compound appliance always takes precedence as targetDevice over subordinate child entities
         targetDevice = d;
       }
     }

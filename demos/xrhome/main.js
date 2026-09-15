@@ -282,7 +282,7 @@ import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
 import { VisionManager } from './vision.js?v=26';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=42';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=45';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
@@ -469,6 +469,81 @@ function kelvinToHex(k) {
     }
     const toHex = (n) => Math.round(n).toString(16).padStart(2, '0');
     return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function toFahrenheit(val, unit) {
+    if (val === undefined || val === null || val === 'unknown' || val === 'unavailable') return null;
+    const num = Number(val);
+    if (isNaN(num)) return null;
+    const u = String(unit || '').toUpperCase();
+    if (u.includes('F')) {
+        return Math.round(num);
+    }
+    // Convert Celsius to Fahrenheit
+    return Math.round((num * 9 / 5) + 32);
+}
+
+function formatCompletionTimestamp(isoString) {
+    if (!isoString || isoString === 'unknown' || isoString === 'unavailable') return null;
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return null;
+    
+    let timeZone = undefined;
+    try {
+        timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+    } catch (_) {}
+
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    
+    const timePart = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone });
+    if (isToday) {
+        return `Today at ${timePart}`;
+    } else {
+        const datePart = d.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone });
+        return `${datePart}, ${timePart}`;
+    }
+}
+
+function formatDishwasherRemainingTime(val, unit) {
+    if (!val || val === 'unknown' || val === 'unavailable') return null;
+    
+    let totalSeconds = null;
+    if (typeof val === 'string' && (val.includes('T') || val.includes('-'))) {
+        const d = new Date(val);
+        if (!isNaN(d.getTime())) {
+            totalSeconds = Math.max(0, Math.floor((d.getTime() - Date.now()) / 1000));
+        }
+    }
+    
+    if (totalSeconds === null) {
+        const num = Number(val);
+        if (isNaN(num)) return String(val);
+        
+        if (unit === 's' || unit === 'seconds' || unit === 'sec') {
+            totalSeconds = num;
+        } else if (unit === 'min' || unit === 'minutes' || unit === 'm') {
+            totalSeconds = num * 60;
+        } else if (unit === 'h' || unit === 'hours') {
+            totalSeconds = num * 3600;
+        } else {
+            totalSeconds = num > 300 ? num : num * 60;
+        }
+    }
+    
+    if (totalSeconds < 60) {
+        return 'Less than a minute';
+    }
+    
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    
+    if (hours > 0) {
+        return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+    } else {
+        return `${minutes}m`;
+    }
 }
 
 // --- Animated Depth Mesh Scanning Web ---
@@ -1016,16 +1091,23 @@ class VirtualLight3D extends THREE.Group {
           }
 
           if (attrs.remaining_time && attrs.remaining_time !== 'unknown' && attrs.remaining_time !== 'unavailable') {
-              let timeStr = String(attrs.remaining_time);
-              const num = Number(attrs.remaining_time);
-              if (!isNaN(num)) {
-                  timeStr = num > 60 ? `${Math.floor(num / 60)}h ${Math.round(num % 60)}m` : `${Math.round(num)} min`;
+              const remText = formatDishwasherRemainingTime(attrs.remaining_time, attrs.remaining_time_unit);
+              if (remText) {
+                  const isUnderMin = (remText === 'Less than a minute');
+                  const remLabel = isUnderMin ? `⏱️ Less than a minute` : `⏱️ ${remText} remaining`;
+                  dishTelemetry.push(new xb.UIText({ text: remLabel, style: { fontSize: 13, color: '#00FF88', fontWeight: 'bold' } }));
               }
-              dishTelemetry.push(new xb.UIText({ text: `⏱️ ${timeStr} remaining`, style: { fontSize: 13, color: '#00FF88', fontWeight: 'bold' } }));
+          }
+
+          if (attrs.completion_time && attrs.completion_time !== 'unknown' && attrs.completion_time !== 'unavailable') {
+              const compText = formatCompletionTimestamp(attrs.completion_time);
+              if (compText) {
+                  dishTelemetry.push(new xb.UIText({ text: `⏱️ Completed: ${compText}`, style: { fontSize: 13, color: '#FFFFFF' } }));
+              }
           }
 
           if (attrs.door_open !== undefined) {
-              const doorStr = attrs.door_open ? '⚠️ Door Open' : '🚪 Door Closed';
+              const doorStr = attrs.door_open ? '⚠️ Door: Open' : '🚪 Door: Closed';
               const doorCol = attrs.door_open ? '#FFCC00' : '#FFFFFF';
               dishTelemetry.push(new xb.UIText({ text: doorStr, style: { fontSize: 13, color: doorCol } }));
           }
@@ -1075,14 +1157,18 @@ class VirtualLight3D extends THREE.Group {
           // Dynamic Telemetry List - ONLY render fields obtained from HA
           const ovenTelemetry = [];
 
-          if (attrs.temperature !== undefined && attrs.temperature !== null) {
-              const tempStr = `🌡️ Temp: ${Math.round(attrs.temperature)}°C` + (attrs.setpoint ? ` / Set: ${Math.round(attrs.setpoint)}°C` : '');
-              ovenTelemetry.push(new xb.UIText({ text: tempStr, style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } }));
+          if (attrs.setpoint !== undefined && attrs.setpoint !== null) {
+              const setpointF = toFahrenheit(attrs.setpoint, attrs.setpoint_unit);
+              if (setpointF !== null) {
+                  ovenTelemetry.push(new xb.UIText({ text: `🎯 Set Point: ${setpointF}°F`, style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } }));
+              }
           }
 
-          if (attrs.second_cavity_temperature !== undefined && attrs.second_cavity_temperature !== null) {
-              const secTempStr = `🍳 Cavity 2: ${Math.round(attrs.second_cavity_temperature)}°C` + (attrs.second_cavity_setpoint ? ` / Set: ${Math.round(attrs.second_cavity_setpoint)}°C` : '');
-              ovenTelemetry.push(new xb.UIText({ text: secTempStr, style: { fontSize: 13, color: '#FFFFFF' } }));
+          if (attrs.second_cavity_setpoint !== undefined && attrs.second_cavity_setpoint !== null) {
+              const setpointF = toFahrenheit(attrs.second_cavity_setpoint, attrs.setpoint_unit);
+              if (setpointF !== null) {
+                  ovenTelemetry.push(new xb.UIText({ text: `🍳 Cavity 2 Set Point: ${setpointF}°F`, style: { fontSize: 13, color: '#FFFFFF' } }));
+              }
           }
 
           if (attrs.mode && attrs.mode !== 'unknown' && attrs.mode !== 'others') {
@@ -1090,25 +1176,43 @@ class VirtualLight3D extends THREE.Group {
               ovenTelemetry.push(new xb.UIText({ text: `♨️ Mode: ${modeStr}`, style: { fontSize: 13, color: '#FFFFFF' } }));
           }
 
-          if (attrs.completion_time) {
-              let compStr = attrs.completion_time;
-              try {
-                  const d = new Date(attrs.completion_time);
-                  if (!isNaN(d.getTime())) {
-                      compStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          if (attrs.completion_time && attrs.completion_time !== 'unknown' && attrs.completion_time !== 'unavailable') {
+              const compDate = new Date(attrs.completion_time);
+              if (!isNaN(compDate.getTime())) {
+                  const now = Date.now();
+                  if (compDate.getTime() <= now || !isHeating) {
+                      const compText = formatCompletionTimestamp(attrs.completion_time);
+                      if (compText) {
+                          ovenTelemetry.push(new xb.UIText({ text: `⏱️ Completed: ${compText}`, style: { fontSize: 13, color: '#FFFFFF' } }));
+                      }
+                  } else {
+                      const remMs = compDate.getTime() - now;
+                      const remMin = Math.floor(remMs / 60000);
+                      const hours = Math.floor(remMin / 60);
+                      const mins = remMin % 60;
+                      let timeStr = '';
+                      if (hours > 0) {
+                          timeStr = mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+                      } else if (remMin >= 1) {
+                          timeStr = `${remMin}m`;
+                      } else {
+                          timeStr = 'Less than a minute';
+                      }
+                      ovenTelemetry.push(new xb.UIText({ text: `⏱️ Completes: In ${timeStr}`, style: { fontSize: 13, color: '#00FF88', fontWeight: 'bold' } }));
                   }
-              } catch(e) {}
-              ovenTelemetry.push(new xb.UIText({ text: `⏱️ Completes: ${compStr}`, style: { fontSize: 13, color: '#FFFFFF' } }));
+              }
           }
 
           if (attrs.door_open !== undefined) {
-              const doorStr = attrs.door_open ? '⚠️ Door Open' : '🚪 Door Closed';
+              const doorStr = attrs.door_open ? '⚠️ Door: Open' : '🚪 Door: Closed';
               const doorCol = attrs.door_open ? '#FFCC00' : '#FFFFFF';
               ovenTelemetry.push(new xb.UIText({ text: doorStr, style: { fontSize: 13, color: doorCol } }));
           }
 
-          if (attrs.child_lock) {
-              ovenTelemetry.push(new xb.UIText({ text: '🔒 Child Lock: Active', style: { fontSize: 13, color: '#00FF88' } }));
+          if (attrs.child_lock !== undefined) {
+              const lockStr = attrs.child_lock ? '🔒 Child Lock: ON' : '🔓 Child Lock: OFF';
+              const lockCol = attrs.child_lock ? '#00FF88' : '#FFFFFF';
+              ovenTelemetry.push(new xb.UIText({ text: lockStr, style: { fontSize: 13, color: lockCol } }));
           }
 
           if (ovenTelemetry.length > 0) {
@@ -1563,9 +1667,15 @@ class VirtualLight3D extends THREE.Group {
 
   _buildDeviceListUI() {
       const allDevices = Array.from(smartHome.devices.values());
-      // Filter out helper buttons and selects from the main pairing list (they are linked to parent devices)
-      // Filter out helper buttons, selects, and binary sensors from the main pairing list (they are linked to parent devices)
-      const devices = allDevices.filter(d => !d.id.startsWith('button.') && !d.id.startsWith('select.') && !d.id.startsWith('binary_sensor.'));
+      // Filter out helper buttons, selects, and binary sensors from the main pairing list
+      // Also filter out any child components of compound appliances (e.g. oven/dishwasher individual sensors/buttons)
+      const devices = allDevices.filter(d => {
+          if (d.id.startsWith('button.') || d.id.startsWith('select.') || d.id.startsWith('binary_sensor.')) return false;
+          const idLower = d.id.toLowerCase();
+          if (idLower.includes('oven') && d.id !== 'appliance.oven') return false;
+          if (idLower.includes('dishwasher') && d.id !== 'appliance.dishwasher') return false;
+          return true;
+      });
       
       const targetCat = (this.category || '').toLowerCase();
       const recommended = [];
@@ -1589,9 +1699,15 @@ class VirtualLight3D extends THREE.Group {
           if (isMatch) {
               recommended.push(d);
           }
-          const area = d.area || 'Other';
-          if (!areaGroups[area]) areaGroups[area] = [];
-          areaGroups[area].push(d);
+          const isAppliance = (domain === 'oven' || domain === 'dishwasher' || domain === 'vacuum' || domain === 'appliance' || d.id.startsWith('appliance.') || d.id.startsWith('vacuum.'));
+          const isApplianceTarget = (targetCat === 'oven' || targetCat === 'dishwasher' || targetCat === 'vacuum' || targetCat === 'appliance');
+          
+          // In Room browsing mode, filter out appliances unless the target anchor is specifically an appliance
+          if (!isAppliance || isApplianceTarget) {
+              const area = d.area || 'Other';
+              if (!areaGroups[area]) areaGroups[area] = [];
+              areaGroups[area].push(d);
+          }
       });
 
       // 2. Sort Areas Alphabetically Ascending (A -> Z)
@@ -2173,14 +2289,65 @@ async function initApp(preloadedConfig = null) {
                                        (vl.realDevice.related && vl.realDevice.related.some(r => r.entity_id === entityId));
 
                 if (isDirectMatch || isRelatedMatch) {
-                    if (dev) {
+                    const isApplianceCard = (vl.realDevice.id.startsWith('appliance.') || vl.realDevice.domain === 'oven' || vl.realDevice.domain === 'dishwasher');
+                    if (dev && dev.id === vl.realDevice.id) {
+                        // Direct match with parent compound appliance or matching entity
+                        vl.realDevice = dev;
+                        vl.isOn = dev.isOn;
+                        if (dev.brightness !== undefined) vl.brightness = dev.brightness;
+                    } else if (dev && !isApplianceCard && !vl.realDevice.id.startsWith('vacuum.')) {
                         vl.realDevice = dev;
                         vl.isOn = dev.isOn;
                         if (dev.brightness !== undefined) vl.brightness = dev.brightness;
                     } else if (newState) {
-                        vl.realDevice.state = newState.state;
-                        vl.realDevice.attributes = { ...vl.realDevice.attributes, ...newState.attributes };
-                        vl.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state);
+                        if (isApplianceCard) {
+                            // Sub-entity changed for a compound appliance: update attributes on the compound appliance without changing its domain/identity!
+                            if (entityId.includes('operating_state') || entityId.includes('job_state') || entityId.includes('current_status') || entityId.includes('operation_state')) {
+                                vl.realDevice.state = newState.state;
+                                vl.realDevice.attributes.operating_state = newState.state;
+                                vl.realDevice.attributes.status = newState.state;
+                            }
+                            if (entityId.includes('setpoint') || entityId.includes('target_temperature')) {
+                                vl.realDevice.attributes.setpoint = parseFloat(newState.state);
+                                if (newState.attributes?.unit_of_measurement) {
+                                    vl.realDevice.attributes.setpoint_unit = newState.attributes.unit_of_measurement;
+                                }
+                            }
+                            if (entityId.includes('second_cavity_setpoint')) {
+                                vl.realDevice.attributes.second_cavity_setpoint = parseFloat(newState.state);
+                                if (newState.attributes?.unit_of_measurement) {
+                                    vl.realDevice.attributes.setpoint_unit = newState.attributes.unit_of_measurement;
+                                }
+                            }
+                            if (entityId.includes('completion_time') || entityId.includes('end_time') || entityId.includes('completion')) {
+                                vl.realDevice.attributes.completion_time = newState.state;
+                            }
+                            if (entityId.includes('remaining_time') || entityId.includes('remaining_program_time') || entityId.includes('program_progress')) {
+                                vl.realDevice.attributes.remaining_time = newState.state;
+                                if (newState.attributes?.unit_of_measurement) {
+                                    vl.realDevice.attributes.remaining_time_unit = newState.attributes.unit_of_measurement;
+                                }
+                            }
+                            if (entityId.includes('door')) {
+                                vl.realDevice.attributes.door_open = (newState.state === 'on' || newState.state === 'open');
+                            }
+                            if (entityId.includes('child_lock')) {
+                                vl.realDevice.attributes.child_lock = (newState.state === 'on' || newState.state === 'true');
+                            }
+                            if (entityId.includes('lamp') || entityId.includes('light')) {
+                                vl.realDevice.attributes.lamp_state = newState.state;
+                            }
+                            if (entityId.includes('rinse_refill')) {
+                                vl.realDevice.attributes.rinse_refill_needed = (newState.state === 'on');
+                            }
+                            if (entityId.includes('clean_indicator') || entityId.includes('clean_complete')) {
+                                vl.realDevice.attributes.clean_complete = (newState.state === 'on');
+                            }
+                        } else {
+                            vl.realDevice.state = newState.state;
+                            vl.realDevice.attributes = { ...vl.realDevice.attributes, ...newState.attributes };
+                            vl.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state);
+                        }
                     }
                     vl.updateVisuals();
                 }

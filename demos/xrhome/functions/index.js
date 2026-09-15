@@ -139,13 +139,12 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
 
     if (dishwasherEntities.length > 0) {
       dishwasherEntities.forEach(e => {
-        if (!e.entity_id.startsWith('sensor.')) {
-          swallowedEntityIds.add(e.entity_id);
-        }
+        swallowedEntityIds.add(e.entity_id);
       });
       const statusSensor = dishwasherEntities.find(e => e.entity_id.includes('current_status') || e.entity_id.includes('status'));
       const cycleSensor = dishwasherEntities.find(e => e.entity_id.includes('current_cycle') || e.entity_id.includes('cycle'));
       const remainingSensor = dishwasherEntities.find(e => e.entity_id.includes('remaining_time') || e.entity_id.includes('remaining'));
+      const completionTimeSensor = dishwasherEntities.find(e => e.entity_id.includes('completion_time') || e.entity_id.includes('end_time') || e.entity_id.includes('completion'));
       const totalTimeSensor = dishwasherEntities.find(e => e.entity_id.includes('total_time'));
       const delayedStartSensor = dishwasherEntities.find(e => e.entity_id.includes('delayed_start'));
       const doorSensor = dishwasherEntities.find(e => e.entity_id.includes('door'));
@@ -166,9 +165,11 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
           status: rawState,
           cycle: (cycleSensor && cycleSensor.state !== 'unknown') ? cycleSensor.state : undefined,
           remaining_time: (remainingSensor && remainingSensor.state !== 'unknown') ? remainingSensor.state : undefined,
+          remaining_time_unit: remainingSensor?.attributes?.unit_of_measurement || 'min',
+          completion_time: (completionTimeSensor && completionTimeSensor.state !== 'unknown' && completionTimeSensor.state !== 'unavailable') ? completionTimeSensor.state : undefined,
           total_time: (totalTimeSensor && totalTimeSensor.state !== 'unknown') ? totalTimeSensor.state : undefined,
           delayed_start: (delayedStartSensor && delayedStartSensor.state !== 'unknown') ? delayedStartSensor.state : undefined,
-          door_open: doorSensor ? (doorSensor.state === 'on') : undefined,
+          door_open: doorSensor ? (doorSensor.state === 'on' || doorSensor.state === 'open') : undefined,
           rinse_refill_needed: rinseRefillSensor ? (rinseRefillSensor.state === 'on') : undefined,
           rinse_aid_level: (rinseLevelSensor && rinseLevelSensor.state !== 'unknown') ? rinseLevelSensor.state : undefined,
           clean_complete: cleanLightSensor ? (cleanLightSensor.state === 'on') : undefined,
@@ -192,17 +193,14 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
 
     if (ovenEntities.length > 0) {
       ovenEntities.forEach(e => {
-        if (!e.entity_id.startsWith('sensor.')) {
-          swallowedEntityIds.add(e.entity_id);
-        }
+        swallowedEntityIds.add(e.entity_id);
       });
       const opStateSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_operating_state' || e.entity_id.includes('operating_state'));
       const jobStateSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_job_state' || e.entity_id.includes('job_state'));
-      const tempSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_temperature');
-      const setpointSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_setpoint');
-      const completionTimeSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_completion_time');
-      const doorSensor = ovenEntities.find(e => e.entity_id === 'binary_sensor.oven_door');
-      const childLockSensor = ovenEntities.find(e => e.entity_id === 'binary_sensor.oven_child_lock');
+      const setpointSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_setpoint' || e.entity_id.includes('setpoint') || e.entity_id.includes('target_temperature'));
+      const completionTimeSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_completion_time' || e.entity_id.includes('completion_time') || e.entity_id.includes('end_time'));
+      const doorSensor = ovenEntities.find(e => e.entity_id === 'binary_sensor.oven_door' || (e.entity_id.startsWith('binary_sensor.') && e.entity_id.includes('door')));
+      const childLockSensor = ovenEntities.find(e => e.entity_id === 'binary_sensor.oven_child_lock' || (e.entity_id.startsWith('binary_sensor.') && e.entity_id.includes('child_lock')));
       const modeSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_oven_mode');
       const stopButton = ovenEntities.find(e => e.entity_id === 'button.oven_stop');
       const lampSelect = ovenEntities.find(e => e.entity_id === 'select.oven_lamp' || (e.entity_id.startsWith('select.') && e.entity_id.includes('lamp')));
@@ -230,14 +228,12 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
         lampControllable = false;
       }
       
-      const secTempSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_second_cavity_temperature');
-      const secSetpointSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_second_cavity_setpoint');
+      const secSetpointSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_second_cavity_setpoint' || (e.entity_id.includes('second') && e.entity_id.includes('setpoint')));
       const secJobSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_second_cavity_job_state');
 
       const area = ovenEntities.find(e => e.area && e.area !== 'Other')?.area || 'Kitchen';
       const rawState = opStateSensor?.state || jobStateSensor?.state || 'ready';
 
-      const tempVal = (tempSensor && tempSensor.state !== 'unavailable' && tempSensor.state !== 'unknown') ? parseFloat(tempSensor.state) : undefined;
       const setVal = (setpointSensor && setpointSensor.state !== 'unavailable' && setpointSensor.state !== 'unknown') ? parseFloat(setpointSensor.state) : undefined;
 
       unifiedAppliances.push({
@@ -250,17 +246,16 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
           status: rawState,
           operating_state: opStateSensor?.state || 'ready',
           job_state: jobStateSensor?.state,
-          temperature: tempVal,
           setpoint: setVal,
+          setpoint_unit: setpointSensor?.attributes?.unit_of_measurement || '°C',
           completion_time: (completionTimeSensor && completionTimeSensor.state !== 'unknown' && completionTimeSensor.state !== 'unavailable') ? completionTimeSensor.state : undefined,
-          door_open: doorSensor ? (doorSensor.state === 'on') : undefined,
+          door_open: doorSensor ? (doorSensor.state === 'on' || doorSensor.state === 'open') : undefined,
           child_lock: childLockSensor ? (childLockSensor.state === 'on') : undefined,
           mode: (modeSensor && modeSensor.state !== 'unknown') ? modeSensor.state : undefined,
           lamp_entity: lampEntity,
           lamp_state: lampState,
           lamp_controllable: lampControllable,
           stop_entity: stopButton ? stopButton.entity_id : undefined,
-          second_cavity_temperature: (secTempSensor && secTempSensor.state !== 'unavailable') ? parseFloat(secTempSensor.state) : undefined,
           second_cavity_setpoint: (secSetpointSensor && secSetpointSensor.state !== 'unavailable') ? parseFloat(secSetpointSensor.state) : undefined,
           second_cavity_job_state: (secJobSensor && secJobSensor.state !== 'unknown') ? secJobSensor.state : undefined
         },
