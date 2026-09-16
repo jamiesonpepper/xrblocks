@@ -761,7 +761,7 @@ class VirtualLight3D extends THREE.Group {
               borderColor: '#FFFFFF',
               color: '#FFFFFF',
               ':hover': {
-                  backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                  backgroundColor: 'rgba(255, 255, 255, 0.75)',
                   color: '#000000',
                   borderColor: '#FFFFFF',
               },
@@ -787,7 +787,7 @@ class VirtualLight3D extends THREE.Group {
                   fontWeight: 'bold',
                   color: '#FFFFFF',
                   ':hover': {
-                      backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.75)',
                       color: '#000000',
                       borderColor: '#FFFFFF',
                   },
@@ -1407,7 +1407,7 @@ class VirtualLight3D extends THREE.Group {
                   borderColor: isOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.5)',
                   color: '#FFFFFF',
                   ':hover': {
-                      backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.75)',
                       color: '#000000',
                       borderColor: '#FFFFFF',
                   },
@@ -1429,7 +1429,7 @@ class VirtualLight3D extends THREE.Group {
                   borderColor: '#FFFFFF',
                   color: '#FFFFFF',
                   ':hover': {
-                      backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.75)',
                       color: '#000000',
                       borderColor: '#FFFFFF',
                   },
@@ -1813,7 +1813,7 @@ class VirtualLight3D extends THREE.Group {
                               fontWeight: 'bold',
                               color: isRecMode ? '#000000' : '#FFFFFF',
                               ':hover': {
-                                  backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                                  backgroundColor: 'rgba(255, 255, 255, 0.75)',
                                   color: '#000000',
                                   borderColor: '#FFFFFF',
                               },
@@ -1836,7 +1836,7 @@ class VirtualLight3D extends THREE.Group {
                               backgroundColor: 'rgba(255, 255, 255, 0.12)',
                               color: '#FFFFFF',
                               ':hover': {
-                                  backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                                  backgroundColor: 'rgba(255, 255, 255, 0.75)',
                                   color: '#000000',
                                   borderColor: '#FFFFFF',
                               },
@@ -1873,7 +1873,7 @@ class VirtualLight3D extends THREE.Group {
                           fontWeight: 'bold',
                           color: item.isRecommended ? '#000000' : '#FFFFFF',
                           ':hover': {
-                              backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                              backgroundColor: 'rgba(255, 255, 255, 0.75)',
                               color: '#000000',
                               borderColor: '#FFFFFF',
                           },
@@ -1910,7 +1910,7 @@ class VirtualLight3D extends THREE.Group {
                           fontWeight: 'bold',
                           color: '#FFFFFF',
                           ':hover': {
-                              backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                              backgroundColor: 'rgba(255, 255, 255, 0.75)',
                               color: '#000000',
                               borderColor: '#FFFFFF',
                           },
@@ -1934,7 +1934,7 @@ class VirtualLight3D extends THREE.Group {
                       backgroundColor: 'rgba(255, 255, 255, 0.12)',
                       color: '#FFFFFF',
                       ':hover': {
-                          backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
                           color: '#000000',
                           borderColor: '#FFFFFF',
                       },
@@ -1958,7 +1958,7 @@ class VirtualLight3D extends THREE.Group {
                       backgroundColor: 'rgba(255, 255, 255, 0.12)',
                       color: '#FFFFFF',
                       ':hover': {
-                          backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
                           color: '#000000',
                           borderColor: '#FFFFFF',
                       },

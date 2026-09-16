@@ -144,7 +144,7 @@ export class HUDManager {
             borderColor: '#FFFFFF',
             color: '#FFFFFF',
             ':hover': {
-                backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                backgroundColor: 'rgba(255, 255, 255, 0.75)',
                 color: '#000000',
                 borderColor: '#FFFFFF',
             },
@@ -172,7 +172,7 @@ export class HUDManager {
                 borderColor: '#FFFFFF',
                 color: '#FFFFFF',
                 ':hover': {
-                    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                    backgroundColor: 'rgba(255, 255, 255, 0.75)',
                     color: '#000000',
                     borderColor: '#FFFFFF',
                 },
@@ -227,7 +227,7 @@ export class HUDManager {
                     borderColor: 'rgba(255, 255, 255, 0.6)',
                     color: '#FFFFFF',
                     ':hover': {
-                        backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                        backgroundColor: 'rgba(255, 255, 255, 0.75)',
                         color: '#000000',
                         borderColor: '#FFFFFF',
                     },
