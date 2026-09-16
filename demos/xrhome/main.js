@@ -676,7 +676,8 @@ class VirtualLight3D extends THREE.Group {
       this.hasCollapsedRecommended = false;
       this.hasBeenMoved = false;
       const cat = (this.category || '').toLowerCase();
-      this.deviceFilterMode = (cat === 'light' || cat === 'switch') ? 'room' : 'recommended';
+      const isLightOrSwitch = !cat || cat.includes('light') || cat.includes('lamp') || cat.includes('switch') || cat === 'device';
+      this.deviceFilterMode = isLightOrSwitch ? 'room' : 'recommended';
 
       // 3. Label + Interface (UICard)
       this.panelWidth = width;
@@ -716,6 +717,16 @@ class VirtualLight3D extends THREE.Group {
       const catIcon = getCategoryIcon(cat, domain);
 
       // Card Header: Category Icon + Device Label
+      const labelText = new xb.UIText({
+          text: this.labelText,
+          style: {
+              fontSize: 17,
+              fontWeight: 'bold',
+              color: stateColor,
+              textAlign: 'center',
+          }
+      });
+
       const headerRow = new xb.UIPanel({
           style: {
               width: '100%',
@@ -729,15 +740,7 @@ class VirtualLight3D extends THREE.Group {
                   icon: catIcon,
                   style: { width: 20, height: 20, color: stateColor }
               }),
-              new xb.UIText({
-                  text: this.labelText,
-                  style: {
-                      fontSize: 17,
-                      fontWeight: 'bold',
-                      color: stateColor,
-                      textAlign: 'center',
-                  }
-              })
+              labelText
           ]
       });
 
@@ -1580,9 +1583,6 @@ class VirtualLight3D extends THREE.Group {
                   },
                   onClick: () => {
                       this.setColorTemp(preset.kelvin, preset.hex);
-                      tempText.text = `🌡️ ${preset.kelvin}K`;
-                      labelText.style.color = preset.hex;
-                      colorIndicator.style.backgroundColor = preset.hex;
                   }
               }));
 
@@ -1674,6 +1674,9 @@ class VirtualLight3D extends THREE.Group {
             }
             this.isSelectingDevice = true;
             this.devicePage = 0;
+            const cat = (this.category || '').toLowerCase();
+            const isLightOrSwitch = !cat || cat.includes('light') || cat.includes('lamp') || cat.includes('switch') || cat === 'device';
+            this.deviceFilterMode = isLightOrSwitch ? 'room' : 'recommended';
             this.rebuildPanel();
       }
   }
@@ -1735,7 +1738,8 @@ class VirtualLight3D extends THREE.Group {
       if (!this.expandedAreas) this.expandedAreas = new Set();
       if (!this.deviceFilterMode) {
           const cat = (this.category || '').toLowerCase();
-          this.deviceFilterMode = (cat === 'light' || cat === 'switch') ? 'room' : 'recommended';
+          const isLightOrSwitch = !cat || cat.includes('light') || cat.includes('lamp') || cat.includes('switch') || cat === 'device';
+          this.deviceFilterMode = isLightOrSwitch ? 'room' : 'recommended';
       }
       const isRecMode = (this.deviceFilterMode === 'recommended');
 
@@ -1744,7 +1748,7 @@ class VirtualLight3D extends THREE.Group {
 
       // Add Recommended section at top only if filter mode is 'recommended' and matches found
       if (isRecMode && recommended.length > 0) {
-          const recAreaName = `Recommended (${targetCat.toUpperCase()})`;
+          const recAreaName = `⭐ Recommended (${targetCat.toUpperCase()})`;
           const isRecExpanded = !this.hasCollapsedRecommended;
           visibleItems.push({
               type: 'area',
@@ -1808,7 +1812,7 @@ class VirtualLight3D extends THREE.Group {
                   },
                   children: [
                       new xb.UIButton({
-                          label: isRecMode ? 'Recommended' : 'By Room',
+                          label: isRecMode ? '⭐ Recommended' : '🏠 By Room',
                           ariaLabel: `Filter mode: ${isRecMode ? 'Recommended' : 'Room'}. Click to toggle.`,
                           userData: { interactive: true },
                           style: {
@@ -1828,7 +1832,7 @@ class VirtualLight3D extends THREE.Group {
                           }
                       }),
                       new xb.UIButton({
-                          label: 'X',
+                          label: '✕',
                           ariaLabel: 'Cancel selection',
                           style: { width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: '#FFFFFF', backgroundColor: 'rgba(255, 255, 255, 0.12)' },
                           onClick: () => {
@@ -1850,7 +1854,8 @@ class VirtualLight3D extends THREE.Group {
           pageItems.forEach(item => {
               if (item.type === 'area') {
                   bodyChildren.push(new xb.UIButton({
-                      label: `${item.area} (${item.count})`,
+                      label: `${item.isExpanded ? '▼' : '▶'} ${item.area} (${item.count})`,
+                      userData: { interactive: true },
                       style: {
                           width: '100%',
                           height: 34,
@@ -1860,6 +1865,7 @@ class VirtualLight3D extends THREE.Group {
                           borderColor: item.isRecommended ? '#00FF88' : 'rgba(255, 255, 255, 0.7)',
                           fontSize: 14,
                           fontWeight: 'bold',
+                          color: '#FFFFFF',
                       },
                       onClick: () => {
                           if (item.isRecommended) {
