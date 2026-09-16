@@ -135,20 +135,7 @@ export class HUDManager {
             logChildren.push(txt);
         }
 
-        const scanStyle = this.isScanning ? {
-            width: '100%',
-            height: 40,
-            borderRadius: 12,
-            backgroundColor: 'rgba(255, 59, 48, 0.4)',
-            borderWidth: 1,
-            borderColor: '#FF3B30',
-            color: '#FFFFFF',
-            ':hover': {
-                backgroundColor: '#FFFFFF',
-                color: '#000000',
-                borderColor: '#FFFFFF',
-            },
-        } : {
+        const scanStyle = {
             width: '100%',
             height: 40,
             borderRadius: 12,
@@ -157,7 +144,7 @@ export class HUDManager {
             borderColor: '#FFFFFF',
             color: '#FFFFFF',
             ':hover': {
-                backgroundColor: '#FFFFFF',
+                backgroundColor: 'rgba(255, 255, 255, 0.5)',
                 color: '#000000',
                 borderColor: '#FFFFFF',
             },
@@ -185,7 +172,7 @@ export class HUDManager {
                 borderColor: '#FFFFFF',
                 color: '#FFFFFF',
                 ':hover': {
-                    backgroundColor: '#FFFFFF',
+                    backgroundColor: 'rgba(255, 255, 255, 0.5)',
                     color: '#000000',
                     borderColor: '#FFFFFF',
                 },
@@ -240,7 +227,7 @@ export class HUDManager {
                     borderColor: 'rgba(255, 255, 255, 0.6)',
                     color: '#FFFFFF',
                     ':hover': {
-                        backgroundColor: '#FFFFFF',
+                        backgroundColor: 'rgba(255, 255, 255, 0.5)',
                         color: '#000000',
                         borderColor: '#FFFFFF',
                     },
