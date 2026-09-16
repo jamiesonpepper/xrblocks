@@ -279,6 +279,16 @@ function onXRSelect(event) {
 }
 
 import * as xb from 'xrblocks';
+
+// Configure UI theme to use crisp white primary color for sliders & accents instead of default light blue
+if (xb.ui && xb.ui.setTheme) {
+    xb.ui.setTheme({
+        colors: {
+            primary: '#FFFFFF',
+            outline: 'rgba(255, 255, 255, 0.30)',
+        }
+    });
+}
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
 import { VisionManager } from './vision.js?v=26';
@@ -469,6 +479,26 @@ function kelvinToHex(k) {
     }
     const toHex = (n) => Math.round(n).toString(16).padStart(2, '0');
     return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function hexToHue(hex) {
+    if (!hex || typeof hex !== 'string') return 0;
+    hex = hex.replace('#', '');
+    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+    if (hex.length !== 6) return 0;
+    const r = parseInt(hex.slice(0, 2), 16) / 255;
+    const g = parseInt(hex.slice(2, 4), 16) / 255;
+    const b = parseInt(hex.slice(4, 6), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const d = max - min;
+    if (d === 0) return 0;
+    let h;
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h = Math.round(h * 60);
+    if (h < 0) h += 360;
+    return h;
 }
 
 function toFahrenheit(val, unit) {
@@ -716,13 +746,13 @@ class VirtualLight3D extends THREE.Group {
       const cat = (this.category || domain || 'light').toLowerCase();
       const catIcon = getCategoryIcon(cat, domain);
 
-      // Card Header: Category Icon + Device Label
+      // Card Header: Category Icon + Device Label (always clean white)
       const labelText = new xb.UIText({
           text: this.labelText,
           style: {
               fontSize: 17,
               fontWeight: 'bold',
-              color: stateColor,
+              color: '#FFFFFF',
               textAlign: 'center',
           }
       });
@@ -738,7 +768,7 @@ class VirtualLight3D extends THREE.Group {
           children: [
               new xb.UIIcon({
                   icon: catIcon,
-                  style: { width: 20, height: 20, color: stateColor }
+                  style: { width: 20, height: 20, color: '#FFFFFF' }
               }),
               labelText
           ]
@@ -1455,7 +1485,7 @@ class VirtualLight3D extends THREE.Group {
                   max: 100,
                   step: 1,
                   value: this.brightness,
-                  style: { width: '100%', height: 26 },
+                  style: { width: '100%', height: 26, color: '#FFFFFF' },
                   onInput: (val) => {
                       brightnessText.text = `☀️ ${Math.round(val)}%`;
                   },
@@ -1497,13 +1527,12 @@ class VirtualLight3D extends THREE.Group {
                   max: 360,
                   step: 1,
                   value: this.currentHue !== undefined ? this.currentHue : 0,
-                  style: { width: '100%', height: 26 },
+                  style: { width: '100%', height: 26, color: '#FFFFFF' },
                   onInput: (val) => {
                       this.currentHue = Math.round(val);
                       const [r, g, b] = hslToRgb(this.currentHue);
                       const toHex = (n) => n.toString(16).padStart(2, '0');
                       this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-                      labelText.style.color = this.stateColor;
                       colorIndicator.style.backgroundColor = this.stateColor;
                   },
                   onChange: (val) => {
@@ -2279,6 +2308,7 @@ class VirtualLight3D extends THREE.Group {
   setColorTemp(kelvin, hexColor) {
       this.colorTemp = Math.round(kelvin);
       this.stateColor = hexColor || kelvinToHex(this.colorTemp);
+      this.currentHue = hexToHue(this.stateColor);
       this.rebuildPanel();
       if (this.realDevice && smartHome) {
           hud.log(`Warmth set to ${this.colorTemp}K`, this.stateColor);
@@ -2525,6 +2555,15 @@ async function initApp(preloadedConfig = null) {
     }
 
     xb.init(o);
+
+    if (xb.ui && xb.ui.setTheme) {
+        xb.ui.setTheme({
+            colors: {
+                primary: '#FFFFFF',
+                outline: 'rgba(255, 255, 255, 0.30)',
+            }
+        });
+    }
 
     if (xb.scene && typeof scanningWeb !== 'undefined' && scanningWeb && scanningWeb.mesh) {
         xb.scene.add(scanningWeb.mesh);
