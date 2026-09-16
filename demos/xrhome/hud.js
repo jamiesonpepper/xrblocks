@@ -135,17 +135,33 @@ export class HUDManager {
             logChildren.push(txt);
         }
 
+        const scanStyle = this.isScanning ? {
+            width: '100%',
+            height: 40,
+            borderRadius: 12,
+            backgroundColor: 'rgba(255, 59, 48, 0.4)',
+            borderWidth: 1,
+            borderColor: '#FF3B30',
+            ':hover': {
+                backgroundColor: 'rgba(255, 59, 48, 0.8)',
+            },
+        } : {
+            width: '100%',
+            height: 40,
+            borderRadius: 12,
+            backgroundColor: 'rgba(255, 255, 255, 0.18)',
+            borderWidth: 1,
+            borderColor: '#FFFFFF',
+            ':hover': {
+                backgroundColor: 'rgba(0, 255, 136, 0.45)',
+            },
+        };
+
         this.scanButton = new xb.UIButton({
             label: this.isScanning ? "STOP SCAN" : "START SCAN",
             icon: this.isScanning ? "stop" : "search",
-            style: {
-                width: '100%',
-                height: 40,
-                borderRadius: 12,
-                backgroundColor: this.isScanning ? 'rgba(255, 59, 48, 0.4)' : 'rgba(255, 255, 255, 0.18)',
-                borderWidth: 1,
-                borderColor: '#FFFFFF',
-            },
+            ariaLabel: this.isScanning ? "Stop Scan" : "Start Scan",
+            style: scanStyle,
             onClick: () => {
                 if (this.onScanToggle) this.onScanToggle();
             }
@@ -274,9 +290,8 @@ export class HUDManager {
         this.isScanning = scanning;
         if (this.mode === '2D') {
             this.draw2D();
-        } else if (this.scanButton) {
-            this.scanButton.label = scanning ? "STOP SCAN" : "START SCAN";
-            this.scanButton.icon = scanning ? "stop" : "search";
+        } else {
+            this.renderMenu();
         }
     }
 

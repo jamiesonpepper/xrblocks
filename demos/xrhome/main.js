@@ -1748,7 +1748,7 @@ class VirtualLight3D extends THREE.Group {
 
       // Add Recommended section at top only if filter mode is 'recommended' and matches found
       if (isRecMode && recommended.length > 0) {
-          const recAreaName = `⭐ Recommended (${targetCat.toUpperCase()})`;
+          const recAreaName = `Recommended (${targetCat.toUpperCase()})`;
           const isRecExpanded = !this.hasCollapsedRecommended;
           visibleItems.push({
               type: 'area',
@@ -1812,7 +1812,7 @@ class VirtualLight3D extends THREE.Group {
                   },
                   children: [
                       new xb.UIButton({
-                          label: isRecMode ? '⭐ Recommended' : '🏠 By Room',
+                          label: isRecMode ? 'Recommended' : 'By Room',
                           ariaLabel: `Filter mode: ${isRecMode ? 'Recommended' : 'Room'}. Click to toggle.`,
                           userData: { interactive: true },
                           style: {
