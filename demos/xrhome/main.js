@@ -1498,15 +1498,30 @@ class VirtualLight3D extends THREE.Group {
               
               // 3. Rainbow Color Slider with Gradient Rainbow Bar & Dynamic Swatch
               const colorIndicator = new xb.UIPanel({
+                  width: 20,
+                  height: 20,
+                  cornerRadius: 10,
+                  fillColor: this.stateColor || '#FFFFFF',
+                  strokeWidth: 1.5,
+                  strokeColor: '#FFFFFF',
                   style: {
-                      width: 14,
-                      height: 14,
-                      borderRadius: 7,
+                      width: 20,
+                      height: 20,
+                      borderRadius: 10,
                       backgroundColor: this.stateColor || '#FFFFFF',
-                      borderWidth: 1,
+                      borderWidth: 1.5,
                       borderColor: '#FFFFFF',
                   }
               });
+
+              const updateColorIndicator = (hex) => {
+                  if (!hex) return;
+                  if (colorIndicator.setFillColor) colorIndicator.setFillColor(hex);
+                  if (colorIndicator.setProperties) colorIndicator.setProperties({ fillColor: hex, backgroundColor: hex });
+                  if (colorIndicator.style) colorIndicator.style.backgroundColor = hex;
+                  if (colorIndicator.markUIDirty) colorIndicator.markUIDirty();
+              };
+
               const rainbowLabel = new xb.UIText({
                   text: '🌈 Color',
                   style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' }
@@ -1533,7 +1548,7 @@ class VirtualLight3D extends THREE.Group {
                       const [r, g, b] = hslToRgb(this.currentHue);
                       const toHex = (n) => n.toString(16).padStart(2, '0');
                       this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-                      colorIndicator.style.backgroundColor = this.stateColor;
+                      updateColorIndicator(this.stateColor);
                   },
                   onChange: (val) => {
                       this.currentHue = Math.round(val);
@@ -1600,6 +1615,8 @@ class VirtualLight3D extends THREE.Group {
                   },
                   onClick: () => {
                       this.setColorTemp(preset.kelvin, preset.hex);
+                      tempText.text = `🌡️ ${preset.kelvin}K`;
+                      updateColorIndicator(preset.hex);
                   }
               }));
 
@@ -2061,6 +2078,8 @@ class VirtualLight3D extends THREE.Group {
 
   updateVisuals() {
       const isPaired = !!(this.realDevice || this.linkedNodeId);
+      const domain = (this.realDevice && this.realDevice.domain) ? this.realDevice.domain : (this.realDevice && this.realDevice.id ? this.realDevice.id.split('.')[0] : (this.category || 'light'));
+      const isOn = this.isOn;
       
       // Hydrate state from realDevice if available BEFORE rebuilding buttons
       if (this.realDevice) {
@@ -2068,13 +2087,24 @@ class VirtualLight3D extends THREE.Group {
           if (this.realDevice.brightness !== undefined) {
               this.brightness = this.realDevice.brightness;
           }
-          if (this.realDevice.color_temp_kelvin) {
-              this.colorTemp = this.realDevice.color_temp_kelvin;
+          if (domain === 'light' || this.category === 'light') {
+              if (this.realDevice.attributes?.rgb_color && Array.isArray(this.realDevice.attributes.rgb_color)) {
+                  const [r, g, b] = this.realDevice.attributes.rgb_color;
+                  const toHex = (n) => n.toString(16).padStart(2, '0');
+                  this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+                  this.currentHue = hexToHue(this.stateColor);
+              } else if (this.realDevice.attributes?.hs_color && Array.isArray(this.realDevice.attributes.hs_color)) {
+                  this.currentHue = Math.round(this.realDevice.attributes.hs_color[0]);
+                  const [r, g, b] = hslToRgb(this.currentHue, (this.realDevice.attributes.hs_color[1] ?? 100) / 100);
+                  const toHex = (n) => n.toString(16).padStart(2, '0');
+                  this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+              } else if (this.realDevice.color_temp_kelvin || this.realDevice.attributes?.color_temp_kelvin) {
+                  this.colorTemp = this.realDevice.color_temp_kelvin || this.realDevice.attributes.color_temp_kelvin;
+                  this.stateColor = kelvinToHex(this.colorTemp);
+                  this.currentHue = hexToHue(this.stateColor);
+              }
           }
       }
-      
-      const isOn = this.isOn;
-      const domain = (this.realDevice && this.realDevice.domain) ? this.realDevice.domain : (this.realDevice && this.realDevice.id ? this.realDevice.id.split('.')[0] : (this.category || 'light'));
 
       let colorStr = '#FFFFFF';
       if (isPaired) {
@@ -2090,8 +2120,13 @@ class VirtualLight3D extends THREE.Group {
               const oState = String(this.realDevice?.attributes?.operating_state || this.realDevice?.state || '').toLowerCase();
               const isHeat = oState.includes('heat') || oState.includes('run') || oState.includes('bake');
               colorStr = isHeat ? '#FF7700' : '#00DDFF';
+          } else if (domain === 'light' || this.category === 'light') {
+              if (!this.stateColor) {
+                  this.stateColor = this.colorTemp ? kelvinToHex(this.colorTemp) : '#FFFFFF';
+              }
+              colorStr = this.stateColor;
           } else {
-              colorStr = isOn ? (this.colorTemp ? kelvinToHex(this.colorTemp) : '#FFFFFF') : 'rgba(255, 255, 255, 0.55)';
+              colorStr = isOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.55)';
           }
       }
       
@@ -2286,20 +2321,31 @@ class VirtualLight3D extends THREE.Group {
   setColor(r, g, b) {
       if (this.realDevice && smartHome) {
           const prevColor = this.stateColor;
+          const prevHue = this.currentHue;
           const toHex = (n) => {
               const hex = n.toString(16);
               return hex.length === 1 ? '0' + hex : hex;
           };
           this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-          this.rebuildPanel();
+          this.currentHue = hexToHue(this.stateColor);
+          if (this.realDevice.attributes) {
+              this.realDevice.attributes.rgb_color = [r, g, b];
+              delete this.realDevice.attributes.color_temp_kelvin;
+          }
+          this.realDevice.color_temp_kelvin = undefined;
+
+          // Note: Do NOT call this.rebuildPanel() here!
+          // Rebuilding the card while the slider interaction ends cancels capture and resets value to 0 (red).
           smartHome.setColor(this.realDevice.id, r, g, b).then((success) => {
               if (success === false) {
                   this.stateColor = prevColor;
+                  this.currentHue = prevHue;
                   this.rebuildPanel();
                   hud.log(`Failed to set color for ${this.labelText}`, '#FF0000');
               }
           }).catch(() => {
               this.stateColor = prevColor;
+              this.currentHue = prevHue;
               this.rebuildPanel();
           });
       }
@@ -2309,6 +2355,11 @@ class VirtualLight3D extends THREE.Group {
       this.colorTemp = Math.round(kelvin);
       this.stateColor = hexColor || kelvinToHex(this.colorTemp);
       this.currentHue = hexToHue(this.stateColor);
+      if (this.realDevice && this.realDevice.attributes) {
+          this.realDevice.attributes.color_temp_kelvin = this.colorTemp;
+          delete this.realDevice.attributes.rgb_color;
+          delete this.realDevice.attributes.hs_color;
+      }
       this.rebuildPanel();
       if (this.realDevice && smartHome) {
           hud.log(`Warmth set to ${this.colorTemp}K`, this.stateColor);
