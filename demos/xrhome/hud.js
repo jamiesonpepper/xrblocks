@@ -152,7 +152,7 @@ export class HUDManager {
         });
 
         const toggleBtn = new xb.UIButton({
-            label: this.isMenuExpanded ? '−' : '+',
+            label: this.isMenuExpanded ? '-' : '+',
             ariaLabel: 'Toggle HUD expand',
             style: {
                 width: 36,

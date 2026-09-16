@@ -168,6 +168,7 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
           remaining_time_unit: remainingSensor?.attributes?.unit_of_measurement || 'min',
           completion_time: (completionTimeSensor && completionTimeSensor.state !== 'unknown' && completionTimeSensor.state !== 'unavailable') ? completionTimeSensor.state : undefined,
           total_time: (totalTimeSensor && totalTimeSensor.state !== 'unknown') ? totalTimeSensor.state : undefined,
+          total_time_unit: totalTimeSensor?.attributes?.unit_of_measurement || 'min',
           delayed_start: (delayedStartSensor && delayedStartSensor.state !== 'unknown') ? delayedStartSensor.state : undefined,
           door_open: doorSensor ? (doorSensor.state === 'on' || doorSensor.state === 'open') : undefined,
           rinse_refill_needed: rinseRefillSensor ? (rinseRefillSensor.state === 'on') : undefined,

@@ -282,11 +282,11 @@ import * as xb from 'xrblocks';
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
 import { VisionManager } from './vision.js?v=26';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=45';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=50';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=26';
+import { HUDManager } from './hud.js?v=27';
 import { VirtualKeypad } from './keypad.js?v=26';
 
 // Globals
@@ -1082,20 +1082,35 @@ class VirtualLight3D extends THREE.Group {
           });
           cardChildren.push(statusBadge);
 
-          // Dynamic Telemetry List - ONLY render fields obtained from HA
           const dishTelemetry = [];
 
-          if (attrs.cycle && attrs.cycle !== 'unknown') {
-              const cycleStr = String(attrs.cycle).replace(/_/g, ' ').toUpperCase();
-              dishTelemetry.push(new xb.UIText({ text: `🔄 Cycle: ${cycleStr}`, style: { fontSize: 13, color: '#FFFFFF' } }));
-          }
+          // 1. Current Cycle - always render!
+          const rawCycle = attrs.cycle || attrs.current_cycle || 
+                           (this.realDevice?.related && this.realDevice.related.find(r => r.entity_id.includes('cycle'))?.state);
+          const cycleDisplay = (rawCycle && rawCycle !== 'unknown' && rawCycle !== 'unavailable')
+              ? String(rawCycle).replace(/_/g, ' ').toUpperCase()
+              : 'NORMAL';
+          dishTelemetry.push(new xb.UIText({ text: `🔄 Current Cycle: ${cycleDisplay}`, style: { fontSize: 13, color: '#FFFFFF', fontWeight: 'bold' } }));
 
-          if (attrs.remaining_time && attrs.remaining_time !== 'unknown' && attrs.remaining_time !== 'unavailable') {
-              const remText = formatDishwasherRemainingTime(attrs.remaining_time, attrs.remaining_time_unit);
-              if (remText) {
-                  const isUnderMin = (remText === 'Less than a minute');
-                  const remLabel = isUnderMin ? `⏱️ Less than a minute` : `⏱️ ${remText} remaining`;
-                  dishTelemetry.push(new xb.UIText({ text: remLabel, style: { fontSize: 13, color: '#00FF88', fontWeight: 'bold' } }));
+          // 2. Remaining Time / Duration
+          if (this._cycleChangedTimePending) {
+              dishTelemetry.push(new xb.UIText({ text: `⏱️ Updating estimated time...`, style: { fontSize: 13, color: 'rgba(255, 255, 255, 0.7)' } }));
+          } else {
+              const timeVal = (attrs.remaining_time && attrs.remaining_time !== 'unknown' && attrs.remaining_time !== 'unavailable')
+                  ? attrs.remaining_time
+                  : (attrs.total_time && attrs.total_time !== 'unknown' && attrs.total_time !== 'unavailable' ? attrs.total_time : null);
+              const timeUnit = (attrs.remaining_time && attrs.remaining_time !== 'unknown' && attrs.remaining_time !== 'unavailable')
+                  ? attrs.remaining_time_unit
+                  : attrs.total_time_unit;
+
+              if (timeVal) {
+                  const remText = formatDishwasherRemainingTime(timeVal, timeUnit);
+                  if (remText) {
+                      const isUnderMin = (remText === 'Less than a minute');
+                      const isTotal = (!attrs.remaining_time || attrs.remaining_time === 'unknown' || attrs.remaining_time === 'unavailable');
+                      const remLabel = isUnderMin ? `⏱️ Less than a minute` : (isTotal ? `⏱️ ~${remText} (estimated)` : `⏱️ ${remText} remaining`);
+                      dishTelemetry.push(new xb.UIText({ text: remLabel, style: { fontSize: 13, color: '#00FF88', fontWeight: 'bold' } }));
+                  }
               }
           }
 
@@ -1112,12 +1127,10 @@ class VirtualLight3D extends THREE.Group {
               dishTelemetry.push(new xb.UIText({ text: doorStr, style: { fontSize: 13, color: doorCol } }));
           }
 
-          if (attrs.rinse_refill_needed) {
-              dishTelemetry.push(new xb.UIText({ text: '💧 Refill Rinse Aid', style: { fontSize: 13, color: '#FFCC00' } }));
-          }
-
-          if (attrs.clean_complete) {
-              dishTelemetry.push(new xb.UIText({ text: '✨ Clean Cycle Complete', style: { fontSize: 13, color: '#00FF88' } }));
+          if (attrs.rinse_refill_needed !== undefined) {
+              const refillStr = attrs.rinse_refill_needed ? 'Yes' : 'No';
+              const refillCol = attrs.rinse_refill_needed ? '#FFCC00' : '#FFFFFF';
+              dishTelemetry.push(new xb.UIText({ text: `💧 Rinse Refill Needed: ${refillStr}`, style: { fontSize: 13, color: refillCol } }));
           }
 
           if (dishTelemetry.length > 0) {
@@ -1183,7 +1196,7 @@ class VirtualLight3D extends THREE.Group {
                   if (compDate.getTime() <= now || !isHeating) {
                       const compText = formatCompletionTimestamp(attrs.completion_time);
                       if (compText) {
-                          ovenTelemetry.push(new xb.UIText({ text: `⏱️ Completed: ${compText}`, style: { fontSize: 13, color: '#FFFFFF' } }));
+                          ovenTelemetry.push(new xb.UIText({ text: `⏱️ Last Action Completed: ${compText}`, style: { fontSize: 13, color: '#FFFFFF' } }));
                       }
                   } else {
                       const remMs = compDate.getTime() - now;
@@ -1731,7 +1744,7 @@ class VirtualLight3D extends THREE.Group {
 
       // Add Recommended section at top only if filter mode is 'recommended' and matches found
       if (isRecMode && recommended.length > 0) {
-          const recAreaName = `⭐ Recommended (${targetCat.toUpperCase()})`;
+          const recAreaName = `Recommended (${targetCat.toUpperCase()})`;
           const isRecExpanded = !this.hasCollapsedRecommended;
           visibleItems.push({
               type: 'area',
@@ -1795,7 +1808,7 @@ class VirtualLight3D extends THREE.Group {
                   },
                   children: [
                       new xb.UIButton({
-                          label: isRecMode ? '⭐ Recommended' : '🏠 By Room',
+                          label: isRecMode ? 'Recommended' : 'By Room',
                           ariaLabel: `Filter mode: ${isRecMode ? 'Recommended' : 'Room'}. Click to toggle.`,
                           userData: { interactive: true },
                           style: {
@@ -1815,7 +1828,7 @@ class VirtualLight3D extends THREE.Group {
                           }
                       }),
                       new xb.UIButton({
-                          label: '✕',
+                          label: 'X',
                           ariaLabel: 'Cancel selection',
                           style: { width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: '#FFFFFF', backgroundColor: 'rgba(255, 255, 255, 0.12)' },
                           onClick: () => {
@@ -1837,7 +1850,7 @@ class VirtualLight3D extends THREE.Group {
           pageItems.forEach(item => {
               if (item.type === 'area') {
                   bodyChildren.push(new xb.UIButton({
-                      label: `${item.isExpanded ? '▼' : '▶'} ${item.area} (${item.count})`,
+                      label: `${item.area} (${item.count})`,
                       style: {
                           width: '100%',
                           height: 34,
@@ -2299,7 +2312,10 @@ async function initApp(preloadedConfig = null) {
                         vl.realDevice = dev;
                         vl.isOn = dev.isOn;
                         if (dev.brightness !== undefined) vl.brightness = dev.brightness;
-                    } else if (newState) {
+                    }
+
+                    // ALWAYS parse incoming entity updates into vl.realDevice.attributes
+                    if (newState) {
                         if (isApplianceCard) {
                             // Sub-entity changed for a compound appliance: update attributes on the compound appliance without changing its domain/identity!
                             if (entityId.includes('operating_state') || entityId.includes('job_state') || entityId.includes('current_status') || entityId.includes('operation_state')) {
@@ -2327,6 +2343,7 @@ async function initApp(preloadedConfig = null) {
                                 if (newState.attributes?.unit_of_measurement) {
                                     vl.realDevice.attributes.remaining_time_unit = newState.attributes.unit_of_measurement;
                                 }
+                                vl._cycleChangedTimePending = false;
                             }
                             if (entityId.includes('door')) {
                                 vl.realDevice.attributes.door_open = (newState.state === 'on' || newState.state === 'open');
@@ -2336,6 +2353,25 @@ async function initApp(preloadedConfig = null) {
                             }
                             if (entityId.includes('lamp') || entityId.includes('light')) {
                                 vl.realDevice.attributes.lamp_state = newState.state;
+                            }
+                            if (entityId.includes('cycle') || entityId.includes('program')) {
+                                const prevCycle = vl.realDevice.attributes.cycle;
+                                vl.realDevice.attributes.cycle = newState.state;
+                                vl.realDevice.attributes.current_cycle = newState.state;
+                                if (prevCycle && prevCycle !== newState.state) {
+                                    // Cycle changed! Mark that the cycle changed before the new remaining time arrives
+                                    vl._cycleChangedTimePending = true;
+                                }
+                            }
+                            if (entityId.includes('total_time')) {
+                                vl.realDevice.attributes.total_time = newState.state;
+                                if (newState.attributes?.unit_of_measurement) {
+                                    vl.realDevice.attributes.total_time_unit = newState.attributes.unit_of_measurement;
+                                }
+                                vl._cycleChangedTimePending = false;
+                            }
+                            if (entityId.includes('mode')) {
+                                vl.realDevice.attributes.mode = newState.state;
                             }
                             if (entityId.includes('rinse_refill')) {
                                 vl.realDevice.attributes.rinse_refill_needed = (newState.state === 'on');
@@ -2349,7 +2385,19 @@ async function initApp(preloadedConfig = null) {
                             vl.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state);
                         }
                     }
-                    vl.updateVisuals();
+
+                    // Render cycle change immediately so cycle name updates BEFORE remaining time!
+                    if (isApplianceCard && (entityId.includes('cycle') || entityId.includes('program'))) {
+                        if (vl._cardUpdateTimer) clearTimeout(vl._cardUpdateTimer);
+                        vl.updateVisuals();
+                    } else if (isApplianceCard) {
+                        if (vl._cardUpdateTimer) clearTimeout(vl._cardUpdateTimer);
+                        vl._cardUpdateTimer = setTimeout(() => {
+                            vl.updateVisuals();
+                        }, 50);
+                    } else {
+                        vl.updateVisuals();
+                    }
                 }
             });
         };

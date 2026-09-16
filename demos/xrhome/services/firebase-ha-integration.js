@@ -16,6 +16,8 @@ export class FirebaseHAIntegration {
   }
 
   async listen(haUrl = null, haToken = null) {
+    this.haUrl = haUrl;
+    this.haToken = haToken;
     await this.refreshDevices();
     if (haUrl && haToken) {
       this.connectWebSocket(haUrl, haToken);
@@ -155,6 +157,9 @@ export class FirebaseHAIntegration {
     // 2. Check if this entity is associated with a compound appliance (dishwasher, oven, vacuum station, etc.)
     for (const d of this.devices.values()) {
       let isRelated = false;
+      const devId = (d.id || d.entity_id || '');
+      const isDishwasher = d.domain === 'dishwasher' || devId.includes('dishwasher');
+      const isOven = d.domain === 'oven' || devId.includes('oven');
 
       // Match via related list
       if (d.related && d.related.some(r => r.entity_id === entityId)) {
@@ -170,7 +175,7 @@ export class FirebaseHAIntegration {
           entityId.includes('remaining_program_time') || 
           entityId.includes('program_progress') || 
           entityId.includes('remaining_time')) {
-        if (d.domain === 'dishwasher' || d.domain === 'oven' || d.entity_id.includes('dishwasher') || d.entity_id.includes('oven')) {
+        if (isDishwasher || isOven) {
           d.attributes.remaining_time = newState.state;
           if (newState.attributes?.unit_of_measurement) {
             d.attributes.remaining_time_unit = newState.attributes.unit_of_measurement;
@@ -179,30 +184,30 @@ export class FirebaseHAIntegration {
         }
       }
       if (entityId.includes('completion_time') || entityId.includes('end_time') || entityId.includes('completion')) {
-        if (d.domain === 'dishwasher' || d.domain === 'oven' || d.entity_id.includes('dishwasher') || d.entity_id.includes('oven')) {
+        if (isDishwasher || isOven) {
           d.attributes.completion_time = newState.state;
           isRelated = true;
         }
       }
       if (entityId.includes('child_lock')) {
-        if (d.domain === 'oven' || d.domain === 'dishwasher' || d.entity_id.includes('oven')) {
+        if (isOven || isDishwasher) {
           d.attributes.child_lock = (newState.state === 'on' || newState.state === 'true');
           isRelated = true;
         }
       }
       if (entityId.includes('door')) {
-        if (d.domain === 'oven' || d.domain === 'dishwasher' || d.entity_id.includes('oven') || d.entity_id.includes('dishwasher')) {
+        if (isOven || isDishwasher) {
           d.attributes.door_open = (newState.state === 'on' || newState.state === 'open');
           isRelated = true;
         }
       }
       if (entityId.includes('second_cavity_setpoint')) {
-        if (d.domain === 'oven') {
+        if (isOven) {
           d.attributes.second_cavity_setpoint = parseFloat(newState.state);
           isRelated = true;
         }
       } else if (entityId.includes('setpoint') || entityId.includes('target_temperature')) {
-        if (d.domain === 'oven' || d.domain === 'climate') {
+        if (isOven || d.domain === 'climate') {
           d.attributes.setpoint = parseFloat(newState.state);
           if (newState.attributes?.unit_of_measurement) {
             d.attributes.setpoint_unit = newState.attributes.unit_of_measurement;
@@ -211,23 +216,53 @@ export class FirebaseHAIntegration {
         }
       }
       if (entityId.includes('operation_state') || entityId.includes('operating_state') || entityId.includes('job_state') || entityId.includes('current_status')) {
-        if (d.domain === 'dishwasher' || d.domain === 'oven') {
+        if (isDishwasher || isOven) {
           d.attributes.operating_state = newState.state;
           d.attributes.status = newState.state;
           d.state = newState.state;
           isRelated = true;
         }
       }
+      if (entityId.includes('current_cycle') || entityId.includes('cycle') || entityId.includes('program')) {
+        if (isDishwasher || isOven) {
+          d.attributes.cycle = newState.state;
+          d.attributes.current_cycle = newState.state;
+          isRelated = true;
+        }
+      }
+      if (entityId.includes('total_time')) {
+        if (isDishwasher || isOven) {
+          d.attributes.total_time = newState.state;
+          if (newState.attributes?.unit_of_measurement) {
+            d.attributes.total_time_unit = newState.attributes.unit_of_measurement;
+          }
+          isRelated = true;
+        }
+      }
+      if (entityId.includes('mode')) {
+        if (isOven) {
+          d.attributes.mode = newState.state;
+          isRelated = true;
+        }
+      }
       if (entityId.includes('rinse_refill')) {
-        if (d.domain === 'dishwasher') {
+        if (isDishwasher) {
           d.attributes.rinse_refill_needed = (newState.state === 'on');
           isRelated = true;
         }
       }
       if (entityId.includes('clean_indicator') || entityId.includes('clean_complete')) {
-        if (d.domain === 'dishwasher') {
+        if (isDishwasher) {
           d.attributes.clean_complete = (newState.state === 'on');
           isRelated = true;
+        }
+      }
+
+      if (d.related) {
+        const item = d.related.find(r => r.entity_id === entityId);
+        if (item) {
+          item.state = newState.state;
+          item.attributes = { ...item.attributes, ...newState.attributes };
         }
       }
 
@@ -257,6 +292,7 @@ export class FirebaseHAIntegration {
           const battery = entity.attributes?.battery_level !== undefined ? entity.attributes.battery_level : (entity.attributes?.battery !== undefined ? entity.attributes.battery : null);
           this.devices.set(entity.entity_id, {
             id: entity.entity_id,
+            entity_id: entity.entity_id,
             domain: domain,
             name: entity.attributes?.friendly_name || entity.entity_id,
             area: entity.area || entity.attributes?.area || 'Other',
