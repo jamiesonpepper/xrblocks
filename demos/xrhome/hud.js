@@ -142,8 +142,11 @@ export class HUDManager {
             backgroundColor: 'rgba(255, 59, 48, 0.4)',
             borderWidth: 1,
             borderColor: '#FF3B30',
+            color: '#FFFFFF',
             ':hover': {
-                backgroundColor: 'rgba(255, 59, 48, 0.8)',
+                backgroundColor: '#FFFFFF',
+                color: '#000000',
+                borderColor: '#FFFFFF',
             },
         } : {
             width: '100%',
@@ -152,8 +155,11 @@ export class HUDManager {
             backgroundColor: 'rgba(255, 255, 255, 0.18)',
             borderWidth: 1,
             borderColor: '#FFFFFF',
+            color: '#FFFFFF',
             ':hover': {
-                backgroundColor: 'rgba(0, 255, 136, 0.45)',
+                backgroundColor: '#FFFFFF',
+                color: '#000000',
+                borderColor: '#FFFFFF',
             },
         };
 
@@ -177,6 +183,12 @@ export class HUDManager {
                 backgroundColor: 'rgba(255, 255, 255, 0.15)',
                 borderWidth: 1,
                 borderColor: '#FFFFFF',
+                color: '#FFFFFF',
+                ':hover': {
+                    backgroundColor: '#FFFFFF',
+                    color: '#000000',
+                    borderColor: '#FFFFFF',
+                },
             },
             onClick: () => {
                 this.isMenuExpanded = !this.isMenuExpanded;
@@ -226,6 +238,12 @@ export class HUDManager {
                     backgroundColor: 'rgba(255, 255, 255, 0.12)',
                     borderWidth: 1,
                     borderColor: 'rgba(255, 255, 255, 0.6)',
+                    color: '#FFFFFF',
+                    ':hover': {
+                        backgroundColor: '#FFFFFF',
+                        color: '#000000',
+                        borderColor: '#FFFFFF',
+                    },
                 },
                 onClick: () => {
                     if (this.onResetPairings) this.onResetPairings();
@@ -241,7 +259,7 @@ export class HUDManager {
                 flexDirection: 'column',
                 gap: 12,
                 padding: 16,
-                backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                backgroundColor: 'rgba(0, 0, 0, 0.20)',
                 borderWidth: 1.5,
                 borderColor: '#FFFFFF',
                 borderRadius: 20,

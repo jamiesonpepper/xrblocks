@@ -748,6 +748,8 @@ class VirtualLight3D extends THREE.Group {
 
       // Reusable Unpair Button
       const makeUnpairBtn = () => new xb.UIButton({
+          label: 'Unpair',
+          icon: 'link_off',
           ariaLabel: 'Unpair device',
           userData: { interactive: true },
           style: {
@@ -757,21 +759,13 @@ class VirtualLight3D extends THREE.Group {
               backgroundColor: 'rgba(255, 255, 255, 0.16)',
               borderWidth: 1,
               borderColor: '#FFFFFF',
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
+              color: '#FFFFFF',
+              ':hover': {
+                  backgroundColor: '#FFFFFF',
+                  color: '#000000',
+                  borderColor: '#FFFFFF',
+              },
           },
-          children: [
-              new xb.UIIcon({
-                  icon: 'link_off',
-                  style: { width: 18, height: 18, color: '#FFFFFF' }
-              }),
-              new xb.UIText({
-                  text: 'Unpair',
-                  style: { fontSize: 14, fontWeight: 'bold', color: '#FFFFFF' }
-              })
-          ],
           onClick: () => this.handleConfigClick()
       });
 
@@ -791,6 +785,12 @@ class VirtualLight3D extends THREE.Group {
                   borderColor: '#FFFFFF',
                   fontSize: 14,
                   fontWeight: 'bold',
+                  color: '#FFFFFF',
+                  ':hover': {
+                      backgroundColor: '#FFFFFF',
+                      color: '#000000',
+                      borderColor: '#FFFFFF',
+                  },
               },
               onClick: () => this.handleConfigClick()
           });
@@ -1394,6 +1394,8 @@ class VirtualLight3D extends THREE.Group {
           // --- LIGHT OR GENERIC SWITCH UI ---
           // 1. Power Toggle & Unpair (Equal size buttons with clean icons and text)
           const toggleBtn = new xb.UIButton({
+              label: isOn ? 'ON' : 'OFF',
+              icon: 'power_settings_new',
               ariaLabel: isOn ? 'Turn Off' : 'Turn On',
               userData: { interactive: true },
               style: {
@@ -1403,25 +1405,19 @@ class VirtualLight3D extends THREE.Group {
                   backgroundColor: isOn ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.12)',
                   borderWidth: 1,
                   borderColor: isOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.5)',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 6,
+                  color: '#FFFFFF',
+                  ':hover': {
+                      backgroundColor: '#FFFFFF',
+                      color: '#000000',
+                      borderColor: '#FFFFFF',
+                  },
               },
-              children: [
-                  new xb.UIIcon({
-                      icon: 'power_settings_new',
-                      style: { width: 18, height: 18, color: '#FFFFFF' }
-                  }),
-                  new xb.UIText({
-                      text: isOn ? 'ON' : 'OFF',
-                      style: { fontSize: 14, fontWeight: 'bold', color: '#FFFFFF' }
-                  })
-              ],
               onClick: () => this.toggle()
           });
 
           const unpairBtn = new xb.UIButton({
+              label: 'Unpair',
+              icon: 'link_off',
               ariaLabel: 'Unpair device',
               userData: { interactive: true },
               style: {
@@ -1431,21 +1427,13 @@ class VirtualLight3D extends THREE.Group {
                   backgroundColor: 'rgba(255, 255, 255, 0.16)',
                   borderWidth: 1,
                   borderColor: '#FFFFFF',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 6,
+                  color: '#FFFFFF',
+                  ':hover': {
+                      backgroundColor: '#FFFFFF',
+                      color: '#000000',
+                      borderColor: '#FFFFFF',
+                  },
               },
-              children: [
-                  new xb.UIIcon({
-                      icon: 'link_off',
-                      style: { width: 18, height: 18, color: '#FFFFFF' }
-                  }),
-                  new xb.UIText({
-                      text: 'Unpair',
-                      style: { fontSize: 14, fontWeight: 'bold', color: '#FFFFFF' }
-                  })
-              ],
               onClick: () => this.handleConfigClick()
           });
           
@@ -1603,7 +1591,7 @@ class VirtualLight3D extends THREE.Group {
               flexDirection: 'column',
               gap: 8,
               padding: 12,
-              backgroundColor: 'rgba(255, 255, 255, 0.12)',
+              backgroundColor: 'rgba(0, 0, 0, 0.20)',
               borderWidth: 1.5,
               borderColor: '#FFFFFF',
               borderRadius: 16,
@@ -1819,11 +1807,16 @@ class VirtualLight3D extends THREE.Group {
                               height: 28,
                               borderRadius: 6,
                               borderWidth: 1,
-                              borderColor: isRecMode ? '#00FF88' : 'rgba(255, 255, 255, 0.7)',
-                              backgroundColor: isRecMode ? 'rgba(0, 255, 136, 0.22)' : 'rgba(255, 255, 255, 0.14)',
+                              borderColor: '#FFFFFF',
+                              backgroundColor: isRecMode ? '#FFFFFF' : 'rgba(255, 255, 255, 0.14)',
                               fontSize: 11,
                               fontWeight: 'bold',
-                              color: '#FFFFFF'
+                              color: isRecMode ? '#000000' : '#FFFFFF',
+                              ':hover': {
+                                  backgroundColor: '#FFFFFF',
+                                  color: '#000000',
+                                  borderColor: '#FFFFFF',
+                              },
                           },
                           onClick: () => {
                               this.deviceFilterMode = isRecMode ? 'room' : 'recommended';
@@ -1834,7 +1827,20 @@ class VirtualLight3D extends THREE.Group {
                       new xb.UIButton({
                           label: '✕',
                           ariaLabel: 'Cancel selection',
-                          style: { width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: '#FFFFFF', backgroundColor: 'rgba(255, 255, 255, 0.12)' },
+                          style: {
+                              width: 28,
+                              height: 28,
+                              borderRadius: 6,
+                              borderWidth: 1,
+                              borderColor: '#FFFFFF',
+                              backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                              color: '#FFFFFF',
+                              ':hover': {
+                                  backgroundColor: '#FFFFFF',
+                                  color: '#000000',
+                                  borderColor: '#FFFFFF',
+                              },
+                          },
                           onClick: () => {
                               this.isSelectingDevice = false;
                               this.rebuildPanel();
@@ -1860,12 +1866,17 @@ class VirtualLight3D extends THREE.Group {
                           width: '100%',
                           height: 34,
                           borderRadius: 8,
-                          backgroundColor: item.isRecommended ? 'rgba(0, 255, 136, 0.22)' : 'rgba(255, 255, 255, 0.18)',
+                          backgroundColor: item.isRecommended ? '#FFFFFF' : 'rgba(255, 255, 255, 0.18)',
                           borderWidth: 1,
-                          borderColor: item.isRecommended ? '#00FF88' : 'rgba(255, 255, 255, 0.7)',
+                          borderColor: item.isRecommended ? '#FFFFFF' : 'rgba(255, 255, 255, 0.7)',
                           fontSize: 14,
                           fontWeight: 'bold',
-                          color: '#FFFFFF',
+                          color: item.isRecommended ? '#000000' : '#FFFFFF',
+                          ':hover': {
+                              backgroundColor: '#FFFFFF',
+                              color: '#000000',
+                              borderColor: '#FFFFFF',
+                          },
                       },
                       onClick: () => {
                           if (item.isRecommended) {
@@ -1898,6 +1909,11 @@ class VirtualLight3D extends THREE.Group {
                           fontSize: 14,
                           fontWeight: 'bold',
                           color: '#FFFFFF',
+                          ':hover': {
+                              backgroundColor: '#FFFFFF',
+                              color: '#000000',
+                              borderColor: '#FFFFFF',
+                          },
                       },
                       onClick: () => this.pairWithDevice(dev.id)
                   }));
@@ -1907,8 +1923,22 @@ class VirtualLight3D extends THREE.Group {
           if (totalPages > 1) {
               const prevBtn = new xb.UIButton({
                   label: '<',
+                  ariaLabel: 'Previous page',
                   disabled: this.devicePage <= 0,
-                  style: { width: 40, height: 30, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)' },
+                  style: {
+                      width: 40,
+                      height: 30,
+                      borderRadius: 6,
+                      borderWidth: 1,
+                      borderColor: 'rgba(255, 255, 255, 0.4)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                      color: '#FFFFFF',
+                      ':hover': {
+                          backgroundColor: '#FFFFFF',
+                          color: '#000000',
+                          borderColor: '#FFFFFF',
+                      },
+                  },
                   onClick: () => { if (this.devicePage > 0) { this.devicePage--; this.rebuildPanel(); } }
               });
               const pageIndicator = new xb.UIText({
@@ -1917,8 +1947,22 @@ class VirtualLight3D extends THREE.Group {
               });
               const nextBtn = new xb.UIButton({
                   label: '>',
+                  ariaLabel: 'Next page',
                   disabled: this.devicePage >= totalPages - 1,
-                  style: { width: 40, height: 30, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)' },
+                  style: {
+                      width: 40,
+                      height: 30,
+                      borderRadius: 6,
+                      borderWidth: 1,
+                      borderColor: 'rgba(255, 255, 255, 0.4)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                      color: '#FFFFFF',
+                      ':hover': {
+                          backgroundColor: '#FFFFFF',
+                          color: '#000000',
+                          borderColor: '#FFFFFF',
+                      },
+                  },
                   onClick: () => { if (this.devicePage < totalPages - 1) { this.devicePage++; this.rebuildPanel(); } }
               });
               bodyChildren.push(new xb.UIPanel({
@@ -1937,7 +1981,7 @@ class VirtualLight3D extends THREE.Group {
               flexDirection: 'column',
               gap: 8,
               padding: 12,
-              backgroundColor: 'rgba(255, 255, 255, 0.12)',
+              backgroundColor: 'rgba(0, 0, 0, 0.20)',
               borderWidth: 1.5,
               borderColor: '#FFFFFF',
               borderRadius: 16,
