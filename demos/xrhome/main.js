@@ -830,8 +830,6 @@ class VirtualLight3D extends THREE.Group {
           const lockState = (this.realDevice?.state || 'locked').toLowerCase();
           const isLocked = lockState === 'locked';
           const isJammed = lockState === 'jammed';
-          const statusColor = isJammed ? '#FFCC00' : (isLocked ? '#00FF88' : '#FF5555');
-          const statusBg = isJammed ? 'rgba(255, 204, 0, 0.2)' : (isLocked ? 'rgba(0, 255, 136, 0.2)' : 'rgba(255, 85, 85, 0.2)');
           const statusText = isJammed ? '⚠️ JAMMED' : (isLocked ? '🔒 LOCKED' : '🔓 UNLOCKED');
 
           const statusRowChildren = [
@@ -839,15 +837,15 @@ class VirtualLight3D extends THREE.Group {
                   style: {
                       padding: 8,
                       borderRadius: 8,
-                      backgroundColor: statusBg,
+                      backgroundColor: 'rgba(255, 255, 255, 0.12)',
                       borderWidth: 1,
-                      borderColor: statusColor,
+                      borderColor: 'rgba(255, 255, 255, 0.4)',
                       flexGrow: 1,
                       alignItems: 'center',
                       justifyContent: 'center',
                   },
                   children: [
-                      new xb.UIText({ text: statusText, style: { fontSize: 13, fontWeight: 'bold', color: statusColor } })
+                      new xb.UIText({ text: statusText, style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
                   ]
               })
           ];
@@ -879,9 +877,15 @@ class VirtualLight3D extends THREE.Group {
                   width: '100%',
                   height: 42,
                   borderRadius: 10,
-                  backgroundColor: isLocked ? 'rgba(255, 85, 85, 0.25)' : 'rgba(0, 255, 136, 0.25)',
+                  backgroundColor: isLocked ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.16)',
                   borderWidth: 1.5,
-                  borderColor: isLocked ? '#FF5555' : '#00FF88',
+                  borderColor: '#FFFFFF',
+                  color: '#FFFFFF',
+                  ':hover': {
+                      backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                      color: '#000000',
+                      borderColor: '#FFFFFF',
+                  },
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -908,7 +912,6 @@ class VirtualLight3D extends THREE.Group {
           const vacState = (this.realDevice?.state || 'docked').toUpperCase();
           const isCleaning = (this.realDevice?.state === 'cleaning');
           const isDocked = (this.realDevice?.state === 'docked');
-          const statusColor = isCleaning ? '#00FF88' : (isDocked ? '#00DDFF' : '#FFCC00');
 
           const statusRow = new xb.UIPanel({
               style: { width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 6 },
@@ -919,10 +922,10 @@ class VirtualLight3D extends THREE.Group {
                           borderRadius: 8,
                           backgroundColor: 'rgba(255, 255, 255, 0.12)',
                           borderWidth: 1,
-                          borderColor: statusColor,
+                          borderColor: 'rgba(255, 255, 255, 0.4)',
                       },
                       children: [
-                          new xb.UIText({ text: `🌀 ${vacState}`, style: { fontSize: 12, fontWeight: 'bold', color: statusColor } })
+                          new xb.UIText({ text: `🌀 ${vacState}`, style: { fontSize: 12, fontWeight: 'bold', color: '#FFFFFF' } })
                       ]
                   }),
                   new xb.UIPanel({
@@ -949,9 +952,15 @@ class VirtualLight3D extends THREE.Group {
                   flexGrow: 2,
                   height: 36,
                   borderRadius: 8,
-                  backgroundColor: isCleaning ? 'rgba(255, 204, 0, 0.25)' : 'rgba(0, 255, 136, 0.25)',
+                  backgroundColor: isCleaning ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.14)',
                   borderWidth: 1,
                   borderColor: '#FFFFFF',
+                  color: '#FFFFFF',
+                  ':hover': {
+                      backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                      color: '#000000',
+                      borderColor: '#FFFFFF',
+                  },
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -1042,7 +1051,7 @@ class VirtualLight3D extends THREE.Group {
           // Optional Dock Telemetry Alert Badges (only if reported by HA)
           const vacAlerts = [];
           if (this.realDevice?.attributes && this.realDevice.attributes.water_shortage) {
-              vacAlerts.push(new xb.UIText({ text: '⚠️ Refill Water Tank', style: { fontSize: 12, color: '#FFCC00', fontWeight: 'bold' } }));
+              vacAlerts.push(new xb.UIText({ text: '⚠️ Refill Water Tank', style: { fontSize: 12, color: '#FFFFFF', fontWeight: 'bold' } }));
           }
           if (this.realDevice?.attributes && this.realDevice.attributes.mop_attached) {
               vacAlerts.push(new xb.UIText({ text: '🧹 Mop Module Attached', style: { fontSize: 12, color: 'rgba(255, 255, 255, 0.8)' } }));
@@ -1180,7 +1189,6 @@ class VirtualLight3D extends THREE.Group {
           const attrs = this.realDevice?.attributes || {};
           const rawState = String(attrs.operating_state || attrs.job_state || this.realDevice?.state || 'Ready').replace(/_/g, ' ').toUpperCase();
           const isHeating = rawState.includes('HEAT') || rawState.includes('RUN') || rawState.includes('BAKE') || rawState.includes('ON');
-          const statusColor = isHeating ? '#FF7700' : '#00DDFF';
 
           const statusBadge = new xb.UIPanel({
               style: {
@@ -1189,13 +1197,13 @@ class VirtualLight3D extends THREE.Group {
                   borderRadius: 8,
                   backgroundColor: 'rgba(255, 255, 255, 0.12)',
                   borderWidth: 1,
-                  borderColor: statusColor,
+                  borderColor: 'rgba(255, 255, 255, 0.4)',
                   flexDirection: 'row',
                   justifyContent: 'space-between',
                   alignItems: 'center'
               },
               children: [
-                  new xb.UIText({ text: `🍳 Status: ${rawState}`, style: { fontSize: 13, fontWeight: 'bold', color: statusColor } })
+                  new xb.UIText({ text: `🍳 Status: ${rawState}`, style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
               ]
           });
           cardChildren.push(statusBadge);
@@ -1244,21 +1252,19 @@ class VirtualLight3D extends THREE.Group {
                       } else {
                           timeStr = 'Less than a minute';
                       }
-                      ovenTelemetry.push(new xb.UIText({ text: `⏱️ Completes: In ${timeStr}`, style: { fontSize: 13, color: '#00FF88', fontWeight: 'bold' } }));
+                      ovenTelemetry.push(new xb.UIText({ text: `⏱️ Completes: In ${timeStr}`, style: { fontSize: 13, color: '#FFFFFF', fontWeight: 'bold' } }));
                   }
               }
           }
 
           if (attrs.door_open !== undefined) {
               const doorStr = attrs.door_open ? '⚠️ Door: Open' : '🚪 Door: Closed';
-              const doorCol = attrs.door_open ? '#FFCC00' : '#FFFFFF';
-              ovenTelemetry.push(new xb.UIText({ text: doorStr, style: { fontSize: 13, color: doorCol } }));
+              ovenTelemetry.push(new xb.UIText({ text: doorStr, style: { fontSize: 13, color: '#FFFFFF' } }));
           }
 
           if (attrs.child_lock !== undefined) {
               const lockStr = attrs.child_lock ? '🔒 Child Lock: ON' : '🔓 Child Lock: OFF';
-              const lockCol = attrs.child_lock ? '#00FF88' : '#FFFFFF';
-              ovenTelemetry.push(new xb.UIText({ text: lockStr, style: { fontSize: 13, color: lockCol } }));
+              ovenTelemetry.push(new xb.UIText({ text: lockStr, style: { fontSize: 13, color: '#FFFFFF' } }));
           }
 
           if (ovenTelemetry.length > 0) {
@@ -1279,9 +1285,15 @@ class VirtualLight3D extends THREE.Group {
                       flexGrow: 1,
                       height: 36,
                       borderRadius: 8,
-                      backgroundColor: 'rgba(255, 85, 85, 0.25)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.16)',
                       borderWidth: 1,
-                      borderColor: '#FF5555',
+                      borderColor: '#FFFFFF',
+                      color: '#FFFFFF',
+                      ':hover': {
+                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                          color: '#000000',
+                          borderColor: '#FFFFFF',
+                      },
                       flexDirection: 'row',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -1311,9 +1323,15 @@ class VirtualLight3D extends THREE.Group {
                           flexGrow: 1,
                           height: 36,
                           borderRadius: 8,
-                          backgroundColor: lampOn ? 'rgba(255, 204, 0, 0.35)' : 'rgba(255, 255, 255, 0.14)',
+                          backgroundColor: lampOn ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.14)',
                           borderWidth: 1,
-                          borderColor: lampOn ? '#FFCC00' : 'rgba(255, 255, 255, 0.5)',
+                          borderColor: lampOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.5)',
+                          color: '#FFFFFF',
+                          ':hover': {
+                              backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                              color: '#000000',
+                              borderColor: '#FFFFFF',
+                          },
                           flexDirection: 'row',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -1333,17 +1351,17 @@ class VirtualLight3D extends THREE.Group {
                           flexGrow: 1,
                           height: 36,
                           borderRadius: 8,
-                          backgroundColor: lampOn ? 'rgba(255, 204, 0, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                          backgroundColor: lampOn ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.08)',
                           borderWidth: 1,
-                          borderColor: lampOn ? '#FFCC00' : 'rgba(255, 255, 255, 0.2)',
+                          borderColor: lampOn ? 'rgba(255, 255, 255, 0.5)' : 'rgba(255, 255, 255, 0.2)',
                           flexDirection: 'row',
                           alignItems: 'center',
                           justifyContent: 'center',
                           gap: 6
                       },
                       children: [
-                          new xb.UIIcon({ icon: 'lightbulb', style: { width: 18, height: 18, color: lampOn ? '#FFCC00' : 'rgba(255, 255, 255, 0.6)' } }),
-                          new xb.UIText({ text: lampOn ? 'Lamp: ON' : 'Lamp: OFF', style: { fontSize: 13, fontWeight: 'bold', color: lampOn ? '#FFE875' : 'rgba(255, 255, 255, 0.6)' } })
+                          new xb.UIIcon({ icon: 'lightbulb', style: { width: 18, height: 18, color: lampOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.6)' } }),
+                          new xb.UIText({ text: lampOn ? 'Lamp: ON' : 'Lamp: OFF', style: { fontSize: 13, fontWeight: 'bold', color: lampOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.6)' } })
                       ]
                   });
                   ovenControls.push(lampBadge);
@@ -2108,18 +2126,10 @@ class VirtualLight3D extends THREE.Group {
 
       let colorStr = '#FFFFFF';
       if (isPaired) {
-          if (domain === 'lock') {
-              colorStr = (this.realDevice?.state === 'locked') ? '#00FF88' : '#FF5555';
-          } else if (domain === 'vacuum') {
-              colorStr = (this.realDevice?.state === 'cleaning') ? '#00FF88' : '#00DDFF';
-          } else if (domain === 'dishwasher') {
+          if (domain === 'dishwasher') {
               const dState = String(this.realDevice?.attributes?.status || this.realDevice?.state || '').toLowerCase();
               const isWash = dState.includes('run') || dState.includes('wash') || dState.includes('active');
               colorStr = isWash ? '#00FF88' : '#00DDFF';
-          } else if (domain === 'oven') {
-              const oState = String(this.realDevice?.attributes?.operating_state || this.realDevice?.state || '').toLowerCase();
-              const isHeat = oState.includes('heat') || oState.includes('run') || oState.includes('bake');
-              colorStr = isHeat ? '#FF7700' : '#00DDFF';
           } else if (domain === 'light' || this.category === 'light') {
               if (!this.stateColor) {
                   this.stateColor = this.colorTemp ? kelvinToHex(this.colorTemp) : '#FFFFFF';
