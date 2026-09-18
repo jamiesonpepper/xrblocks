@@ -31,14 +31,16 @@ async function callHaApi(endpoint, method = 'GET', body = null) {
   
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
     try {
       const options = {
         method,
         headers: {
           'Authorization': `Bearer ${haToken}`,
-          'Content-Type': 'application/json',
-          'Connection': 'close',
-        }
+          'Content-Type': 'application/json'
+        },
+        signal: controller.signal
       };
 
       if (body) {
@@ -46,6 +48,7 @@ async function callHaApi(endpoint, method = 'GET', body = null) {
       }
 
       const response = await fetch(url, options);
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');
@@ -54,8 +57,9 @@ async function callHaApi(endpoint, method = 'GET', body = null) {
 
       return await response.json();
     } catch (err) {
+      clearTimeout(timeoutId);
       lastError = err;
-      console.warn(`callHaApi attempt ${attempt} failed:`, err.message || err);
+      console.warn(`callHaApi attempt ${attempt} failed:`, err.message || err, err.cause ? `Cause: ${err.cause.message || err.cause}` : '');
       if (attempt < 3) {
         await new Promise(resolve => setTimeout(resolve, 200 * attempt));
       }
@@ -206,6 +210,7 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
       const stopButton = ovenEntities.find(e => e.entity_id === 'button.oven_stop');
       const lampSelect = ovenEntities.find(e => e.entity_id === 'select.oven_lamp' || (e.entity_id.startsWith('select.') && e.entity_id.includes('lamp')));
       const ovenLight = ovenEntities.find(e => e.entity_id === 'light.oven_light' || (e.entity_id.startsWith('light.') && e.entity_id.includes('oven')));
+      const lampSwitch = ovenEntities.find(e => e.entity_id.startsWith('switch.') && (e.entity_id.includes('lamp') || e.entity_id.includes('light')));
       const lampSensor = ovenEntities.find(e => 
         (e.entity_id.startsWith('sensor.') || e.entity_id.startsWith('binary_sensor.')) &&
         (e.entity_id.includes('lamp') || e.entity_id.includes('light'))
@@ -222,6 +227,10 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
       } else if (lampSelect) {
         lampEntity = lampSelect.entity_id;
         lampState = lampSelect.state;
+        lampControllable = true;
+      } else if (lampSwitch) {
+        lampEntity = lampSwitch.entity_id;
+        lampState = lampSwitch.state;
         lampControllable = true;
       } else if (lampSensor) {
         lampEntity = lampSensor.entity_id;
@@ -348,7 +357,11 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
         const pName = p.entity_id.split('.')[1] || '';
         for (const s of secondaryEntities) {
           const sName = s.entity_id.split('.')[1] || '';
-          if (pName && (sName.startsWith(pName) || sName.includes(pName))) {
+          // Avoid generic substring collisions (e.g. pName 'door' matching 'oven_door')
+          const isExactOrPrefix = sName === pName || sName.startsWith(pName + '_');
+          const isSuffix = sName.endsWith('_' + pName);
+          const isApplianceSub = sName.includes('oven') || sName.includes('dishwasher');
+          if (pName && (isExactOrPrefix || isSuffix) && !isApplianceSub) {
             p.related.push({
               entity_id: s.entity_id,
               domain: s.entity_id.split('.')[0],
@@ -414,6 +427,9 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
             if (lDomain === 'light') {
               const lService = (option === 'on') ? 'turn_on' : (option === 'off' ? 'turn_off' : 'toggle');
               result = await callHaApi(`/api/services/light/${lService}`, 'POST', { entity_id: lampEntity });
+            } else if (lDomain === 'switch') {
+              const lService = (option === 'on') ? 'turn_on' : 'turn_off';
+              result = await callHaApi(`/api/services/switch/${lService}`, 'POST', { entity_id: lampEntity });
             } else {
               result = await callHaApi('/api/services/select/select_option', 'POST', { entity_id: lampEntity, option });
             }

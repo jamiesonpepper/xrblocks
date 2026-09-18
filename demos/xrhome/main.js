@@ -20,6 +20,16 @@ let dragQuaternion = new THREE.Quaternion();
 let latestFrameBlob = null;
 let latestCameraMatrix = null;
 
+// Protect against upstream XRBlocks ScriptMixin calling non-existent super.dispose() on UIKit nodes
+if (typeof xb !== 'undefined' && xb.Script && xb.Script.prototype) {
+    const origDispose = xb.Script.prototype.dispose;
+    xb.Script.prototype.dispose = function() {
+        try {
+            if (origDispose) origDispose.call(this);
+        } catch (_) {}
+    };
+}
+
 class HUDInteraction extends xb.Script {
     update(time, frame) {
         if (dragController && dragController.userData.selected) {
@@ -292,7 +302,7 @@ if (xb.ui && xb.ui.setTheme) {
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
 import { VisionManager } from './vision.js?v=26';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=50';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=56';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
@@ -825,12 +835,13 @@ class VirtualLight3D extends THREE.Group {
               onClick: () => this.handleConfigClick()
           });
           cardChildren.push(btn);
-      } else if (domain === 'lock' || cat === 'lock') {
+      } else if (domain === 'lock' || cat === 'lock' || cat.includes('lock') || cat.includes('door')) {
           // --- DOOR LOCK UI ---
-          const lockState = (this.realDevice?.state || 'locked').toLowerCase();
-          const isLocked = lockState === 'locked';
-          const isJammed = lockState === 'jammed';
+          const rawState = (this.realDevice?.state || '').toLowerCase();
+          const isJammed = rawState === 'jammed';
+          const isLocked = rawState === 'locked' || (rawState === '' && this.isOn);
           const statusText = isJammed ? '⚠️ JAMMED' : (isLocked ? '🔒 LOCKED' : '🔓 UNLOCKED');
+          console.log(`[HA-DEBUG:rebuildPanel:LOCK] id=${this.realDevice?.id}, label=${this.labelText}, rawState='${rawState}', this.isOn=${this.isOn}, isLocked=${isLocked}, statusText='${statusText}'`);
 
           const statusRowChildren = [
               new xb.UIPanel({
@@ -871,6 +882,8 @@ class VirtualLight3D extends THREE.Group {
           }));
 
           const lockActionBtn = new xb.UIButton({
+              label: isLocked ? 'Unlock Door' : 'Lock Door',
+              icon: isLocked ? 'lock_open' : 'lock',
               ariaLabel: isLocked ? 'Unlock Door' : 'Lock Door',
               userData: { interactive: true },
               style: {
@@ -880,27 +893,15 @@ class VirtualLight3D extends THREE.Group {
                   backgroundColor: isLocked ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.16)',
                   borderWidth: 1.5,
                   borderColor: '#FFFFFF',
+                  fontSize: 15,
+                  fontWeight: 'bold',
                   color: '#FFFFFF',
                   ':hover': {
                       backgroundColor: 'rgba(255, 255, 255, 0.75)',
                       color: '#000000',
                       borderColor: '#FFFFFF',
                   },
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
               },
-              children: [
-                  new xb.UIIcon({
-                      icon: isLocked ? 'lock_open' : 'lock',
-                      style: { width: 22, height: 22, color: '#FFFFFF' }
-                  }),
-                  new xb.UIText({
-                      text: isLocked ? 'Unlock Door' : 'Lock Door',
-                      style: { fontSize: 15, fontWeight: 'bold', color: '#FFFFFF' }
-                  })
-              ],
               onClick: () => this.toggleLock()
           });
 
@@ -1309,7 +1310,8 @@ class VirtualLight3D extends THREE.Group {
           }
 
           if (attrs.lamp_entity) {
-              const lampOn = (attrs.lamp_state === 'on' || attrs.lamp_state === 'lamp_on');
+              const lampStateStr = String(attrs.lamp_state || '').toLowerCase();
+              const lampOn = lampStateStr === 'on' || lampStateStr.includes('on') || lampStateStr === 'true';
               const isLampControllable = (attrs.lamp_controllable !== false) &&
                                          !attrs.lamp_entity.startsWith('binary_sensor.') &&
                                          !attrs.lamp_entity.startsWith('sensor.') &&
@@ -2057,11 +2059,24 @@ class VirtualLight3D extends THREE.Group {
       this.add(this.panel);
   }
 
-  pairWithDevice(deviceId) {
+  async pairWithDevice(deviceId) {
       hud.speak("Pairing device...");
       hud.log(`Pairing to ${deviceId}...`, '#FFFFFF');
-      
+      console.log(`[HA-DEBUG:PAIR:START] Initiating pairing for deviceId: ${deviceId}`);
+
+      // Query live state from HA on pairing BEFORE rendering the card
+      if (smartHome && smartHome.fetchLiveStates) {
+          console.log(`[HA-DEBUG:PAIR:FETCH] Querying live state for ${deviceId}...`);
+          try {
+              await smartHome.fetchLiveStates(deviceId);
+          } catch (e) {
+              console.warn(`[HA-DEBUG:PAIR:FETCH-ERR] Failed to fetch live state:`, e);
+          }
+      }
+
       const device = smartHome.devices.get(deviceId);
+      console.log(`[HA-DEBUG:PAIR:DEVICE-LOADED]`, deviceId, device ? { id: device.id, domain: device.domain, state: device.state, isOn: device.isOn, attributes: device.attributes } : "NOT FOUND IN MAP!");
+
       if (device) {
           this.unpaired = false;
           this.linkedNodeId = deviceId;
@@ -2089,6 +2104,7 @@ class VirtualLight3D extends THREE.Group {
               });
           }
           
+          console.log(`[HA-DEBUG:PAIR:RENDER] Rendering UICard with realDevice.state='${this.realDevice.state}', isOn=${this.realDevice.isOn}`);
           this.updateVisuals();
           refreshRealDevices();
       }
@@ -2097,11 +2113,15 @@ class VirtualLight3D extends THREE.Group {
   updateVisuals() {
       const isPaired = !!(this.realDevice || this.linkedNodeId);
       const domain = (this.realDevice && this.realDevice.domain) ? this.realDevice.domain : (this.realDevice && this.realDevice.id ? this.realDevice.id.split('.')[0] : (this.category || 'light'));
+      const isLock = (domain === 'lock' || this.category === 'lock' || (this.realDevice && this.realDevice.id && this.realDevice.id.startsWith('lock.')));
       const isOn = this.isOn;
       
       // Hydrate state from realDevice if available BEFORE rebuilding buttons
       if (this.realDevice) {
           this.isOn = this.realDevice.isOn;
+          if (isLock) {
+              console.log(`[HA-DEBUG:updateVisuals:LOCK] id=${this.realDevice.id}, label='${this.labelText}', realDevice.state='${this.realDevice.state}', realDevice.isOn=${this.realDevice.isOn}, hydrated this.isOn=${this.isOn}`);
+          }
           if (this.realDevice.brightness !== undefined) {
               this.brightness = this.realDevice.brightness;
           }
@@ -2194,19 +2214,26 @@ class VirtualLight3D extends THREE.Group {
 
   toggleLock() {
       if (!this.realDevice || !smartHome) return;
-      const isLocked = (this.realDevice.state === 'locked');
+      const lockState = (this.realDevice.state || '').toLowerCase();
+      const isLocked = (lockState === 'locked' || (lockState === '' && this.isOn));
       const nextAction = isLocked ? 'unlock' : 'lock';
+      console.log(`[HA-DEBUG:toggleLock:CLICK] deviceId=${this.realDevice.id}, currentRawState='${this.realDevice.state}', this.isOn=${this.isOn}, isLocked=${isLocked} -> executing nextAction='${nextAction}'`);
       hud.speak(isLocked ? "Unlocking Door" : "Locking Door");
       smartHome.controlLock(this.realDevice.id, nextAction).then(success => {
+          console.log(`[HA-DEBUG:toggleLock:RESPONSE] success=${success}, nextAction='${nextAction}'`);
           if (success !== false) {
               this.realDevice.state = nextAction === 'lock' ? 'locked' : 'unlocked';
               this.realDevice.isOn = (nextAction === 'lock');
+              this.isOn = (nextAction === 'lock');
+              this._pendingLockAction = { state: this.realDevice.state, expiresAt: Date.now() + 5000 };
+              console.log(`[HA-DEBUG:toggleLock:APPLIED] Local state set: state='${this.realDevice.state}', isOn=${this.isOn}`);
               this.updateVisuals();
               hud.log(`${this.labelText} ${nextAction}ed`, nextAction === 'lock' ? '#00FF88' : '#FF5555');
           } else {
+              console.error(`[HA-DEBUG:toggleLock:FAIL] controlLock returned false for ${this.realDevice.id}`);
               hud.log(`Failed to ${nextAction} ${this.labelText}`, '#FF0000');
           }
-      }).catch(err => console.warn("Lock error:", err));
+      }).catch(err => console.error("[HA-DEBUG:toggleLock:ERR]", err));
   }
 
   toggleVacuum() {
@@ -2217,10 +2244,14 @@ class VirtualLight3D extends THREE.Group {
       smartHome.controlVacuum(this.realDevice.id, nextAction).then(success => {
           if (success !== false) {
               this.realDevice.state = isCleaning ? 'paused' : 'cleaning';
+              this.realDevice.isOn = !isCleaning;
+              this.isOn = !isCleaning;
               this.updateVisuals();
-              hud.log(`Vacuum ${nextAction}ed`, '#00FF88');
+              hud.log(`Vacuum ${nextAction === 'start' ? 'started' : 'paused'}`, '#00DDFF');
+          } else {
+              hud.log(`Failed to ${nextAction} Vacuum`, '#FF0000');
           }
-      }).catch(err => console.warn("Vacuum toggle error:", err));
+      }).catch(err => console.error(err));
   }
 
   dockVacuum() {
@@ -2444,21 +2475,74 @@ async function initApp(preloadedConfig = null) {
 
                 if (isDirectMatch || isRelatedMatch) {
                     const isApplianceCard = (vl.realDevice.id.startsWith('appliance.') || vl.realDevice.domain === 'oven' || vl.realDevice.domain === 'dishwasher');
-                    if (dev && dev.id === vl.realDevice.id) {
-                        // Direct match with parent compound appliance or matching entity
-                        vl.realDevice = dev;
-                        vl.isOn = dev.isOn;
-                        if (dev.brightness !== undefined) vl.brightness = dev.brightness;
-                    } else if (dev && !isApplianceCard && !vl.realDevice.id.startsWith('vacuum.')) {
-                        vl.realDevice = dev;
-                        vl.isOn = dev.isOn;
-                        if (dev.brightness !== undefined) vl.brightness = dev.brightness;
+                    const isLock = (vl.realDevice.domain === 'lock' || vl.category === 'lock' || vl.realDevice.id.startsWith('lock.'));
+
+                    if (isLock) {
+                        console.log(`[HA-DEBUG:onEntityStateChanged:LOCK] entityId=${entityId}, isDirectMatch=${isDirectMatch}, isRelatedMatch=${isRelatedMatch}, incomingState='${newState?.state}', currentVlState='${vl.realDevice?.state}', currentVlIsOn=${vl.isOn}`);
                     }
 
-                    // ALWAYS parse incoming entity updates into vl.realDevice.attributes
-                    if (newState) {
-                        if (isApplianceCard) {
-                            // Sub-entity changed for a compound appliance: update attributes on the compound appliance without changing its domain/identity!
+                    if (isDirectMatch) {
+                        // Direct match with primary device
+                        if (dev && (dev.id === vl.realDevice.id || dev.id === vl.linkedNodeId)) {
+                            vl.realDevice = dev;
+                            if (!isLock) {
+                                vl.isOn = dev.isOn;
+                            }
+                            if (dev.brightness !== undefined) vl.brightness = dev.brightness;
+                        } else if (dev && dev.id !== vl.realDevice.id) {
+                            console.warn(`[HA-DEBUG:PREVENT-OVERWRITE] Blocked attempt to overwrite ${vl.realDevice.id} with mismatched device ${dev.id}`);
+                        }
+                        if (newState) {
+                            if (isLock) {
+                                const s = (newState.state || '').toLowerCase();
+                                console.log(`[HA-DEBUG:onEntityStateChanged:LOCK-DIRECT] Lock ${vl.realDevice.id} received state='${newState.state}' -> parsed='${s}'`);
+                                const isGraceActive = vl._pendingLockAction && (Date.now() < vl._pendingLockAction.expiresAt);
+                                if (isGraceActive && s !== vl._pendingLockAction.state) {
+                                    console.warn(`[HA-DEBUG:onEntityStateChanged:LOCK-IGNORED] Ignored state '${newState.state}' for ${vl.realDevice.id} during command grace window for '${vl._pendingLockAction.state}'`);
+                                } else if (['locked', 'unlocked', 'jammed'].includes(s)) {
+                                    vl.realDevice.state = s;
+                                    vl.realDevice.isOn = (s === 'locked');
+                                    vl.isOn = (s === 'locked');
+                                    if (vl._pendingLockAction && s === vl._pendingLockAction.state) {
+                                        vl._pendingLockAction = null;
+                                    }
+                                    console.log(`[HA-DEBUG:onEntityStateChanged:LOCK-DIRECT-APPLIED] Set vl.realDevice.state='${vl.realDevice.state}', vl.isOn=${vl.isOn}`);
+                                } else {
+                                    console.warn(`[HA-DEBUG:onEntityStateChanged:LOCK-DIRECT-IGNORED] Ignored non-terminal state '${newState.state}' for ${vl.realDevice.id}`);
+                                }
+                            } else {
+                                vl.realDevice.state = newState.state;
+                                vl.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state);
+                            }
+                            vl.realDevice.attributes = { ...vl.realDevice.attributes, ...newState.attributes };
+                        }
+                    } else if (isRelatedMatch) {
+                        if (isLock) {
+                            console.log(`[HA-DEBUG:onEntityStateChanged:LOCK-RELATED] Secondary entity ${entityId} changed to '${newState?.state}', preserving primary lock state='${vl.realDevice.state}'`);
+                        }
+                        // Secondary / subordinate entity (e.g. battery sensor, contact sensor) changed
+                        // NEVER overwrite vl.realDevice or its primary state with the secondary entity!
+                        if (vl.realDevice.related) {
+                            const relItem = vl.realDevice.related.find(r => r.entity_id === entityId);
+                            if (relItem && newState) {
+                                relItem.state = newState.state;
+                                relItem.attributes = { ...relItem.attributes, ...newState.attributes };
+                            }
+                        }
+                        if (newState?.attributes?.battery_level !== undefined) {
+                            vl.realDevice.battery = newState.attributes.battery_level;
+                        } else if (newState?.attributes?.battery !== undefined) {
+                            vl.realDevice.battery = newState.attributes.battery;
+                        } else if (entityId.includes('battery') && !isNaN(parseFloat(newState?.state))) {
+                            vl.realDevice.battery = parseFloat(newState.state);
+                        }
+                        if (entityId.includes('door') || entityId.includes('contact')) {
+                            if (!vl.realDevice.attributes) vl.realDevice.attributes = {};
+                            vl.realDevice.attributes.door_open = (newState.state === 'on' || newState.state === 'open');
+                        }
+
+                        // Appliance specific sub-entity handling
+                        if (isApplianceCard && newState) {
                             if (entityId.includes('operating_state') || entityId.includes('job_state') || entityId.includes('current_status') || entityId.includes('operation_state')) {
                                 vl.realDevice.state = newState.state;
                                 vl.realDevice.attributes.operating_state = newState.state;
@@ -2473,8 +2557,12 @@ async function initApp(preloadedConfig = null) {
                             if (entityId.includes('second_cavity_setpoint')) {
                                 vl.realDevice.attributes.second_cavity_setpoint = parseFloat(newState.state);
                                 if (newState.attributes?.unit_of_measurement) {
-                                    vl.realDevice.attributes.setpoint_unit = newState.attributes.unit_of_measurement;
+                                    vl.realDevice.attributes.second_cavity_setpoint_unit = newState.attributes.unit_of_measurement;
                                 }
+                            }
+                            if (entityId.includes('lamp') || entityId.includes('light') || vl.realDevice.attributes?.lamp_entity === entityId) {
+                                vl.realDevice.attributes.lamp_state = newState.state;
+                                console.log(`[HA-DEBUG:OVEN:LAMP-UPDATE] Updated oven lamp_state to '${newState.state}'`);
                             }
                             if (entityId.includes('completion_time') || entityId.includes('end_time') || entityId.includes('completion')) {
                                 vl.realDevice.attributes.completion_time = newState.state;
@@ -2500,7 +2588,6 @@ async function initApp(preloadedConfig = null) {
                                 vl.realDevice.attributes.cycle = newState.state;
                                 vl.realDevice.attributes.current_cycle = newState.state;
                                 if (prevCycle && prevCycle !== newState.state) {
-                                    // Cycle changed! Mark that the cycle changed before the new remaining time arrives
                                     vl._cycleChangedTimePending = true;
                                 }
                             }
@@ -2520,14 +2607,10 @@ async function initApp(preloadedConfig = null) {
                             if (entityId.includes('clean_indicator') || entityId.includes('clean_complete')) {
                                 vl.realDevice.attributes.clean_complete = (newState.state === 'on');
                             }
-                        } else {
-                            vl.realDevice.state = newState.state;
-                            vl.realDevice.attributes = { ...vl.realDevice.attributes, ...newState.attributes };
-                            vl.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state);
                         }
                     }
 
-                    // Render cycle change immediately so cycle name updates BEFORE remaining time!
+                    // Render updates
                     if (isApplianceCard && (entityId.includes('cycle') || entityId.includes('program'))) {
                         if (vl._cardUpdateTimer) clearTimeout(vl._cardUpdateTimer);
                         vl.updateVisuals();
@@ -2727,11 +2810,19 @@ function startVisionLoop() {
         }
     };
 
+    let lastProcessedScanTime = 0;
     const handleDevicesFound = (lights, cameraMatrix) => {
         if (!lights || lights.length === 0) {
             console.log("[Vision] 0 devices in result.");
             return;
         }
+
+        const now = Date.now();
+        if (now - lastProcessedScanTime < 500) {
+            console.log("[Vision] Skipping duplicate scan callback within 500ms");
+            return;
+        }
+        lastProcessedScanTime = now;
 
         console.log(`[Vision] Processing ${lights.length} detected devices...`);
         hud.speak(`Found ${lights.length} devices.`);
@@ -2888,6 +2979,9 @@ async function loadSavedAnchors() {
     if (!smartHome || !smartHome.getSavedAnchors) return;
     try {
         console.log("[Persistence] Checking Firestore for saved anchors...");
+        if (smartHome && smartHome.fetchLiveStates) {
+            await smartHome.fetchLiveStates();
+        }
         const anchors = await smartHome.getSavedAnchors();
         if (!anchors || anchors.length === 0) {
             console.log("[Persistence] No saved anchors found.");
@@ -3321,12 +3415,6 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                 if (vl.mesh.geometry) vl.mesh.geometry.dispose();
                 if (vl.mesh.material) vl.mesh.material.dispose();
             }
-            
-            // Dispose Panel if exists
-            if (vl.panel) {
-                 // xb.SpatialPanel might have dispose?
-                 if (vl.panel.dispose) vl.panel.dispose();
-            }
         }
     }
     
@@ -3516,14 +3604,22 @@ async function spawnVirtualLights(lights, cameraMatrix) {
 
           // Poll State if linked (Throttle during scan)
           if (vl.realDevice && smartHome && !isScanning) {
+              const isLock = (vl.realDevice.domain === 'lock' || vl.category === 'lock' || vl.realDevice.id.startsWith('lock.'));
               const currentDev = smartHome.devices.get(vl.realDevice.id);
               if (currentDev) {
                   const stateChanged = (vl.realDevice.state !== currentDev.state) ||
                                        (vl.isOn !== currentDev.isOn) ||
                                        (vl.realDevice.battery !== currentDev.battery) ||
                                        (vl.realDevice.fanSpeed !== currentDev.fanSpeed);
+                  if (isLock) {
+                      console.log(`[HA-DEBUG:linkLightsToDevices:LOCK-CHECK] ${vl.labelText} (${vl.realDevice.id}): vlState='${vl.realDevice.state}', vlIsOn=${vl.isOn} vs mapState='${currentDev.state}', mapIsOn=${currentDev.isOn}, stateChanged=${stateChanged}`);
+                  }
                   if (stateChanged) {
-                      console.log(`[Poll] Syncing State for ${vl.labelText}: ${currentDev.state || (currentDev.isOn ? 'ON' : 'OFF')}`);
+                      if (isLock) {
+                          console.warn(`[HA-DEBUG:linkLightsToDevices:LOCK-OVERWRITE!] Syncing/Overwriting Lock ${vl.labelText} from state='${vl.realDevice.state}'/isOn=${vl.isOn} to state='${currentDev.state}'/isOn=${currentDev.isOn}`);
+                      } else {
+                          console.log(`[Poll] Syncing State for ${vl.labelText}: ${currentDev.state || (currentDev.isOn ? 'ON' : 'OFF')}`);
+                      }
                       vl.realDevice = currentDev;
                       vl.isOn = currentDev.isOn;
                       if (vl.mesh) {

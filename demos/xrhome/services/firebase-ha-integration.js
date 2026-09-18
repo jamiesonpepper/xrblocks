@@ -13,6 +13,7 @@ export class FirebaseHAIntegration {
     this.wsReconnectTimer = null;
     this.wsConnected = false;
     this.reconnectAttempts = 0;
+    this.wsPendingCalls = new Map();
   }
 
   async listen(haUrl = null, haToken = null) {
@@ -127,6 +128,139 @@ export class FirebaseHAIntegration {
       const data = msg.event.data;
       if (!data) return;
       this.processStateChangedEvent(data.entity_id, data.new_state, data.old_state);
+    } else if (msg.type === 'result' && msg.id && this.wsPendingCalls.has(msg.id)) {
+      const { resolve, reject } = this.wsPendingCalls.get(msg.id);
+      this.wsPendingCalls.delete(msg.id);
+      if (msg.success !== false) {
+        resolve(msg.result !== undefined ? msg.result : true);
+      } else {
+        reject(new Error(msg.error?.message || 'WebSocket command reported unsuccessful'));
+      }
+    }
+  }
+
+  async callServiceWs(domain, service, serviceData = {}, target = {}) {
+    if (!this.wsConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn(`[HA-DEBUG:callServiceWs] Cannot call ${domain}.${service} via WebSocket: wsConnected=${this.wsConnected}, readyState=${this.ws?.readyState}`);
+      return null;
+    }
+    return new Promise((resolve, reject) => {
+      this.wsMsgId++;
+      const id = this.wsMsgId;
+      console.log(`[HA-DEBUG:callServiceWs:SEND] id=${id}, ${domain}.${service}`, { serviceData, target });
+      const timeout = setTimeout(() => {
+        if (this.wsPendingCalls.has(id)) {
+          this.wsPendingCalls.delete(id);
+          console.error(`[HA-DEBUG:callServiceWs:TIMEOUT] id=${id}, ${domain}.${service}`);
+          reject(new Error("WebSocket call_service timed out"));
+        }
+      }, 10000);
+
+      this.wsPendingCalls.set(id, {
+        resolve: (res) => {
+          clearTimeout(timeout);
+          console.log(`[HA-DEBUG:callServiceWs:RESOLVE] id=${id}, ${domain}.${service}`, res);
+          resolve(res);
+        },
+        reject: (err) => {
+          clearTimeout(timeout);
+          console.error(`[HA-DEBUG:callServiceWs:REJECT] id=${id}, ${domain}.${service}`, err);
+          reject(err);
+        }
+      });
+
+      const sData = { ...serviceData };
+      if (target?.entity_id && !sData.entity_id) {
+        sData.entity_id = target.entity_id;
+      }
+
+      const payload = {
+        id,
+        type: 'call_service',
+        domain,
+        service,
+        service_data: sData,
+        target
+      };
+      this.ws.send(JSON.stringify(payload));
+    });
+  }
+
+  async fetchLiveStates(targetEntityId = null) {
+    console.log(`[HA-DEBUG:fetchLiveStates] Initiated. targetEntityId=${targetEntityId}, wsConnected=${this.wsConnected}, readyState=${this.ws?.readyState}`);
+
+    // If a specific targetEntityId is requested (e.g. during pairing), ask HA to poll the real hardware first
+    if (targetEntityId && this.wsConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        console.log(`[HA-DEBUG:fetchLiveStates] Requesting hardware entity update for ${targetEntityId}...`);
+        await this.callServiceWs('homeassistant', 'update_entity', {}, { entity_id: targetEntityId });
+        // Allow a brief moment for integration to complete poll
+        await new Promise(res => setTimeout(res, 350));
+      } catch (pollErr) {
+        console.warn(`[HA-DEBUG:fetchLiveStates] homeassistant.update_entity failed:`, pollErr.message);
+      }
+    }
+
+    if (this.wsConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        console.log(`[HA-DEBUG:fetchLiveStates] Sending get_states via WebSocket (id: ${this.wsMsgId + 1})`);
+        const states = await new Promise((resolve, reject) => {
+          this.wsMsgId++;
+          const id = this.wsMsgId;
+          const timeout = setTimeout(() => {
+            if (this.wsPendingCalls.has(id)) {
+              this.wsPendingCalls.delete(id);
+              reject(new Error("Timeout waiting for get_states response (4s)"));
+            }
+          }, 4000);
+          this.wsPendingCalls.set(id, {
+            resolve: (res) => { clearTimeout(timeout); resolve(res); },
+            reject: (err) => { clearTimeout(timeout); reject(err); }
+          });
+          this.ws.send(JSON.stringify({ id, type: 'get_states' }));
+        });
+        if (Array.isArray(states)) {
+          const lockStates = states.filter(s => s.entity_id.startsWith('lock.') || (s.attributes && s.attributes.device_class === 'lock'));
+          console.log(`[HA-DEBUG:fetchLiveStates] HA returned ${states.length} states. Lock entities found in HA:`, lockStates.map(l => ({ id: l.entity_id, state: l.state, attr: l.attributes })));
+
+          states.forEach(s => {
+            if (this.devices.has(s.entity_id)) {
+              const d = this.devices.get(s.entity_id);
+              if (d.domain === 'lock' || s.entity_id.startsWith('lock.')) {
+                const lState = (s.state || '').toLowerCase();
+                console.log(`[HA-DEBUG:fetchLiveStates:LOCK] Updating lock ${s.entity_id}: previous='${d.state}', received='${s.state}' -> parsed='${lState}'`);
+                if (['locked', 'unlocked', 'jammed'].includes(lState)) {
+                  d.state = lState;
+                  d.isOn = (lState === 'locked');
+                } else {
+                  console.warn(`[HA-DEBUG:fetchLiveStates:LOCK] Ignored non-terminal state '${s.state}' for ${s.entity_id}`);
+                }
+              } else {
+                d.state = s.state;
+                d.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(s.state);
+              }
+              d.attributes = { ...d.attributes, ...s.attributes };
+            }
+          });
+          return true;
+        }
+      } catch (err) {
+        console.warn("[HA-DEBUG:fetchLiveStates] WebSocket get_states failed:", err.message);
+      }
+    } else {
+      console.warn("[HA-DEBUG:fetchLiveStates] WebSocket is NOT connected/open. Falling back to HTTP refreshDevices()...");
+    }
+
+    // HTTP Fallback to guarantee live state retrieval
+    try {
+      console.log("[HA-DEBUG:fetchLiveStates] Executing HTTP refreshDevices() fallback...");
+      await this.refreshDevices();
+      const lockList = Array.from(this.devices.values()).filter(d => d.domain === 'lock' || d.id.startsWith('lock.'));
+      console.log("[HA-DEBUG:fetchLiveStates] HTTP refresh finished. Locks in device map:", lockList.map(l => ({ id: l.id, state: l.state, isOn: l.isOn })));
+      return true;
+    } catch (httpErr) {
+      console.error("[HA-DEBUG:fetchLiveStates] HTTP refresh failed:", httpErr);
+      return false;
     }
   }
 
@@ -137,9 +271,34 @@ export class FirebaseHAIntegration {
     // 1. Direct device match
     if (this.devices.has(entityId)) {
       const d = this.devices.get(entityId);
-      d.state = newState.state;
+      const isLock = (d.domain === 'lock' || entityId.startsWith('lock.'));
+      if (isLock) {
+        const lState = (newState.state || '').toLowerCase();
+        console.log(`[HA-DEBUG:WS-EVENT:LOCK] Direct match ${entityId}: oldState='${oldState?.state}', receivedState='${newState.state}' -> parsed='${lState}' (current d.state='${d.state}')`);
+
+        // Check if an optimistic command is still within its confirmation grace window (e.g. 5 seconds)
+        const isGraceActive = d._pendingAction && (Date.now() < d._pendingAction.expiresAt);
+        const isSameStateEcho = oldState && (oldState.state === newState.state);
+
+        if (isGraceActive && lState !== d._pendingAction.state) {
+          console.warn(`[HA-DEBUG:WS-EVENT:LOCK] Ignored stale event '${newState.state}' for ${entityId} while waiting for command '${d._pendingAction.state}' (grace expires in ${Math.round((d._pendingAction.expiresAt - Date.now())/1000)}s)`);
+        } else if (isSameStateEcho && d.state && d.state !== lState) {
+          console.warn(`[HA-DEBUG:WS-EVENT:LOCK] Ignored attribute-only echo event for ${entityId} (old='${oldState?.state}', new='${newState.state}'), preserving active state='${d.state}'`);
+        } else if (['locked', 'unlocked', 'jammed'].includes(lState)) {
+          d.state = lState;
+          d.isOn = (lState === 'locked');
+          if (d._pendingAction && lState === d._pendingAction.state) {
+            d._pendingAction = null; // Command confirmed by HA
+          }
+          console.log(`[HA-DEBUG:WS-EVENT:LOCK] Set d.state='${d.state}', d.isOn=${d.isOn}`);
+        } else {
+          console.warn(`[HA-DEBUG:WS-EVENT:LOCK] Ignored non-terminal state '${newState.state}' for ${entityId}`);
+        }
+      } else {
+        d.state = newState.state;
+        d.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state);
+      }
       d.attributes = { ...d.attributes, ...newState.attributes };
-      d.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state);
       if (newState.attributes?.brightness !== undefined) {
         d.brightness = Math.round((newState.attributes.brightness / 255) * 100);
       }
@@ -161,45 +320,49 @@ export class FirebaseHAIntegration {
       const isDishwasher = d.domain === 'dishwasher' || devId.includes('dishwasher');
       const isOven = d.domain === 'oven' || devId.includes('oven');
 
+      // Must be a compound appliance
+      if (!isDishwasher && !isOven) continue;
+
+      // Entity MUST strictly belong to this appliance - NEVER match unrelated locks, doors, lights, etc.!
+      const entityBelongsToAppliance = (isOven && (entityId.includes('oven') || d.attributes?.lamp_entity === entityId)) ||
+                                       (isDishwasher && entityId.includes('dishwasher')) ||
+                                       (d.related && d.related.some(r => r.entity_id === entityId));
+
+      if (!entityBelongsToAppliance) continue;
+
       // Match via related list
       if (d.related && d.related.some(r => r.entity_id === entityId)) {
         isRelated = true;
       }
 
       // Match via specific attributes
-      if (d.attributes?.lamp_entity === entityId) {
+      if (d.attributes?.lamp_entity === entityId || (isOven && (entityId.includes('lamp') || entityId.includes('light')))) {
         d.attributes.lamp_state = newState.state;
+        if (!d.attributes.lamp_entity) d.attributes.lamp_entity = entityId;
         isRelated = true;
+        console.log(`[HA-DEBUG:WS-EVENT:OVEN-LAMP] ${entityId} -> lamp_state='${newState.state}'`);
       }
       if (d.attributes?.countdown_entity === entityId || 
           entityId.includes('remaining_program_time') || 
           entityId.includes('program_progress') || 
           entityId.includes('remaining_time')) {
-        if (isDishwasher || isOven) {
-          d.attributes.remaining_time = newState.state;
-          if (newState.attributes?.unit_of_measurement) {
-            d.attributes.remaining_time_unit = newState.attributes.unit_of_measurement;
-          }
-          isRelated = true;
+        d.attributes.remaining_time = newState.state;
+        if (newState.attributes?.unit_of_measurement) {
+          d.attributes.remaining_time_unit = newState.attributes.unit_of_measurement;
         }
+        isRelated = true;
       }
       if (entityId.includes('completion_time') || entityId.includes('end_time') || entityId.includes('completion')) {
-        if (isDishwasher || isOven) {
-          d.attributes.completion_time = newState.state;
-          isRelated = true;
-        }
+        d.attributes.completion_time = newState.state;
+        isRelated = true;
       }
       if (entityId.includes('child_lock')) {
-        if (isOven || isDishwasher) {
-          d.attributes.child_lock = (newState.state === 'on' || newState.state === 'true');
-          isRelated = true;
-        }
+        d.attributes.child_lock = (newState.state === 'on' || newState.state === 'true');
+        isRelated = true;
       }
       if (entityId.includes('door')) {
-        if (isOven || isDishwasher) {
-          d.attributes.door_open = (newState.state === 'on' || newState.state === 'open');
-          isRelated = true;
-        }
+        d.attributes.door_open = (newState.state === 'on' || newState.state === 'open');
+        isRelated = true;
       }
       if (entityId.includes('second_cavity_setpoint')) {
         if (isOven) {
@@ -207,37 +370,29 @@ export class FirebaseHAIntegration {
           isRelated = true;
         }
       } else if (entityId.includes('setpoint') || entityId.includes('target_temperature')) {
-        if (isOven || d.domain === 'climate') {
-          d.attributes.setpoint = parseFloat(newState.state);
-          if (newState.attributes?.unit_of_measurement) {
-            d.attributes.setpoint_unit = newState.attributes.unit_of_measurement;
-          }
-          isRelated = true;
+        d.attributes.setpoint = parseFloat(newState.state);
+        if (newState.attributes?.unit_of_measurement) {
+          d.attributes.setpoint_unit = newState.attributes.unit_of_measurement;
         }
+        isRelated = true;
       }
       if (entityId.includes('operation_state') || entityId.includes('operating_state') || entityId.includes('job_state') || entityId.includes('current_status')) {
-        if (isDishwasher || isOven) {
-          d.attributes.operating_state = newState.state;
-          d.attributes.status = newState.state;
-          d.state = newState.state;
-          isRelated = true;
-        }
+        d.attributes.operating_state = newState.state;
+        d.attributes.status = newState.state;
+        d.state = newState.state;
+        isRelated = true;
       }
       if (entityId.includes('current_cycle') || entityId.includes('cycle') || entityId.includes('program')) {
-        if (isDishwasher || isOven) {
-          d.attributes.cycle = newState.state;
-          d.attributes.current_cycle = newState.state;
-          isRelated = true;
-        }
+        d.attributes.cycle = newState.state;
+        d.attributes.current_cycle = newState.state;
+        isRelated = true;
       }
       if (entityId.includes('total_time')) {
-        if (isDishwasher || isOven) {
-          d.attributes.total_time = newState.state;
-          if (newState.attributes?.unit_of_measurement) {
-            d.attributes.total_time_unit = newState.attributes.unit_of_measurement;
-          }
-          isRelated = true;
+        d.attributes.total_time = newState.state;
+        if (newState.attributes?.unit_of_measurement) {
+          d.attributes.total_time_unit = newState.attributes.unit_of_measurement;
         }
+        isRelated = true;
       }
       if (entityId.includes('mode')) {
         if (isOven) {
@@ -266,8 +421,8 @@ export class FirebaseHAIntegration {
         }
       }
 
-      if (isRelated) {
-        // Compound appliance always takes precedence as targetDevice over subordinate child entities
+      if (isRelated && !targetDevice) {
+        // Only set targetDevice to compound appliance if no direct primary device matched
         targetDevice = d;
       }
     }
@@ -382,7 +537,33 @@ export class FirebaseHAIntegration {
   }
 
   async toggleOvenLamp(deviceId, option = 'on', lampEntity = null) {
-    return await this.controlDevice(deviceId, 'toggle_lamp', { option, lamp_entity: lampEntity });
+    const d = this.devices.get(deviceId);
+    const targetLamp = lampEntity || d?.attributes?.lamp_entity;
+    console.log(`[HA-DEBUG:toggleOvenLamp] deviceId=${deviceId}, option=${option}, targetLamp=${targetLamp}, wsConnected=${this.wsConnected}`);
+
+    if (this.wsConnected && targetLamp) {
+      try {
+        const lDomain = targetLamp.split('.')[0];
+        console.log(`[HA-DEBUG:toggleOvenLamp:WS] Direct WebSocket dispatch on ${targetLamp}, option=${option}`);
+        let wsRes = null;
+        if (lDomain === 'light') {
+          const lService = (option === 'on') ? 'turn_on' : (option === 'off' ? 'turn_off' : 'toggle');
+          wsRes = await this.callServiceWs('light', lService, {}, { entity_id: targetLamp });
+        } else if (lDomain === 'select') {
+          wsRes = await this.callServiceWs('select', 'select_option', { option }, { entity_id: targetLamp });
+        } else if (lDomain === 'switch') {
+          const sService = (option === 'on') ? 'turn_on' : 'turn_off';
+          wsRes = await this.callServiceWs('switch', sService, {}, { entity_id: targetLamp });
+        }
+        if (wsRes !== null) {
+          if (d && d.attributes) d.attributes.lamp_state = option;
+          return true;
+        }
+      } catch (wsErr) {
+        console.warn("[HA-DEBUG:toggleOvenLamp:WS-FAIL] Falling back to HTTP:", wsErr);
+      }
+    }
+    return await this.controlDevice(deviceId, 'toggle_lamp', { option, lamp_entity: targetLamp });
   }
 
   // --- Switch / Generic Appliance Controls ---
@@ -390,7 +571,55 @@ export class FirebaseHAIntegration {
     return await this.controlDevice(deviceId, isOn ? 'turn_on' : 'turn_off');
   }
   
+  _applyLocalState(entity_id, service, service_data) {
+      const d = this.devices.get(entity_id);
+      if (d) {
+          const prevState = d.state;
+          const prevIsOn = d.isOn;
+          if (service === 'turn_on') { d.isOn = true; d.state = 'on'; }
+          if (service === 'turn_off') { d.isOn = false; d.state = 'off'; }
+          if (service === 'lock') {
+              d.state = 'locked';
+              d.isOn = true;
+              d._pendingAction = { state: 'locked', expiresAt: Date.now() + 5000 };
+          }
+          if (service === 'unlock') {
+              d.state = 'unlocked';
+              d.isOn = false;
+              d._pendingAction = { state: 'unlocked', expiresAt: Date.now() + 5000 };
+          }
+          if (service === 'start' || service === 'start_pause') { d.state = 'cleaning'; d.isOn = true; }
+          if (service === 'pause') { d.state = 'paused'; }
+          if (service === 'stop' || service === 'return_to_base') { d.state = 'returning'; }
+          if (service === 'set_fan_speed' && service_data?.fan_speed) { d.fanSpeed = service_data.fan_speed; }
+          if (service_data?.brightness !== undefined) {
+              d.brightness = Math.round((service_data.brightness / 255) * 100);
+          }
+          console.log(`[HA-DEBUG:_applyLocalState] ${entity_id} service='${service}': state '${prevState}' -> '${d.state}', isOn ${prevIsOn} -> ${d.isOn}`);
+      } else {
+          console.warn(`[HA-DEBUG:_applyLocalState] Device not found in map: ${entity_id}`);
+      }
+  }
+
   async controlDevice(entity_id, service, service_data = {}, domain = null) {
+      const targetDomain = domain || entity_id.split('.')[0];
+      console.log(`[HA-DEBUG:controlDevice] Invoked: ${targetDomain}.${service} on ${entity_id}, wsConnected=${this.wsConnected}`);
+
+      // Fast direct WebSocket execution when available (for non-virtual devices)
+      if (this.wsConnected && !entity_id.startsWith('appliance.')) {
+          try {
+              console.log(`[HA-DEBUG:controlDevice:WS] Dispatching ${targetDomain}.${service} on ${entity_id}`);
+              const wsRes = await this.callServiceWs(targetDomain, service, service_data, { entity_id });
+              if (wsRes !== null) {
+                  this._applyLocalState(entity_id, service, service_data);
+                  return true;
+              }
+          } catch (wsErr) {
+              console.warn("[HA-DEBUG:controlDevice:WS-FAIL] WebSocket dispatch failed, falling back to HTTP:", wsErr);
+          }
+      }
+
+      // HTTP Cloud Function fallback
       try {
           const payload = {
               entity_id,
@@ -420,20 +649,7 @@ export class FirebaseHAIntegration {
           }
           
           // Optimistically update local state
-          const d = this.devices.get(entity_id);
-          if (d) {
-              if (service === 'turn_on') { d.isOn = true; d.state = 'on'; }
-              if (service === 'turn_off') { d.isOn = false; d.state = 'off'; }
-              if (service === 'lock') { d.state = 'locked'; d.isOn = true; }
-              if (service === 'unlock') { d.state = 'unlocked'; d.isOn = false; }
-              if (service === 'start' || service === 'start_pause') { d.state = 'cleaning'; d.isOn = true; }
-              if (service === 'pause') { d.state = 'paused'; }
-              if (service === 'stop' || service === 'return_to_base') { d.state = 'returning'; }
-              if (service === 'set_fan_speed' && service_data.fan_speed) { d.fanSpeed = service_data.fan_speed; }
-              if (service_data.brightness !== undefined) {
-                  d.brightness = Math.round((service_data.brightness / 255) * 100);
-              }
-          }
+          this._applyLocalState(entity_id, service, service_data);
           return true;
       } catch (e) {
           console.error("HA Control Error", e);
