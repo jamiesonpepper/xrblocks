@@ -242,6 +242,85 @@ export class FirebaseHAIntegration {
               d.attributes = { ...d.attributes, ...s.attributes };
             }
           });
+
+          // Synchronize compound appliances (appliance.oven, appliance.dishwasher) from raw HA states
+          const statesMap = new Map(states.map(s => [s.entity_id, s]));
+          for (const d of this.devices.values()) {
+            const devId = (d.id || d.entity_id || '');
+            const isDishwasher = d.domain === 'dishwasher' || devId.includes('dishwasher');
+            const isOven = d.domain === 'oven' || devId.includes('oven');
+            if (!isDishwasher && !isOven) continue;
+            if (!d.attributes) d.attributes = {};
+
+            // 1. Sync all matching entities in d.related
+            if (Array.isArray(d.related)) {
+              d.related.forEach(r => {
+                const raw = statesMap.get(r.entity_id);
+                if (raw) {
+                  r.state = raw.state;
+                  r.attributes = { ...r.attributes, ...raw.attributes };
+                }
+              });
+            }
+
+            // 2. Synchronize oven specific state & lamp
+            if (isOven) {
+              let lampRaw = null;
+              if (d.attributes.lamp_entity && statesMap.has(d.attributes.lamp_entity)) {
+                lampRaw = statesMap.get(d.attributes.lamp_entity);
+              } else {
+                // Find matching oven lamp or light in returned states
+                lampRaw = states.find(s => {
+                  const id = s.entity_id.toLowerCase();
+                  return (id.startsWith('light.') || id.startsWith('select.') || id.startsWith('switch.') || id.startsWith('sensor.') || id.startsWith('binary_sensor.')) &&
+                         id.includes('oven') && (id.includes('lamp') || id.includes('light'));
+                });
+                if (lampRaw) {
+                  d.attributes.lamp_entity = lampRaw.entity_id;
+                  d.attributes.lamp_controllable = !lampRaw.entity_id.startsWith('sensor.') && !lampRaw.entity_id.startsWith('binary_sensor.');
+                }
+              }
+
+              if (lampRaw) {
+                d.attributes.lamp_state = lampRaw.state;
+                console.log(`[HA-DEBUG:fetchLiveStates:OVEN] Hydrated lamp_state='${lampRaw.state}' from ${lampRaw.entity_id}`);
+              }
+
+              // Operating state & status
+              const opState = states.find(s => s.entity_id === 'sensor.oven_operating_state' || (s.entity_id.includes('oven') && s.entity_id.includes('operating_state')));
+              if (opState) {
+                d.attributes.operating_state = opState.state;
+                d.attributes.status = opState.state;
+                d.state = opState.state;
+              }
+
+              // Setpoint
+              const sp = states.find(s => s.entity_id === 'sensor.oven_setpoint' || (s.entity_id.includes('oven') && s.entity_id.includes('setpoint')));
+              if (sp && !isNaN(parseFloat(sp.state))) {
+                d.attributes.setpoint = parseFloat(sp.state);
+              }
+
+              // Door
+              const door = states.find(s => (s.entity_id.startsWith('binary_sensor.') && s.entity_id.includes('oven') && s.entity_id.includes('door')));
+              if (door) {
+                d.attributes.door_open = (door.state === 'on' || door.state === 'open');
+              }
+            }
+
+            // 3. Synchronize dishwasher specific state
+            if (isDishwasher) {
+              const opState = states.find(s => s.entity_id.includes('dishwasher') && s.entity_id.includes('operating_state'));
+              if (opState) {
+                d.attributes.operating_state = opState.state;
+                d.attributes.status = opState.state;
+                d.state = opState.state;
+              }
+              const door = states.find(s => s.entity_id.startsWith('binary_sensor.') && s.entity_id.includes('dishwasher') && s.entity_id.includes('door'));
+              if (door) {
+                d.attributes.door_open = (door.state === 'on' || door.state === 'open');
+              }
+            }
+          }
           return true;
         }
       } catch (err) {
@@ -557,13 +636,23 @@ export class FirebaseHAIntegration {
         }
         if (wsRes !== null) {
           if (d && d.attributes) d.attributes.lamp_state = option;
+          if (this.onEntityStateChanged) {
+            this.onEntityStateChanged(targetLamp, { state: option }, d);
+          }
           return true;
         }
       } catch (wsErr) {
         console.warn("[HA-DEBUG:toggleOvenLamp:WS-FAIL] Falling back to HTTP:", wsErr);
       }
     }
-    return await this.controlDevice(deviceId, 'toggle_lamp', { option, lamp_entity: targetLamp });
+    const httpRes = await this.controlDevice(deviceId, 'toggle_lamp', { option, lamp_entity: targetLamp });
+    if (httpRes) {
+      if (d && d.attributes) d.attributes.lamp_state = option;
+      if (this.onEntityStateChanged) {
+        this.onEntityStateChanged(targetLamp, { state: option }, d);
+      }
+    }
+    return httpRes;
   }
 
   // --- Switch / Generic Appliance Controls ---
