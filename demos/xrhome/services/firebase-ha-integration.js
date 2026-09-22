@@ -249,7 +249,8 @@ export class FirebaseHAIntegration {
             const devId = (d.id || d.entity_id || '');
             const isDishwasher = d.domain === 'dishwasher' || devId.includes('dishwasher');
             const isOven = d.domain === 'oven' || devId.includes('oven');
-            if (!isDishwasher && !isOven) continue;
+            const isLitterRobot = d.domain === 'litter_robot' || devId.includes('litter_robot');
+            if (!isDishwasher && !isOven && !isLitterRobot) continue;
             if (!d.attributes) d.attributes = {};
 
             // 1. Sync all matching entities in d.related
@@ -319,6 +320,31 @@ export class FirebaseHAIntegration {
               if (door) {
                 d.attributes.door_open = (door.state === 'on' || door.state === 'open');
               }
+            }
+
+            // 4. Synchronize Litter-Robot specific state
+            if (isLitterRobot) {
+              const litterRaw = states.find(s => s.entity_id.startsWith('sensor.') && (s.entity_id.includes('litter_robot') || s.entity_id.includes('litter')) && s.entity_id.includes('litter_level'));
+              if (litterRaw && !isNaN(parseFloat(litterRaw.state))) {
+                d.attributes.litter_level = Math.round(parseFloat(litterRaw.state));
+              }
+
+              const wasteRaw = states.find(s => s.entity_id.startsWith('sensor.') && (s.entity_id.includes('litter_robot') || s.entity_id.includes('waste')) && s.entity_id.includes('waste_drawer'));
+              if (wasteRaw && !isNaN(parseFloat(wasteRaw.state))) {
+                d.attributes.waste_drawer = Math.round(parseFloat(wasteRaw.state));
+              }
+
+              const statusRaw = states.find(s => s.entity_id.startsWith('sensor.') && (s.entity_id.includes('litter_robot') || s.entity_id.includes('litter')) && (s.entity_id.includes('status') || s.entity_id.includes('activity')));
+              if (statusRaw) {
+                d.attributes.status = statusRaw.state;
+                d.state = statusRaw.state;
+              }
+
+              const resetBtn = states.find(s => s.entity_id.startsWith('button.') && (s.entity_id.includes('litter_robot') || s.entity_id.includes('litter')) && s.entity_id.includes('reset'));
+              if (resetBtn && !d.attributes.reset_button_entity) {
+                d.attributes.reset_button_entity = resetBtn.entity_id;
+              }
+              console.log(`[HA-DEBUG:fetchLiveStates:LITTER_ROBOT] Hydrated litter=${d.attributes.litter_level}%, waste=${d.attributes.waste_drawer}%, status='${d.attributes.status}'`);
             }
           }
           return true;
@@ -398,13 +424,15 @@ export class FirebaseHAIntegration {
       const devId = (d.id || d.entity_id || '');
       const isDishwasher = d.domain === 'dishwasher' || devId.includes('dishwasher');
       const isOven = d.domain === 'oven' || devId.includes('oven');
+      const isLitterRobot = d.domain === 'litter_robot' || devId.includes('litter_robot');
 
       // Must be a compound appliance
-      if (!isDishwasher && !isOven) continue;
+      if (!isDishwasher && !isOven && !isLitterRobot) continue;
 
       // Entity MUST strictly belong to this appliance - NEVER match unrelated locks, doors, lights, etc.!
       const entityBelongsToAppliance = (isOven && (entityId.includes('oven') || d.attributes?.lamp_entity === entityId)) ||
                                        (isDishwasher && entityId.includes('dishwasher')) ||
+                                       (isLitterRobot && (entityId.includes('litter') || entityId.includes('whisker'))) ||
                                        (d.related && d.related.some(r => r.entity_id === entityId));
 
       if (!entityBelongsToAppliance) continue;
@@ -488,6 +516,23 @@ export class FirebaseHAIntegration {
       if (entityId.includes('clean_indicator') || entityId.includes('clean_complete')) {
         if (isDishwasher) {
           d.attributes.clean_complete = (newState.state === 'on');
+          isRelated = true;
+        }
+      }
+      if (isLitterRobot) {
+        if (entityId.includes('litter_level')) {
+          const val = parseFloat(newState.state);
+          if (!isNaN(val)) d.attributes.litter_level = Math.round(val);
+          isRelated = true;
+        }
+        if (entityId.includes('waste_drawer')) {
+          const val = parseFloat(newState.state);
+          if (!isNaN(val)) d.attributes.waste_drawer = Math.round(val);
+          isRelated = true;
+        }
+        if (entityId.includes('status') || entityId.includes('activity')) {
+          d.attributes.status = newState.state;
+          d.state = newState.state;
           isRelated = true;
         }
       }
@@ -653,6 +698,27 @@ export class FirebaseHAIntegration {
       }
     }
     return httpRes;
+  }
+
+  async resetLitterRobot(deviceId, buttonEntity = null) {
+    const d = this.devices.get(deviceId);
+    const targetBtn = buttonEntity || d?.attributes?.reset_button_entity;
+    console.log(`[HA-DEBUG:resetLitterRobot] deviceId=${deviceId}, targetBtn=${targetBtn}, wsConnected=${this.wsConnected}`);
+
+    if (this.wsConnected && targetBtn) {
+      try {
+        const bDomain = targetBtn.split('.')[0] || 'button';
+        const bService = bDomain === 'button' ? 'press' : 'turn_on';
+        console.log(`[HA-DEBUG:resetLitterRobot:WS] Calling ${bDomain}.${bService} on ${targetBtn}`);
+        const wsRes = await this.callServiceWs(bDomain, bService, {}, { entity_id: targetBtn });
+        if (wsRes !== null) {
+          return true;
+        }
+      } catch (wsErr) {
+        console.warn("[HA-DEBUG:resetLitterRobot:WS-FAIL] Falling back to HTTP:", wsErr);
+      }
+    }
+    return await this.controlDevice(deviceId, 'reset', { reset_button_entity: targetBtn });
   }
 
   // --- Switch / Generic Appliance Controls ---

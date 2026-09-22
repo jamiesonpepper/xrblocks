@@ -279,7 +279,82 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
       });
     }
 
-    // --- 3. VACUUM + DOCK UNIFICATION ---
+    // --- 3. LITTER-ROBOT UNIFICATION ---
+    const litterRobotEntities = allFiltered.filter(e => {
+      const id = e.entity_id.toLowerCase();
+      const fn = (e.attributes?.friendly_name || '').toLowerCase();
+      return id.includes('litter_robot') || id.includes('litter-robot') || id.includes('litter_box') || id.includes('litterbox') || id.includes('whisker') ||
+             fn.includes('litter-robot') || fn.includes('litter robot') || fn.includes('litterbox') || fn.includes('litter box') || fn.includes('whisker');
+    });
+
+    if (litterRobotEntities.length > 0) {
+      litterRobotEntities.forEach(e => {
+        swallowedEntityIds.add(e.entity_id);
+      });
+
+      // Find Litter Level sensor
+      const litterSensor = litterRobotEntities.find(e => 
+        (e.entity_id.includes('litter_level') || (e.attributes?.friendly_name || '').toLowerCase().includes('litter level')) &&
+        e.entity_id.startsWith('sensor.')
+      );
+
+      // Find Waste Drawer sensor
+      const wasteSensor = litterRobotEntities.find(e => 
+        (e.entity_id.includes('waste_drawer') || (e.attributes?.friendly_name || '').toLowerCase().includes('waste drawer')) &&
+        e.entity_id.startsWith('sensor.')
+      );
+
+      // Find Status sensor
+      const statusSensor = litterRobotEntities.find(e => 
+        (e.entity_id.includes('status') || e.entity_id.includes('activity') || (e.attributes?.friendly_name || '').toLowerCase().includes('status')) &&
+        e.entity_id.startsWith('sensor.')
+      );
+
+      // Find Reset Button (e.g. button.*_reset_waste_drawer or button.*_reset)
+      const resetBtn = litterRobotEntities.find(e => 
+        e.entity_id.startsWith('button.') &&
+        (e.entity_id.includes('reset') || (e.attributes?.friendly_name || '').toLowerCase().includes('reset'))
+      );
+
+      // Find Cycle count sensor
+      const cycleSensor = litterRobotEntities.find(e => 
+        e.entity_id.startsWith('sensor.') &&
+        (e.entity_id.includes('cycle_count') || e.entity_id.includes('cycles'))
+      );
+
+      const area = litterRobotEntities.find(e => e.area && e.area !== 'Other')?.area || 'Utility';
+      const rawStatus = statusSensor?.state || 'ready';
+
+      const parsePct = (s) => {
+        if (!s || s.state === 'unknown' || s.state === 'unavailable') return undefined;
+        const val = parseFloat(s.state);
+        return isNaN(val) ? undefined : Math.round(val);
+      };
+
+      unifiedAppliances.push({
+        entity_id: 'appliance.litter_robot',
+        domain: 'litter_robot',
+        area,
+        state: rawStatus,
+        attributes: {
+          friendly_name: 'Litter-Robot',
+          status: rawStatus,
+          litter_level: parsePct(litterSensor),
+          waste_drawer: parsePct(wasteSensor),
+          reset_button_entity: resetBtn ? resetBtn.entity_id : undefined,
+          cycle_count: parsePct(cycleSensor)
+        },
+        related: litterRobotEntities.map(e => ({
+          entity_id: e.entity_id,
+          domain: e.entity_id.split('.')[0],
+          name: e.attributes?.friendly_name || e.entity_id,
+          state: e.state,
+          attributes: e.attributes
+        }))
+      });
+    }
+
+    // --- 4. VACUUM + DOCK UNIFICATION ---
     // Primary controllable device domains + readable sensors
     const primaryDomains = ['light', 'switch', 'lock', 'vacuum', 'climate', 'sensor', 'media_player', 'fan', 'cover'];
     const primaryDevices = [];
@@ -445,6 +520,16 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
         if (service === 'start' || service === 'stop') {
           // Call button/switch if supported
           return res.status(200).json({ success: true, note: "Appliance command received" });
+        }
+      }
+
+      if (applianceType === 'litter_robot') {
+        if (service === 'reset') {
+          const resetBtnEntity = service_data?.reset_button_entity || 'button.litter_robot_reset_waste_drawer';
+          const rDomain = resetBtnEntity.split('.')[0] || 'button';
+          const rService = rDomain === 'button' ? 'press' : 'turn_on';
+          const result = await callHaApi(`/api/services/${rDomain}/${rService}`, 'POST', { entity_id: resetBtnEntity });
+          return res.status(200).json({ success: true, result });
         }
       }
     }

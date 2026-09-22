@@ -301,8 +301,8 @@ if (xb.ui && xb.ui.setTheme) {
 }
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=26';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=57';
+import { VisionManager } from './vision.js?v=27';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=58';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
@@ -586,6 +586,46 @@ function formatDishwasherRemainingTime(val, unit) {
     }
 }
 
+function formatLitterRobotStatus(rawStatus) {
+    if (!rawStatus || rawStatus === 'unknown' || rawStatus === 'unavailable') return 'Ready';
+    const s = String(rawStatus).trim().toLowerCase();
+    
+    // Comprehensive Home Assistant status_code mapping for Litter-Robot
+    const map = {
+        'rdy': 'Ready',
+        'ccc': 'Clean Cycle Complete',
+        'ccp': 'Clean Cycle In Progress',
+        'cd': 'Cat Detected',
+        'csf': 'Cat Sensor Fault',
+        'csi': 'Cat Sensor Interrupted',
+        'cst': 'Cat Sensor Timing',
+        'df1': 'Drawer Almost Full (2 Cycles Left)',
+        'df2': 'Drawer Almost Full (1 Cycle Left)',
+        'dfs': 'Drawer Full',
+        'dhf': 'Dump + Home Position Fault',
+        'dpf': 'Dump Position Fault',
+        'ec': 'Empty Cycle',
+        'hpf': 'Home Position Fault',
+        'off': 'Off',
+        'offline': 'Offline',
+        'otf': 'Overtorque Fault',
+        'p': 'Paused',
+        'pd': 'Pinch Detect',
+        'pwrd': 'Powering Down',
+        'pwru': 'Powering Up',
+        'scf': 'Cat Sensor Fault (Startup)',
+        'sdf': 'Drawer Full (Startup)',
+        'spf': 'Pinch Detect (Startup)',
+        'docked': 'Ready',
+        'cleaning': 'Cleaning'
+    };
+
+    if (map[s]) return map[s];
+
+    // Fallback: humanize snake_case or abbreviations
+    return String(rawStatus).replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+}
+
 // --- Animated Depth Mesh Scanning Web ---
 class ScanningWebEffect {
     constructor() {
@@ -686,6 +726,7 @@ function getCategoryIcon(cat, domain) {
     const key = (domain || cat || '').toLowerCase();
     if (key.includes('lock')) return 'lock';
     if (key.includes('vacuum') || key.includes('roborock') || key.includes('roomba')) return 'cleaning_services';
+    if (key.includes('litter') || key.includes('pet')) return 'pets';
     if (key.includes('dish')) return 'kitchen';
     if (key.includes('oven') || key.includes('stove') || key.includes('range')) return 'microwave';
     if (key.includes('washer') || key.includes('dryer') || key.includes('laundry')) return 'local_laundry_service';
@@ -1379,6 +1420,93 @@ class VirtualLight3D extends THREE.Group {
 
           cardChildren.push(makeUnpairBtn());
 
+      } else if (domain === 'litter_robot' || cat === 'litter_robot') {
+          // --- UNIFIED LITTER-ROBOT UI ---
+          const attrs = this.realDevice?.attributes || {};
+          const displayStatus = formatLitterRobotStatus(attrs.status || this.realDevice?.state || 'Ready');
+
+          const statusBadge = new xb.UIPanel({
+              style: {
+                  width: '100%',
+                  padding: 8,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255, 255, 255, 0.4)',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+              },
+              children: [
+                  new xb.UIText({ text: `🐱 Status: ${displayStatus}`, style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
+              ]
+          });
+          cardChildren.push(statusBadge);
+
+          // Telemetry Gauges: Litter Level & Waste Drawer
+          const litterTelemetry = [];
+
+          const litterLevel = (attrs.litter_level !== undefined && attrs.litter_level !== null) ? attrs.litter_level : null;
+          const wasteDrawer = (attrs.waste_drawer !== undefined && attrs.waste_drawer !== null) ? attrs.waste_drawer : null;
+
+          if (litterLevel !== null) {
+              const isLow = litterLevel < 20;
+              const lowWarning = isLow ? ' (Low!)' : '';
+              litterTelemetry.push(new xb.UIText({
+                  text: `✨ Litter Level: ${litterLevel}%${lowWarning}`,
+                  style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' }
+              }));
+          }
+
+          if (wasteDrawer !== null) {
+              const isFull = wasteDrawer >= 80;
+              const fullWarning = isFull ? ' (Full!)' : '';
+              litterTelemetry.push(new xb.UIText({
+                  text: `🗑️ Waste Drawer: ${wasteDrawer}%${fullWarning}`,
+                  style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' }
+              }));
+          }
+
+          if (attrs.cycle_count !== undefined && attrs.cycle_count !== null) {
+              litterTelemetry.push(new xb.UIText({
+                  text: `🔄 Clean Cycles: ${attrs.cycle_count}`,
+                  style: { fontSize: 13, color: '#FFFFFF' }
+              }));
+          }
+
+          if (litterTelemetry.length > 0) {
+              cardChildren.push(new xb.UIPanel({
+                  style: { width: '100%', flexDirection: 'column', gap: 4, padding: 8, backgroundColor: 'rgba(255, 255, 255, 0.08)', borderRadius: 8 },
+                  children: litterTelemetry
+              }));
+          }
+
+          // Action Controls: Reset Button
+          const resetBtn = new xb.UIButton({
+              label: 'Reset',
+              icon: 'restart_alt',
+              ariaLabel: 'Reset',
+              userData: { interactive: true },
+              style: {
+                  width: '100%',
+                  height: 36,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.16)',
+                  borderWidth: 1,
+                  borderColor: '#FFFFFF',
+                  color: '#FFFFFF',
+                  ':hover': {
+                      backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                      color: '#000000',
+                      borderColor: '#FFFFFF',
+                  },
+              },
+              onClick: () => this.resetLitterRobot()
+          });
+
+          cardChildren.push(resetBtn);
+          cardChildren.push(makeUnpairBtn());
+
       } else if (cat === 'appliance') {
           // --- GENERIC APPLIANCE FALLBACK ---
           const appState = String(this.realDevice?.state || 'Ready').toUpperCase();
@@ -1738,12 +1866,13 @@ class VirtualLight3D extends THREE.Group {
   _buildDeviceListUI() {
       const allDevices = Array.from(smartHome.devices.values());
       // Filter out helper buttons, selects, and binary sensors from the main pairing list
-      // Also filter out any child components of compound appliances (e.g. oven/dishwasher individual sensors/buttons)
+      // Also filter out any child components of compound appliances (e.g. oven/dishwasher/litter-robot individual sensors/buttons)
       const devices = allDevices.filter(d => {
           if (d.id.startsWith('button.') || d.id.startsWith('select.') || d.id.startsWith('binary_sensor.')) return false;
           const idLower = d.id.toLowerCase();
           if (idLower.includes('oven') && d.id !== 'appliance.oven') return false;
           if (idLower.includes('dishwasher') && d.id !== 'appliance.dishwasher') return false;
+          if ((idLower.includes('litter_robot') || idLower.includes('litter-robot') || idLower.includes('litterbox') || idLower.includes('whisker')) && d.id !== 'appliance.litter_robot') return false;
           return true;
       });
       
@@ -1761,7 +1890,8 @@ class VirtualLight3D extends THREE.Group {
               (targetCat === 'vacuum' && (domain === 'vacuum' || name.includes('vacuum') || name.includes('roborock') || name.includes('roomba') || name.includes('q8'))) ||
               (targetCat === 'dishwasher' && (domain === 'dishwasher' || name.includes('dishwasher') || name.includes('dish'))) ||
               (targetCat === 'oven' && (domain === 'oven' || name.includes('oven') || name.includes('stove') || name.includes('range') || name.includes('microwave'))) ||
-              (targetCat === 'appliance' && (domain === 'appliance' || domain === 'dishwasher' || domain === 'oven' || name.includes('washer') || name.includes('dryer') || name.includes('fridge') || name.includes('refrigerator'))) ||
+              ((targetCat === 'litter_robot' || targetCat === 'pet') && (domain === 'litter_robot' || name.includes('litter') || name.includes('whisker'))) ||
+              (targetCat === 'appliance' && (domain === 'appliance' || domain === 'dishwasher' || domain === 'oven' || domain === 'litter_robot' || name.includes('washer') || name.includes('dryer') || name.includes('fridge') || name.includes('refrigerator') || name.includes('litter'))) ||
               (targetCat === 'light' && (domain === 'light' || name.includes('lamp') || name.includes('light'))) ||
               (targetCat === 'switch' && (domain === 'switch' || name.includes('plug') || name.includes('switch'))) ||
               (targetCat === 'climate' && (domain === 'climate' || name.includes('thermostat')))
@@ -1769,8 +1899,8 @@ class VirtualLight3D extends THREE.Group {
           if (isMatch) {
               recommended.push(d);
           }
-          const isAppliance = (domain === 'oven' || domain === 'dishwasher' || domain === 'vacuum' || domain === 'appliance' || d.id.startsWith('appliance.') || d.id.startsWith('vacuum.'));
-          const isApplianceTarget = (targetCat === 'oven' || targetCat === 'dishwasher' || targetCat === 'vacuum' || targetCat === 'appliance');
+          const isAppliance = (domain === 'oven' || domain === 'dishwasher' || domain === 'litter_robot' || domain === 'vacuum' || domain === 'appliance' || d.id.startsWith('appliance.') || d.id.startsWith('vacuum.'));
+          const isApplianceTarget = (targetCat === 'oven' || targetCat === 'dishwasher' || targetCat === 'litter_robot' || targetCat === 'pet' || targetCat === 'vacuum' || targetCat === 'appliance');
           
           // In Room browsing mode, filter out appliances unless the target anchor is specifically an appliance
           if (!isAppliance || isApplianceTarget) {
@@ -2342,6 +2472,25 @@ class VirtualLight3D extends THREE.Group {
       });
   }
 
+  resetLitterRobot() {
+      if (!this.realDevice || !smartHome) return;
+      hud.speak("Resetting Litter-Robot");
+      hud.log("Resetting Litter-Robot...", '#FFFFFF');
+      const resetBtnEntity = this.realDevice.attributes?.reset_button_entity || null;
+      smartHome.resetLitterRobot(this.realDevice.id, resetBtnEntity).then(success => {
+          if (success !== false) {
+              hud.speak("Litter-Robot Reset");
+              hud.log("Litter-Robot Reset Successful", '#00FF88');
+              this.updateVisuals();
+          } else {
+              hud.log("Litter-Robot Reset Failed", '#FF5555');
+          }
+      }).catch(err => {
+          console.warn("Litter-Robot reset error:", err);
+          hud.log("Reset Error", '#FF5555');
+      });
+  }
+
   setBrightness(val) {
       const prevBrightness = this.brightness;
       this.brightness = Math.max(1, Math.min(100, Math.round(val)));
@@ -2474,7 +2623,7 @@ async function initApp(preloadedConfig = null) {
                                        (vl.realDevice.related && vl.realDevice.related.some(r => r.entity_id === entityId));
 
                 if (isDirectMatch || isRelatedMatch) {
-                    const isApplianceCard = (vl.realDevice.id.startsWith('appliance.') || vl.realDevice.domain === 'oven' || vl.realDevice.domain === 'dishwasher');
+                    const isApplianceCard = (vl.realDevice.id.startsWith('appliance.') || vl.realDevice.domain === 'oven' || vl.realDevice.domain === 'dishwasher' || vl.realDevice.domain === 'litter_robot');
                     const isLock = (vl.realDevice.domain === 'lock' || vl.category === 'lock' || vl.realDevice.id.startsWith('lock.'));
 
                     if (isLock) {
@@ -2603,6 +2752,14 @@ async function initApp(preloadedConfig = null) {
                             }
                             if (entityId.includes('clean_indicator') || entityId.includes('clean_complete')) {
                                 vl.realDevice.attributes.clean_complete = (newState.state === 'on');
+                            }
+                            if (entityId.includes('litter_level')) {
+                                const val = parseFloat(newState.state);
+                                if (!isNaN(val)) vl.realDevice.attributes.litter_level = Math.round(val);
+                            }
+                            if (entityId.includes('waste_drawer')) {
+                                const val = parseFloat(newState.state);
+                                if (!isNaN(val)) vl.realDevice.attributes.waste_drawer = Math.round(val);
                             }
                         }
                     }
