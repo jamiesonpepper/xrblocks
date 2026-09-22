@@ -401,9 +401,15 @@ export class FirebaseHAIntegration {
         }
       } else {
         d.state = newState.state;
-        d.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state);
+        d.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state) || (d.domain === 'climate' && newState.state !== 'off');
       }
       d.attributes = { ...d.attributes, ...newState.attributes };
+      if (d.domain === 'climate' || entityId.startsWith('climate.')) {
+        if (newState.attributes?.temperature !== undefined) d.temperature = newState.attributes.temperature;
+        if (newState.attributes?.target_temp_low !== undefined) d.target_temp_low = newState.attributes.target_temp_low;
+        if (newState.attributes?.target_temp_high !== undefined) d.target_temp_high = newState.attributes.target_temp_high;
+        if (newState.attributes?.current_temperature !== undefined) d.current_temperature = newState.attributes.current_temperature;
+      }
       if (newState.attributes?.brightness !== undefined) {
         d.brightness = Math.round((newState.attributes.brightness / 255) * 100);
       }
@@ -418,21 +424,23 @@ export class FirebaseHAIntegration {
       targetDevice = d;
     }
 
-    // 2. Check if this entity is associated with a compound appliance (dishwasher, oven, vacuum station, etc.)
+    // 2. Check if this entity is associated with a compound appliance (dishwasher, oven, vacuum station, climate, etc.)
     for (const d of this.devices.values()) {
       let isRelated = false;
       const devId = (d.id || d.entity_id || '');
       const isDishwasher = d.domain === 'dishwasher' || devId.includes('dishwasher');
       const isOven = d.domain === 'oven' || devId.includes('oven');
       const isLitterRobot = d.domain === 'litter_robot' || devId.includes('litter_robot');
+      const isClimate = d.domain === 'climate' || devId.startsWith('climate.');
 
-      // Must be a compound appliance
-      if (!isDishwasher && !isOven && !isLitterRobot) continue;
+      // Must be a compound appliance or device with related sensors
+      if (!isDishwasher && !isOven && !isLitterRobot && !isClimate) continue;
 
-      // Entity MUST strictly belong to this appliance - NEVER match unrelated locks, doors, lights, etc.!
+      // Entity MUST strictly belong to this device - NEVER match unrelated locks, doors, lights, etc.!
       const entityBelongsToAppliance = (isOven && (entityId.includes('oven') || d.attributes?.lamp_entity === entityId)) ||
                                        (isDishwasher && entityId.includes('dishwasher')) ||
                                        (isLitterRobot && (entityId.includes('litter') || entityId.includes('whisker'))) ||
+                                       (isClimate && (entityId.includes(devId.split('.')[1] || 'thermostat') || entityId.includes('thermostat') || entityId.includes('nest'))) ||
                                        (d.related && d.related.some(r => r.entity_id === entityId));
 
       if (!entityBelongsToAppliance) continue;
@@ -537,6 +545,24 @@ export class FirebaseHAIntegration {
         }
       }
 
+      if (isClimate) {
+        if (entityId.includes('temperature') || entityId.includes('temp')) {
+          const val = parseFloat(newState.state);
+          if (!isNaN(val)) {
+            d.attributes.current_temperature = val;
+            d.current_temperature = val;
+          }
+          isRelated = true;
+        }
+        if (entityId.includes('humidity')) {
+          const val = parseFloat(newState.state);
+          if (!isNaN(val)) {
+            d.attributes.current_humidity = val;
+          }
+          isRelated = true;
+        }
+      }
+
       if (d.related) {
         const item = d.related.find(r => r.entity_id === entityId);
         if (item) {
@@ -577,10 +603,19 @@ export class FirebaseHAIntegration {
             area: entity.area || entity.attributes?.area || 'Other',
             state: entity.state,
             attributes: entity.attributes || {},
-            isOn: entity.state === 'on' || entity.state === 'cleaning' || entity.state === 'locked' || entity.state === 'running',
+            isOn: (entity.state === 'on' || entity.state === 'cleaning' || entity.state === 'locked' || entity.state === 'running' || (domain === 'climate' && entity.state !== 'off')),
             brightness: entity.attributes?.brightness ? Math.round((entity.attributes.brightness / 255) * 100) : 100,
             battery: battery,
             fanSpeed: entity.attributes?.fan_speed || null,
+            temperature: entity.attributes?.temperature !== undefined ? entity.attributes.temperature : null,
+            target_temp_low: entity.attributes?.target_temp_low !== undefined ? entity.attributes.target_temp_low : null,
+            target_temp_high: entity.attributes?.target_temp_high !== undefined ? entity.attributes.target_temp_high : null,
+            current_temperature: entity.attributes?.current_temperature !== undefined ? entity.attributes.current_temperature : null,
+            min_temp: entity.attributes?.min_temp || 7,
+            max_temp: entity.attributes?.max_temp || 35,
+            target_temp_step: entity.attributes?.target_temp_step || 0.5,
+            hvac_modes: entity.attributes?.hvac_modes || ['off', 'heat', 'cool', 'heat_cool'],
+            hvac_action: entity.attributes?.hvac_action || entity.state,
             related: entity.related || []
           });
         });
@@ -721,6 +756,25 @@ export class FirebaseHAIntegration {
     return await this.controlDevice(deviceId, 'reset', { reset_button_entity: targetBtn });
   }
 
+  // --- Thermostat / Climate Controls ---
+  async setThermostatTemperature(deviceId, options) {
+    let serviceData = {};
+    if (typeof options === 'object' && options !== null) {
+      if (options.temperature !== undefined) serviceData.temperature = parseFloat(options.temperature);
+      if (options.target_temp_low !== undefined) serviceData.target_temp_low = parseFloat(options.target_temp_low);
+      if (options.target_temp_high !== undefined) serviceData.target_temp_high = parseFloat(options.target_temp_high);
+    } else {
+      serviceData.temperature = parseFloat(options);
+    }
+    console.log(`[HA-DEBUG:setThermostatTemperature] deviceId=${deviceId}, serviceData=`, serviceData);
+    return await this.controlDevice(deviceId, 'set_temperature', serviceData, 'climate');
+  }
+
+  async setThermostatMode(deviceId, hvacMode) {
+    console.log(`[HA-DEBUG:setThermostatMode] deviceId=${deviceId}, hvacMode=${hvacMode}`);
+    return await this.controlDevice(deviceId, 'set_hvac_mode', { hvac_mode: hvacMode }, 'climate');
+  }
+
   // --- Switch / Generic Appliance Controls ---
   async toggleSwitch(deviceId, isOn) {
     return await this.controlDevice(deviceId, isOn ? 'turn_on' : 'turn_off');
@@ -747,6 +801,30 @@ export class FirebaseHAIntegration {
           if (service === 'pause') { d.state = 'paused'; }
           if (service === 'stop' || service === 'return_to_base') { d.state = 'returning'; }
           if (service === 'set_fan_speed' && service_data?.fan_speed) { d.fanSpeed = service_data.fan_speed; }
+          if (service === 'set_temperature') {
+              if (!d.attributes) d.attributes = {};
+              if (service_data?.temperature !== undefined) {
+                  const tVal = parseFloat(service_data.temperature);
+                  d.attributes.temperature = tVal;
+                  d.temperature = tVal;
+              }
+              if (service_data?.target_temp_low !== undefined) {
+                  const lowVal = parseFloat(service_data.target_temp_low);
+                  d.attributes.target_temp_low = lowVal;
+                  d.target_temp_low = lowVal;
+              }
+              if (service_data?.target_temp_high !== undefined) {
+                  const highVal = parseFloat(service_data.target_temp_high);
+                  d.attributes.target_temp_high = highVal;
+                  d.target_temp_high = highVal;
+              }
+          }
+          if (service === 'set_hvac_mode' && service_data?.hvac_mode) {
+              d.state = service_data.hvac_mode;
+              if (!d.attributes) d.attributes = {};
+              d.attributes.hvac_mode = service_data.hvac_mode;
+              d.isOn = (d.state !== 'off');
+          }
           if (service_data?.brightness !== undefined) {
               d.brightness = Math.round((service_data.brightness / 255) * 100);
           }

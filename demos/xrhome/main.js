@@ -626,6 +626,31 @@ function formatLitterRobotStatus(rawStatus) {
     return String(rawStatus).replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 }
 
+function formatHvacMode(rawMode) {
+    if (!rawMode) return 'Heat';
+    const m = String(rawMode).toLowerCase().trim();
+    if (m === 'heat') return 'Heat';
+    if (m === 'cool') return 'Cool';
+    if (m === 'heat_cool') return 'Heat / Cool';
+    if (m === 'auto') return 'Auto';
+    if (m === 'fan_only') return 'Fan Only';
+    if (m === 'dry') return 'Dry';
+    if (m === 'off') return 'Off';
+    return m.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+}
+
+function getHvacModeIcon(rawMode) {
+    const m = String(rawMode || '').toLowerCase().trim();
+    if (m === 'heat') return 'whatshot';
+    if (m === 'cool') return 'ac_unit';
+    if (m === 'heat_cool' || m === 'auto') return 'autorenew';
+    if (m === 'fan_only') return 'mode_fan';
+    if (m === 'dry') return 'water_drop';
+    if (m === 'off') return 'power_settings_new';
+    return 'thermostat';
+}
+
+
 // --- Animated Depth Mesh Scanning Web ---
 class ScanningWebEffect {
     constructor() {
@@ -1507,6 +1532,240 @@ class VirtualLight3D extends THREE.Group {
           cardChildren.push(resetBtn);
           cardChildren.push(makeUnpairBtn());
 
+      } else if (domain === 'climate' || cat === 'climate' || cat.includes('thermostat')) {
+          // --- THERMOSTAT / CLIMATE UI (Based on Smart Bulb UICard architecture) ---
+          const attrs = this.realDevice?.attributes || {};
+          const currentTemp = attrs.current_temperature ?? this.realDevice?.current_temperature ?? 21.6;
+          const targetTemp = attrs.temperature ?? this.realDevice?.temperature ?? 21.0;
+          const minTemp = attrs.min_temp ?? 9;
+          const maxTemp = attrs.max_temp ?? 32;
+          const hvacModes = attrs.hvac_modes || ['off', 'heat', 'cool', 'heat_cool'];
+          const currentMode = this.realDevice?.state || 'heat';
+          const hvacAction = attrs.hvac_action || '';
+          const normMode = (currentMode || 'heat').toLowerCase().trim();
+          const isHeat = (normMode === 'heat');
+          const isCool = (normMode === 'cool');
+          const isHeatCool = (normMode === 'heat_cool' || normMode === 'auto');
+          const isOff = (normMode === 'off');
+
+          // 1. Current Temperature Banner (Full Width)
+          const currentTempBadge = new xb.UIPanel({
+              style: {
+                  width: '100%',
+                  height: 36,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                  borderWidth: 1,
+                  borderColor: '#FFFFFF',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+              },
+              children: [
+                  new xb.UIText({
+                      text: `🌡️ Current: ${parseFloat(currentTemp).toFixed(1)} °C`,
+                      style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' }
+                  })
+              ]
+          });
+          cardChildren.push(currentTempBadge);
+
+          // Helper: Build an adaptable slider row with - / + buttons and fire/snowflake icon
+          const makeTempSliderRow = ({ icon, title, initialVal, onTempChange, onTempCommit }) => {
+              let currentVal = parseFloat(initialVal);
+
+              const labelText = new xb.UIText({
+                  text: `${icon} ${title}: ${currentVal.toFixed(1)} °C`,
+                  style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF', width: '100%' }
+              });
+
+              const minusBtn = new xb.UIButton({
+                  label: '-',
+                  ariaLabel: `Decrease ${title}`,
+                  userData: { interactive: true },
+                  style: {
+                      width: 36,
+                      height: 28,
+                      borderRadius: 6,
+                      backgroundColor: 'rgba(255, 255, 255, 0.16)',
+                      borderWidth: 1,
+                      borderColor: '#FFFFFF',
+                      color: '#FFFFFF',
+                      ':hover': {
+                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                          color: '#000000',
+                          borderColor: '#FFFFFF',
+                      }
+                  },
+                  onClick: () => {
+                      const next = Math.max(minTemp, Math.min(maxTemp, Math.round((currentVal - 0.5) * 2) / 2));
+                      currentVal = next;
+                      labelText.text = `${icon} ${title}: ${next.toFixed(1)} °C`;
+                      onTempCommit(next);
+                  }
+              });
+
+              const plusBtn = new xb.UIButton({
+                  label: '+',
+                  ariaLabel: `Increase ${title}`,
+                  userData: { interactive: true },
+                  style: {
+                      width: 36,
+                      height: 28,
+                      borderRadius: 6,
+                      backgroundColor: 'rgba(255, 255, 255, 0.16)',
+                      borderWidth: 1,
+                      borderColor: '#FFFFFF',
+                      color: '#FFFFFF',
+                      ':hover': {
+                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                          color: '#000000',
+                          borderColor: '#FFFFFF',
+                      }
+                  },
+                  onClick: () => {
+                      const next = Math.max(minTemp, Math.min(maxTemp, Math.round((currentVal + 0.5) * 2) / 2));
+                      currentVal = next;
+                      labelText.text = `${icon} ${title}: ${next.toFixed(1)} °C`;
+                      onTempCommit(next);
+                  }
+              });
+
+              const tempSlider = new xb.UISlider({
+                  ariaLabel: `${this.labelText} ${title}`,
+                  min: minTemp,
+                  max: maxTemp,
+                  step: 0.5,
+                  value: currentVal,
+                  style: { flexGrow: 1, height: 26, color: '#FFFFFF' },
+                  onInput: (val) => {
+                      const rounded = Math.round(Number(val) * 2) / 2;
+                      currentVal = rounded;
+                      labelText.text = `${icon} ${title}: ${rounded.toFixed(1)} °C`;
+                      if (onTempChange) onTempChange(rounded);
+                  },
+                  onChange: (val) => {
+                      const rounded = Math.round(Number(val) * 2) / 2;
+                      currentVal = rounded;
+                      labelText.text = `${icon} ${title}: ${rounded.toFixed(1)} °C`;
+                      onTempCommit(rounded);
+                  }
+              });
+
+              const sliderRow = new xb.UIPanel({
+                  style: {
+                      width: '100%',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6
+                  },
+                  children: [minusBtn, tempSlider, plusBtn]
+              });
+
+              return [labelText, sliderRow];
+          };
+
+          // 2. Target Temperature Sliders (Dynamic based on Mode)
+          if (isHeat) {
+              cardChildren.push(...makeTempSliderRow({
+                  icon: '🔥',
+                  title: 'Target',
+                  initialVal: targetTemp,
+                  onTempChange: (val) => this.setThermostatTemp(val, false),
+                  onTempCommit: (val) => this.setThermostatTemp(val, true)
+              }));
+          } else if (isCool) {
+              cardChildren.push(...makeTempSliderRow({
+                  icon: '❄️',
+                  title: 'Target',
+                  initialVal: targetTemp,
+                  onTempChange: (val) => this.setThermostatTemp(val, false),
+                  onTempCommit: (val) => this.setThermostatTemp(val, true)
+              }));
+          } else if (isHeatCool) {
+              // Dual Sliders: One for Heat (🔥) and One for Cool (❄️)
+              const lowTemp = attrs.target_temp_low ?? this.realDevice?.target_temp_low ?? Math.max(minTemp, targetTemp - 1);
+              const highTemp = attrs.target_temp_high ?? this.realDevice?.target_temp_high ?? Math.min(maxTemp, targetTemp + 1);
+
+              cardChildren.push(...makeTempSliderRow({
+                  icon: '🔥',
+                  title: 'Heat Target',
+                  initialVal: lowTemp,
+                  onTempChange: (val) => this.setThermostatDualTemp({ low: val }, false),
+                  onTempCommit: (val) => this.setThermostatDualTemp({ low: val }, true)
+              }));
+
+              cardChildren.push(...makeTempSliderRow({
+                  icon: '❄️',
+                  title: 'Cool Target',
+                  initialVal: highTemp,
+                  onTempChange: (val) => this.setThermostatDualTemp({ high: val }, false),
+                  onTempCommit: (val) => this.setThermostatDualTemp({ high: val }, true)
+              }));
+          }
+          // Note: If isOff is true, no sliders are displayed
+
+          // 3. Mode Control Selector
+          const modeHeader = new xb.UIText({
+              text: `Mode: ${formatHvacMode(currentMode)}`,
+              style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF', width: '100%' }
+          });
+          cardChildren.push(modeHeader);
+
+          const modeButtons = hvacModes.map(m => {
+              const isCurrent = (m.toLowerCase() === currentMode.toLowerCase());
+              return new xb.UIButton({
+                  label: formatHvacMode(m),
+                  ariaLabel: `Set mode to ${formatHvacMode(m)}`,
+                  userData: { interactive: true },
+                  style: {
+                      flexGrow: 1,
+                      height: 30,
+                      borderRadius: 6,
+                      backgroundColor: isCurrent ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.12)',
+                      borderWidth: isCurrent ? 1.5 : 1,
+                      borderColor: '#FFFFFF',
+                      color: '#FFFFFF',
+                      fontSize: 12,
+                      fontWeight: isCurrent ? 'bold' : 'normal',
+                      ':hover': {
+                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                          color: '#000000',
+                          borderColor: '#FFFFFF',
+                      }
+                  },
+                  onClick: () => this.setThermostatMode(m)
+              });
+          });
+
+          cardChildren.push(new xb.UIPanel({
+              style: { width: '100%', flexDirection: 'row', gap: 4 },
+              children: modeButtons
+          }));
+
+          // 4. Status / Action Badge (if heating, cooling, or drying)
+          if (hvacAction && hvacAction !== 'off' && hvacAction !== 'idle') {
+              const actionLabel = String(hvacAction).charAt(0).toUpperCase() + String(hvacAction).slice(1);
+              cardChildren.push(new xb.UIPanel({
+                  style: {
+                      width: '100%',
+                      padding: 6,
+                      borderRadius: 6,
+                      backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                  },
+                  children: [
+                      new xb.UIText({
+                          text: `Status: ${actionLabel}`,
+                          style: { fontSize: 12, color: 'rgba(255, 255, 255, 0.8)' }
+                      })
+                  ]
+              }));
+          }
+
+          // 5. Unpair Button (Identical to all other cards with standard link_off icon and font)
+          cardChildren.push(makeUnpairBtn());
+
       } else if (cat === 'appliance') {
           // --- GENERIC APPLIANCE FALLBACK ---
           const appState = String(this.realDevice?.state || 'Ready').toUpperCase();
@@ -1873,6 +2132,7 @@ class VirtualLight3D extends THREE.Group {
           if (idLower.includes('oven') && d.id !== 'appliance.oven') return false;
           if (idLower.includes('dishwasher') && d.id !== 'appliance.dishwasher') return false;
           if ((idLower.includes('litter_robot') || idLower.includes('litter-robot') || idLower.includes('litterbox') || idLower.includes('whisker')) && d.id !== 'appliance.litter_robot') return false;
+          if ((idLower.includes('thermostat') || idLower.includes('nest')) && !d.id.startsWith('climate.')) return false;
           return true;
       });
       
@@ -1899,8 +2159,8 @@ class VirtualLight3D extends THREE.Group {
           if (isMatch) {
               recommended.push(d);
           }
-          const isAppliance = (domain === 'oven' || domain === 'dishwasher' || domain === 'litter_robot' || domain === 'vacuum' || domain === 'appliance' || d.id.startsWith('appliance.') || d.id.startsWith('vacuum.'));
-          const isApplianceTarget = (targetCat === 'oven' || targetCat === 'dishwasher' || targetCat === 'litter_robot' || targetCat === 'pet' || targetCat === 'vacuum' || targetCat === 'appliance');
+          const isAppliance = (domain === 'oven' || domain === 'dishwasher' || domain === 'litter_robot' || domain === 'vacuum' || domain === 'appliance' || domain === 'climate' || d.id.startsWith('appliance.') || d.id.startsWith('vacuum.') || d.id.startsWith('climate.'));
+          const isApplianceTarget = (targetCat === 'oven' || targetCat === 'dishwasher' || targetCat === 'litter_robot' || targetCat === 'pet' || targetCat === 'vacuum' || targetCat === 'appliance' || targetCat === 'climate');
           
           // In Room browsing mode, filter out appliances unless the target anchor is specifically an appliance
           if (!isAppliance || isApplianceTarget) {
@@ -2285,6 +2545,8 @@ class VirtualLight3D extends THREE.Group {
                   this.stateColor = this.colorTemp ? kelvinToHex(this.colorTemp) : '#FFFFFF';
               }
               colorStr = this.stateColor;
+          } else if (domain === 'climate' || this.category === 'climate') {
+              colorStr = '#FFFFFF';
           } else {
               colorStr = isOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.55)';
           }
@@ -2491,6 +2753,106 @@ class VirtualLight3D extends THREE.Group {
       });
   }
 
+  setThermostatTemp(temp, commitToHa = true) {
+      const minT = this.realDevice?.attributes?.min_temp || 9;
+      const maxT = this.realDevice?.attributes?.max_temp || 32;
+      const clamped = Math.max(minT, Math.min(maxT, Math.round(temp * 2) / 2));
+      
+      if (!this.realDevice) this.realDevice = {};
+      if (!this.realDevice.attributes) this.realDevice.attributes = {};
+      this.realDevice.attributes.temperature = clamped;
+      this.realDevice.temperature = clamped;
+
+      if (commitToHa && this.realDevice.id && smartHome) {
+          if (this._tempDebounce) clearTimeout(this._tempDebounce);
+          this._tempDebounce = setTimeout(() => {
+              console.log(`[Thermostat] Setting temperature for ${this.realDevice.id} -> ${clamped}°C`);
+              smartHome.setThermostatTemperature(this.realDevice.id, clamped).then(success => {
+                  if (success !== false) {
+                      hud.log(`Thermostat set to ${clamped.toFixed(1)}°C`, '#FFFFFF');
+                  }
+              }).catch(err => {
+                  console.warn("[Thermostat] Set temperature error:", err);
+              });
+          }, 350);
+      }
+  }
+
+  setThermostatDualTemp({ low, high }, commitToHa = true) {
+      const minT = this.realDevice?.attributes?.min_temp || 9;
+      const maxT = this.realDevice?.attributes?.max_temp || 32;
+
+      if (!this.realDevice) this.realDevice = {};
+      if (!this.realDevice.attributes) this.realDevice.attributes = {};
+
+      if (low !== undefined) {
+          const clampedLow = Math.max(minT, Math.min(maxT, Math.round(low * 2) / 2));
+          this.realDevice.attributes.target_temp_low = clampedLow;
+          this.realDevice.target_temp_low = clampedLow;
+      }
+      if (high !== undefined) {
+          const clampedHigh = Math.max(minT, Math.min(maxT, Math.round(high * 2) / 2));
+          this.realDevice.attributes.target_temp_high = clampedHigh;
+          this.realDevice.target_temp_high = clampedHigh;
+      }
+
+      if (commitToHa && this.realDevice.id && smartHome) {
+          if (this._tempDebounce) clearTimeout(this._tempDebounce);
+          this._tempDebounce = setTimeout(() => {
+              const curLow = this.realDevice.attributes.target_temp_low;
+              const curHigh = this.realDevice.attributes.target_temp_high;
+              console.log(`[Thermostat] Setting dual temperature for ${this.realDevice.id} -> Heat ${curLow}°C, Cool ${curHigh}°C`);
+              smartHome.setThermostatTemperature(this.realDevice.id, {
+                  target_temp_low: curLow,
+                  target_temp_high: curHigh
+              }).then(success => {
+                  if (success !== false) {
+                      hud.log(`🔥 ${curLow.toFixed(1)}°C | ❄️ ${curHigh.toFixed(1)}°C`, '#FFFFFF');
+                  }
+              }).catch(err => {
+                  console.warn("[Thermostat] Set dual temperature error:", err);
+              });
+          }, 350);
+      }
+  }
+
+  adjustThermostatTemp(delta) {
+      const currentSetpoint = this.realDevice?.attributes?.temperature ?? this.realDevice?.temperature ?? 21.0;
+      const nextTemp = Math.round((currentSetpoint + delta) * 2) / 2;
+      this.setThermostatTemp(nextTemp, true);
+      this.updateVisuals();
+  }
+
+  setThermostatMode(nextMode) {
+      if (!nextMode) return;
+      console.log(`[Thermostat] Setting mode for ${this.realDevice?.id} -> ${nextMode}`);
+      if (!this.realDevice) this.realDevice = {};
+      this.realDevice.state = nextMode;
+      if (!this.realDevice.attributes) this.realDevice.attributes = {};
+      this.realDevice.attributes.hvac_mode = nextMode;
+      this.isOn = (nextMode !== 'off');
+
+      if (this.realDevice.id && smartHome) {
+          smartHome.setThermostatMode(this.realDevice.id, nextMode).then(success => {
+              if (success !== false) {
+                  hud.log(`Mode: ${formatHvacMode(nextMode)}`, '#FFFFFF');
+              }
+          }).catch(err => {
+              console.warn("[Thermostat] Set mode error:", err);
+          });
+      }
+      this.updateVisuals();
+  }
+
+  cycleThermostatMode() {
+      const modes = this.realDevice?.attributes?.hvac_modes || ['off', 'heat', 'cool', 'heat_cool'];
+      const currentMode = (this.realDevice?.state || 'heat').toLowerCase();
+      const currentIndex = modes.indexOf(currentMode);
+      const nextIndex = (currentIndex + 1) % modes.length;
+      const nextMode = modes[nextIndex];
+      this.setThermostatMode(nextMode);
+  }
+
   setBrightness(val) {
       const prevBrightness = this.brightness;
       this.brightness = Math.max(1, Math.min(100, Math.round(val)));
@@ -2623,8 +2985,9 @@ async function initApp(preloadedConfig = null) {
                                        (vl.realDevice.related && vl.realDevice.related.some(r => r.entity_id === entityId));
 
                 if (isDirectMatch || isRelatedMatch) {
-                    const isApplianceCard = (vl.realDevice.id.startsWith('appliance.') || vl.realDevice.domain === 'oven' || vl.realDevice.domain === 'dishwasher' || vl.realDevice.domain === 'litter_robot');
+                    const isApplianceCard = (vl.realDevice.id.startsWith('appliance.') || vl.realDevice.domain === 'oven' || vl.realDevice.domain === 'dishwasher' || vl.realDevice.domain === 'litter_robot' || vl.realDevice.domain === 'climate');
                     const isLock = (vl.realDevice.domain === 'lock' || vl.category === 'lock' || vl.realDevice.id.startsWith('lock.'));
+                    const isClimate = (vl.realDevice.domain === 'climate' || vl.category === 'climate' || vl.realDevice.id.startsWith('climate.'));
 
                     if (isLock) {
                         console.log(`[HA-DEBUG:onEntityStateChanged:LOCK] entityId=${entityId}, isDirectMatch=${isDirectMatch}, isRelatedMatch=${isRelatedMatch}, incomingState='${newState?.state}', currentVlState='${vl.realDevice?.state}', currentVlIsOn=${vl.isOn}`);
@@ -2658,6 +3021,26 @@ async function initApp(preloadedConfig = null) {
                                     console.log(`[HA-DEBUG:onEntityStateChanged:LOCK-DIRECT-APPLIED] Set vl.realDevice.state='${vl.realDevice.state}', vl.isOn=${vl.isOn}`);
                                 } else {
                                     console.warn(`[HA-DEBUG:onEntityStateChanged:LOCK-DIRECT-IGNORED] Ignored non-terminal state '${newState.state}' for ${vl.realDevice.id}`);
+                                }
+                            } else if (isClimate) {
+                                vl.realDevice.state = newState.state;
+                                vl.realDevice.isOn = (newState.state !== 'off');
+                                vl.isOn = (newState.state !== 'off');
+                                if (newState.attributes?.temperature !== undefined) {
+                                    vl.realDevice.attributes.temperature = newState.attributes.temperature;
+                                    vl.realDevice.temperature = newState.attributes.temperature;
+                                }
+                                if (newState.attributes?.target_temp_low !== undefined) {
+                                    vl.realDevice.attributes.target_temp_low = newState.attributes.target_temp_low;
+                                    vl.realDevice.target_temp_low = newState.attributes.target_temp_low;
+                                }
+                                if (newState.attributes?.target_temp_high !== undefined) {
+                                    vl.realDevice.attributes.target_temp_high = newState.attributes.target_temp_high;
+                                    vl.realDevice.target_temp_high = newState.attributes.target_temp_high;
+                                }
+                                if (newState.attributes?.current_temperature !== undefined) {
+                                    vl.realDevice.attributes.current_temperature = newState.attributes.current_temperature;
+                                    vl.realDevice.current_temperature = newState.attributes.current_temperature;
                                 }
                             } else {
                                 vl.realDevice.state = newState.state;
@@ -2760,6 +3143,23 @@ async function initApp(preloadedConfig = null) {
                             if (entityId.includes('waste_drawer')) {
                                 const val = parseFloat(newState.state);
                                 if (!isNaN(val)) vl.realDevice.attributes.waste_drawer = Math.round(val);
+                            }
+                        }
+                        if (isClimate && newState) {
+                            if (entityId.includes('temperature') || entityId.includes('temp')) {
+                                const val = parseFloat(newState.state);
+                                if (!isNaN(val)) {
+                                    if (!vl.realDevice.attributes) vl.realDevice.attributes = {};
+                                    vl.realDevice.attributes.current_temperature = val;
+                                    vl.realDevice.current_temperature = val;
+                                }
+                            }
+                            if (entityId.includes('humidity')) {
+                                const val = parseFloat(newState.state);
+                                if (!isNaN(val)) {
+                                    if (!vl.realDevice.attributes) vl.realDevice.attributes = {};
+                                    vl.realDevice.attributes.current_humidity = val;
+                                }
                             }
                         }
                     }

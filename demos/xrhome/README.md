@@ -38,7 +38,8 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 - **Dishwashers**: Operating state badge, active cycle display (e.g. "Normal", "Heavy"), live countdown timer (`Xh Ym remaining` or `Less than a minute`), estimated completion timestamp (`Today at 4:15 PM`), door open/closed indicator, and rinse refill alert.
 - **Ovens & Microwaves**: Status badge, cavity temperature setpoint (°F/°C), second cavity setpoint, live program remaining timer, cavity lamp control button ("Lamp ON / Lamp OFF"), Stop button, and door open warning.
 - **Litter-Robot (Whisker)**: Status badge with full Home Assistant status code expansion (e.g., `rdy` → "Ready", `ccc` → "Clean Cycle Complete", `ccp` → "Clean Cycle In Progress", `cd` → "Cat Detected", `dfs` → "Drawer Full"), Litter Level percentage, Waste Drawer percentage, and a Home Assistant-mapped **Reset** button.
-- **Device Tree Filtering**: Compound appliance sub-entities (e.g., loose sensors, buttons, cavity lights) are automatically unified and hidden from the pairing list, keeping the device tree clean and intuitive.
+- **Thermostats (Climate)**: Ambient room temperature readout (°C), dynamic target setpoint linear slider with 0.5°C step buttons (featuring 🔥 Fire and ❄️ Snowflake mode icons), automatic dual-slider layout for Heat/Cool combo mode (individual low/high setpoint sliders), clickable HVAC mode controls (Heat, Cool, Heat / Cool, Off), live status badge, and compact auto-resizing in Off mode.
+- **Device Tree Filtering**: Compound appliance sub-entities (e.g., loose sensors, buttons, cavity lights, subordinate thermostat sensors) are automatically unified and hidden from the pairing list, keeping the device tree clean and intuitive.
 
 ---
 
@@ -49,29 +50,29 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 1. Launch the application in a WebXR-compatible browser (e.g., Meta Quest Browser or ChromeXR on AndroidXR):
    - **Hosting URL**: `https://<your-project-id>.web.app`
 2. On boot, the system securely retrieves Home Assistant Cloud endpoints and tokens via `getConfig` and initializes the Home Assistant WebSocket stream.
-3. The 3D HUD appears anchored in your field of view with scanning controls and audio feedback.
+3. The 3D HUD appears anchored in your field of view with scanning controls.
 
-### 2. Room Scanning & Spawning Devices
+### 2. Room Scanning & Detecting Devices
 
 1. Click **"Start Scan"** in the HUD (or use your controller / hand gesture).
-2. Look around the room. An animated 3D scanning mesh visualizes depth capture while Gemini identifies objects in view.
-3. Detected fixtures appear as spatial panels with a **Yellow** text label / gear icon indicating an **Unpaired** state.
-4. Click **"Stop Scan"** when finished. Any unmapped temporary placeholders are cleaned up automatically.
+2. Position yourself looking at some smart devices or appliances in the room. Try to remain as still as possible to get a clear image.
+3. Detected fixtures appear as spatial panels with a text label or the detected device and a **"Pair Device"** label indicating an **Unpaired** state.
+4. Click **"Stop Scan"** when finished.
+5. To move an unpaired card, grab and drag it in 3D space using your controller grip or pinch gesture and move it to the desired location.
+6. Any temporary placeholders are cleaned up automatically when a another scan is started.
 
 ### 3. Pairing a Spatial Panel to a Real Device
 
 1. Point your controller ray or pinch gesture at an unpaired spatial card and click the **"Pair Device"** (`+`) button.
-2. An interactive 3D device picker will open, listing your discovered Home Assistant devices categorized by room (e.g., Kitchen, Living Room, Utility).
+2. An interactive 3D device picker will open, listing your discovered Home Assistant devices categorized by room (e.g., Kitchen, Living Room, Utility) or by a Recommended filter.
 3. Select the physical device from the list:
    - The card re-renders into its specialized UICard layout.
    - The device name updates to its Home Assistant friendly name.
    - The 3D world pose (position, rotation) and device link are saved to Firestore.
-4. To move an unpaired card before locking, grab and drag it in 3D space using your controller grip or pinch gesture.
 
 ### 4. Controlling Devices in XR
 
 - **Direct Touch & Ray Interaction**: Point your XR controller ray or use hand tracking pinch gestures to press buttons, drag brightness/color sliders, and switch temperature presets.
-- **Audio Feedback**: Voice and sound effects confirm actions such as starting scans, device pairing, vacuum docking, and Litter-Robot resets.
 - **Unpairing**: Click the **"Unpair"** button at the bottom of any paired UICard to unlink it and return it to an unpaired state or remove it from Firestore.
 
 ---

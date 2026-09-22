@@ -427,6 +427,26 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
 
         const waterSensor = dockAndVacEntities.find(e => e.entity_id.includes('water_shortage'));
         if (waterSensor) p.attributes.water_shortage = (waterSensor.state === 'on');
+      } else if (pDomain === 'climate') {
+        const pName = p.entity_id.split('.')[1] || '';
+        // Find matching climate auxiliary sensors, switches, buttons
+        const climateSubEntities = allFiltered.filter(e => {
+          if (e.entity_id === p.entity_id) return false;
+          const eId = e.entity_id.toLowerCase();
+          const fn = (e.attributes?.friendly_name || '').toLowerCase();
+          return (pName && (eId.includes(pName) || fn.includes(pName)));
+        });
+
+        climateSubEntities.forEach(e => {
+          swallowedEntityIds.add(e.entity_id);
+          p.related.push({
+            entity_id: e.entity_id,
+            domain: e.entity_id.split('.')[0],
+            name: e.attributes?.friendly_name || e.entity_id,
+            state: e.state,
+            attributes: e.attributes
+          });
+        });
       } else {
         // Associate related entities for other primary devices
         const pName = p.entity_id.split('.')[1] || '';
