@@ -1,122 +1,179 @@
-# XRHome Demo (Matter Edition)
+# XRHome (Home Assistant & WebXR Edition)
 
-A WebXR Proof of Concept that combines **XRBlocks**, **Vertex Vision API**, and **Matter.js** for local smart home control via AR.
+A full-stack, room-scale WebXR spatial computing application powered by **XRBlocks**, **Google Gemini 2.5 Flash Vision**, and **Home Assistant Cloud (Nabu Casa)** with **Firebase Cloud Functions & Firestore** for persistent 3D spatial smart home control in Augmented Reality (AR) and Mixed Reality (MR).
 
-## Features
+---
 
-- **Room-Scale Scanning**: Detects lights using the device camera and Gemini Vision API.
-- **Matter Integration**: Pairs with and controls real Matter smart lights over local WiFi/Thread.
-- **3D Interaction**: Use XR controllers or hand gestures to point, click, and interact with virtual overlays.
+## Key Capabilities & Features
 
-## Usage Guide
+### 1. House-Scale AI Room Scanning
+- **Continuous Frame Buffering & Decoupled Analysis**: The headset/device camera feeds real-time video frames into a decoupled pipeline. Every 5 seconds, the latest captured frame is analyzed by **Google Gemini 2.5 Flash** using strict JSON schema output.
+- **Multimodal Smart Device Detection**: Recognizes physical fixtures and appliances even when turned off:
+  - 💡 **Lights & Lamps** (`light`)
+  - 🔌 **Wall Switches & Smart Plugs** (`switch`)
+  - 🔒 **Door Locks & Smart Deadbolts** (`lock`)
+  - 🧹 **Robot Vacuums & Auto-Empty Docks** (`vacuum`)
+  - 🍽️ **Dishwashers** (`dishwasher`)
+  - 🍳 **Ovens, Stoves, Ranges & Microwaves** (`oven`)
+  - 🐱 **Automatic Litter Boxes / Pet Care** (`litter_robot`)
+  - ⚙️ **General Smart Appliances** (`appliance`)
+- **Spatial Raycasting & Horizon Calibration**: Detected 2D bounding boxes are projected into 3D world space using camera pose matrices and WebXR depth/surface planes, spawning interactive 3D spatial cards directly over physical devices.
 
-### 1. Setup
+### 2. Hybrid Home Assistant Cloud Architecture
+- **Zero-Latency Push Telemetry via WebSocket**: Connects directly from the headset browser to Home Assistant Cloud (`wss://<id>.ui.nabu.casa/api/websocket`) and subscribes to `state_changed` events. State changes (e.g. wall switch flips, door locks, dishwasher countdowns) update spatial cards in real-time (<50ms) without polling overhead.
+- **Serverless Cloud Functions Gateway**: Securely provisions connection credentials (`getConfig`), unifies complex multi-entity appliances into cohesive virtual devices (`getHaDevices`), and executes commands (`controlHaDevice`) with automatic retries and error reporting.
+- **Firestore Anchor Persistence**: Device pairings and 3D spatial anchors (position, rotation, device metadata) are saved to native Cloud Firestore (`saveAnchor`, `getAnchors`, `deleteAnchor`, `resetAnchors`). Anchors persist across sessions and headset reboots.
 
-1.  **Gemini API Key**: Enter your key in the HUD when prompted.
-2.  **Matter Pairing Code**:
-    - For existing devices (already in Google Home), go to _Device Settings > Linked Matter apps & services > Link apps & services > Use Pairing_ to get a new pairing code.
+### 3. Dedicated Spatial UICards (`VirtualLight3D`)
+Each device domain features a custom-engineered, glassmorphic 3D spatial panel with billboarding/pivoting to always face the user:
+- **Smart Lights**: Power toggle, live brightness slider (1–100%), full-spectrum HSV color slider with dynamic preview swatch, warm/neutral/cool white temperature presets (2700K–6500K), and real-time color indicator reactivity.
+- **Door Locks**: Locked/Unlocked status badge, battery level gauge, single-touch lock/unlock action button, and optimistic lock status handling with debounce.
+- **Robot Vacuums**: Live status (Cleaning, Docked, Returning, Error), battery percentage, Clean/Pause toggle, Dock button, Spot clean button, and dock dustbin emptying.
+- **Dishwashers**: Operating state badge, active cycle display (e.g. "Normal", "Heavy"), live countdown timer (`Xh Ym remaining` or `Less than a minute`), estimated completion timestamp (`Today at 4:15 PM`), door open/closed indicator, and rinse refill alert.
+- **Ovens & Microwaves**: Status badge, cavity temperature setpoint (°F/°C), second cavity setpoint, live program remaining timer, cavity lamp control button ("Lamp ON / Lamp OFF"), Stop button, and door open warning.
+- **Litter-Robot (Whisker)**: Status badge with full Home Assistant status code expansion (e.g., `rdy` → "Ready", `ccc` → "Clean Cycle Complete", `ccp` → "Clean Cycle In Progress", `cd` → "Cat Detected", `dfs` → "Drawer Full"), Litter Level percentage, Waste Drawer percentage, and a Home Assistant-mapped **Reset** button.
+- **Device Tree Filtering**: Compound appliance sub-entities (e.g., loose sensors, buttons, cavity lights) are automatically unified and hidden from the pairing list, keeping the device tree clean and intuitive.
 
-### 2. Scanning
+---
 
-The scanning system uses a decoupled loop for performance:
+## User Interaction Guide
 
-- **Live Capture (500ms)**: The camera continuously buffers the latest frame.
-- **Analysis (5s)**: Every 5 seconds, the _latest_ frame is sent to Vertex Vision for analysis.
-- **Action**: Click **"Start Scan"** in the 2D HUD or the Start/Play button in the 3D HUD.
-- **Result**: Scanned lights appear as **Yellow Wireframe Boxes** in 2D space or as XR Blocks spatial panels with **Yellow** text labels in 3D space.
+### 1. Initial Launch & HUD Setup
+1. Launch the application in a WebXR-compatible browser (e.g., Meta Quest Browser, Chrome on Android, or WebXR desktop emulator):
+   - **Production URL**: [https://xrhome-009ef8.web.app](https://xrhome-009ef8.web.app)
+2. On boot, the system securely retrieves Home Assistant Cloud endpoints and tokens via `getConfig` and initializes the Home Assistant WebSocket stream.
+3. The 3D HUD appears anchored in your field of view with scanning controls and audio feedback.
 
-### 3. Visual Feedback (Color Coding)
+### 2. Room Scanning & Spawning Devices
+1. Click **"Start Scan"** in the HUD (or use your controller / hand gesture).
+2. Look around the room. An animated 3D scanning mesh visualizes depth capture while Gemini identifies objects in view.
+3. Detected fixtures appear as spatial panels with a **Yellow** text label / gear icon indicating an **Unpaired** state.
+4. Click **"Stop Scan"** when finished. Any unmapped temporary placeholders are cleaned up automatically.
 
-The virtual boxes or device labels indicate the status of the device:
+### 3. Pairing a Spatial Panel to a Real Device
+1. Point your controller ray or pinch gesture at an unpaired spatial card and click the **"Pair Device"** (`+`) button.
+2. An interactive 3D device picker will open, listing your discovered Home Assistant devices categorized by room (e.g., Kitchen, Living Room, Utility).
+3. Select the physical device from the list:
+   - The card re-renders into its specialized UICard layout.
+   - The device name updates to its Home Assistant friendly name.
+   - The 3D world pose (position, rotation) and device link are saved to Firestore.
+4. To move an unpaired card before locking, grab and drag it in 3D space using your controller grip or pinch gesture.
 
-| Color         | Meaning            | Interaction                                                                                                         |
-| :------------ | :----------------- | :------------------------------------------------------------------------------------------------------------------ |
-| 🟨 **Yellow** | **Unpaired / New** | Needs pairing. Shows a **Gear Icon (⚙️)** or a "**+**" icon.                                                        |
-| ⬜ **White**  | **Paired (ON)**    | Device is paired and currently ON. In 2D shows a red X to unpair and in 3D shows a power button and unpair button.  |
-| 🟩 **Green**  | **Paired (OFF)**   | Device is paired and currently OFF. In 2D shows a red X to unpair and in 3D shows a power button and unpair button. |
+### 4. Controlling Devices in XR
+- **Direct Touch & Ray Interaction**: Point your XR controller ray or use hand tracking pinch gestures to press buttons, drag brightness/color sliders, and switch temperature presets.
+- **Audio Feedback**: Voice and sound effects confirm actions such as starting scans, device pairing, vacuum docking, and Litter-Robot resets.
+- **Unpairing**: Click the **"Unpair"** button at the bottom of any paired UICard to unlink it and return it to an unpaired state or remove it from Firestore.
 
-### 4. Interactions
+---
 
-You can interact with the detected smart lights differently depending on your platform.
+## Architecture Overview
 
-#### Pairing a Device
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        XRHome WebXR Client                             │
+│                  (Meta Quest / Mobile AR / Desktop)                    │
+│                                                                        │
+│   1. Boots XRBlocks & Three.js WebXR session                           │
+│   2. Calls Cloud Function `getConfig` for secure credentials           │
+│   3. Loads saved 3D device anchors from Firestore                      │
+│   4. Opens direct WebSocket to Nabu Casa for push state updates        │
+│   5. Runs Camera Frame Buffering -> Gemini 2.5 Flash Vision            │
+│   6. Manages reactive 3D Spatial Panels (VirtualLight3D)               │
+└──────────────┬──────────────────────────────────────────▲──────────────┘
+               │                                          │
+       (REST / Firestore)                         (Direct WSS Push)
+               │                                          │
+               ▼                                          │
+┌──────────────────────────────┐              ┌───────────┴──────────────┐
+│  Firebase Cloud Functions    │              │   Home Assistant Cloud   │
+│      & Cloud Firestore       │              │        (Nabu Casa)       │
+│                              │              │                          │
+│  - getConfig                 │              │  - Real-time WebSocket   │
+│  - getHaDevices (unification)│              │    state_changed stream  │
+│  - controlHaDevice (REST)    │              │  - Sub-50ms push events  │
+│  - saveAnchor / getAnchors   │              │  - 100+ connected smart  │
+│  - deleteAnchor / resetAnchors              │    home device entities  │
+└──────────────────────────────┘              └──────────────────────────┘
+```
 
-**In Desktop (2D) Mode:**
+---
 
-1.  Locate a **Yellow** box.
-2.  Point at the **Gear Icon (⚙️)** and click.
-3.  A standard browser prompt will appear.
-4.  Enter the 11-digit Matter Pairing Code from Google Home. (see above pairing instructions)
-5.  The system will commission the device (this may take 10-30 seconds).
-6.  Upon success, the box turns **Green/White** and the icon changes to a red **X**.
+## Developer Setup & Deployment
 
-**In Immersive AR (3D) Mode:**
+### Prerequisites
+- Node.js (v20+ or v22 LTS recommended)
+- Firebase CLI (`npm install -g firebase-tools` or `npx firebase-tools`)
+- A Home Assistant instance with Nabu Casa Cloud (or direct external URL)
+- A Google Gemini API Key
 
-1. Locate a Spatial Panel with a **Yellow** text label indicating an unpaired light.
-2. Use your XR controller or hand/pinch gesture to point to and click the **"+"** icon.
-3. A **Virtual Keypad** will spawn in 3D space.
-4. Use your controller or hand/pinch to enter in the Matter Pairing Code on the virtual buttons.
-5. Click **"OK"** to submit and commission the device (this may take 10-30 seconds).
+### 1. Configuration & Secrets (`functions/.env`)
+Create `demos/xrhome/functions/.env` using the provided sample template:
+```bash
+cp demos/xrhome/functions/.env.sample demos/xrhome/functions/.env
+```
 
-#### Controlling a Light
+Populate the required environment variables:
+```ini
+# Home Assistant Cloud (Nabu Casa remote URL)
+HA_URL=https://your-instance.ui.nabu.casa
 
-**In Desktop (2D) Mode:**
+# Home Assistant Long-Lived Access Token (Profile > Security > Long-Lived Access Tokens)
+HA_TOKEN=your_long_lived_access_token_here
 
-- **Toggle On/Off**: Point at the **Main Box** (not the icon) and click. The box color will toggle between White and Green.
+# Google Gemini API Key (for 2.5 Flash Vision object detection)
+GEMINI_API_KEY=your_gemini_api_key_here
 
-**In Immersive AR (3D) Mode:**
+# Firebase Web API Key (for client-side Firebase Auth/Firestore)
+WEB_API_KEY=your_firebase_web_api_key_here
+```
 
-1. Locate a paired spatial panel (indicated by White or Green text).
-2. Point at the **"Power/Toggle"** (Grey hover) button with your XR controller or hand/pinch gesture and click/trigger.
-3. The physical light state will update, and the panel text will toggle between White (ON) and Green (OFF).
+### 2. Local Testing & Validation
+Verify syntax and integrity across the project:
+```bash
+cd demos/xrhome
+node --check main.js
+node --check functions/index.js
+node --check services/firebase-ha-integration.js
+node --check vision.js
+```
 
-#### Unpairing
+### 3. Deploying to Firebase
+Deploy Cloud Functions and Hosting to your Firebase project:
+```bash
+cd demos/xrhome
 
-**In Desktop (2D) Mode:**
+# Deploy both Cloud Functions and Hosting
+npx -y firebase-tools@latest deploy --project xrhome-009ef8
 
-1.  Point at the **Red X Icon** on a paired device.
-2.  Click to unpair. The box returns to **Yellow**.
+# Or deploy Hosting only:
+npx -y firebase-tools@latest deploy --only hosting --project xrhome-009ef8
 
-**In Immersive AR (3D) Mode:**
+# Or deploy Cloud Functions only:
+npx -y firebase-tools@latest deploy --only functions --project xrhome-009ef8
+```
 
-1. Locate a paired spatial panel.
-2. Point at the **"UNPAIR"** (Red hover) button with your XR controller and click/trigger.
-3. The device will be removed from the local Matter fabric, and the text label will return to the Yellow state.
+---
 
-## Technical Setup (Developers)
+## Project Structure
 
-The architecture has been migrated from local node containers to a serverless model using Firebase Hosting and Cloud Functions, enabling secure 3rd-party integrations (Vertex AI, Google Home Graph).
-
-### 1. Credentials & Secrets Setup (`.env.sample` and Auth)
-
-To connect to Gemini, Google Home, and Firebase Auth:
-1. Open `.env.sample` located in the root of the project.
-2. Enter your `GEMINI_API_KEY`, `GOOGLE_HOME_PROJECT_ID`, and `WEB_API_KEY`.
-3. Copy or rename this file to `.env` inside the `functions/` directory:
-   ```bash
-   cp .env.sample functions/.env
-   ```
-   *Note: Firebase Cloud Functions require local environment files to be stored inside the `functions` folder to be properly loaded during deployment!*
-
-**Firebase Authentication:**
-This demo uses Firebase Authentication with Google Sign-in to protect Realtime Database anchors.
-1. Go to your [Firebase Console](https://console.firebase.google.com/).
-2. Navigate to **Authentication** > **Sign-in method**.
-3. Click **Add new provider** > **Google**.
-4. Enable it and ensure your project's support email is configured.
-
-### 2. Local Development (Emulators)
-
-You can run the full Firebase suite locally without deploying:
-   ```bash
-   cd functions && npm install && cd ..
-   firebase emulators:start
-   ```
-
-### 3. Deployment
-
-To publish the static frontend and provision the backend REST APIs to the cloud:
-   ```bash
-   # Make sure your functions/.env is populated
-   firebase deploy
-   ```
+```
+demos/xrhome/
+├── index.html                 # Main WebXR entry HTML & passthrough canvas
+├── main.js                    # Core XR application, 3D UICards, drag & ray interaction
+├── hud.js                     # 2D/3D Heads-Up Display and audio manager
+├── vision.js                  # Gemini 2.5 Flash Vision integration & schema parser
+├── keypad.js                  # 3D spatial virtual keypad for spatial input
+├── managers.js                # Helper managers & audio state
+├── webrtc.js                  # Camera feed capturing & frame management
+├── auth.js                    # Firebase Auth client wrapper
+├── services/
+│   └── firebase-ha-integration.js  # WebSocket bus, state hydration & entity management
+├── functions/
+│   ├── index.js               # Cloud Functions (getHaDevices, controlHaDevice, anchors)
+│   ├── .env.sample            # Environment variable template
+│   └── package.json           # Cloud Functions dependencies (Node 22)
+└── features/
+    ├── hass_mapping.feature   # BDD feature spec: Home Assistant Cloud Device Mapping
+    ├── house_scale_slam.feature # BDD feature spec: House-Scale SLAM & Spatial Anchoring
+    └── implementation_plan.md # Architecture & integration design document
+```
