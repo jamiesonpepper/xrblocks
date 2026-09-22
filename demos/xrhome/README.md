@@ -1,5 +1,7 @@
 # XRHome (Home Assistant & WebXR Edition)
 
+# XRHome (Home Assistant & WebXR Edition)
+
 A full-stack, room-scale WebXR spatial computing application powered by **XRBlocks**, **Google Gemini 2.5 Flash Vision**, and **Home Assistant Cloud (Nabu Casa)** with **Firebase Cloud Functions & Firestore** for persistent 3D spatial smart home control in Augmented Reality (AR) and Mixed Reality (MR).
 
 ---
@@ -7,6 +9,7 @@ A full-stack, room-scale WebXR spatial computing application powered by **XRBloc
 ## Key Capabilities & Features
 
 ### 1. House-Scale AI Room Scanning
+
 - **Continuous Frame Buffering & Decoupled Analysis**: The headset/device camera feeds real-time video frames into a decoupled pipeline. Every 5 seconds, the latest captured frame is analyzed by **Google Gemini 2.5 Flash** using strict JSON schema output.
 - **Multimodal Smart Device Detection**: Recognizes physical fixtures and appliances even when turned off:
   - 💡 **Lights & Lamps** (`light`)
@@ -20,12 +23,15 @@ A full-stack, room-scale WebXR spatial computing application powered by **XRBloc
 - **Spatial Raycasting & Horizon Calibration**: Detected 2D bounding boxes are projected into 3D world space using camera pose matrices and WebXR depth/surface planes, spawning interactive 3D spatial cards directly over physical devices.
 
 ### 2. Hybrid Home Assistant Cloud Architecture
+
 - **Zero-Latency Push Telemetry via WebSocket**: Connects directly from the headset browser to Home Assistant Cloud (`wss://<id>.ui.nabu.casa/api/websocket`) and subscribes to `state_changed` events. State changes (e.g. wall switch flips, door locks, dishwasher countdowns) update spatial cards in real-time (<50ms) without polling overhead.
 - **Serverless Cloud Functions Gateway**: Securely provisions connection credentials (`getConfig`), unifies complex multi-entity appliances into cohesive virtual devices (`getHaDevices`), and executes commands (`controlHaDevice`) with automatic retries and error reporting.
 - **Firestore Anchor Persistence**: Device pairings and 3D spatial anchors (position, rotation, device metadata) are saved to native Cloud Firestore (`saveAnchor`, `getAnchors`, `deleteAnchor`, `resetAnchors`). Anchors persist across sessions and headset reboots.
 
 ### 3. Dedicated Spatial UICards (`VirtualLight3D`)
+
 Each device domain features a custom-engineered, glassmorphic 3D spatial panel with billboarding/pivoting to always face the user:
+
 - **Smart Lights**: Power toggle, live brightness slider (1–100%), full-spectrum HSV color slider with dynamic preview swatch, warm/neutral/cool white temperature presets (2700K–6500K), and real-time color indicator reactivity.
 - **Door Locks**: Locked/Unlocked status badge, battery level gauge, single-touch lock/unlock action button, and optimistic lock status handling with debounce.
 - **Robot Vacuums**: Live status (Cleaning, Docked, Returning, Error), battery percentage, Clean/Pause toggle, Dock button, Spot clean button, and dock dustbin emptying.
@@ -39,18 +45,21 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 ## User Interaction Guide
 
 ### 1. Initial Launch & HUD Setup
-1. Launch the application in a WebXR-compatible browser (e.g., Meta Quest Browser, Chrome on Android, or WebXR desktop emulator):
-   - **Production URL**: [https://xrhome-009ef8.web.app](https://xrhome-009ef8.web.app)
+
+1. Launch the application in a WebXR-compatible browser (e.g., Meta Quest Browser or ChromeXR on AndroidXR):
+   - **Hosting URL**: `https://<your-project-id>.web.app`
 2. On boot, the system securely retrieves Home Assistant Cloud endpoints and tokens via `getConfig` and initializes the Home Assistant WebSocket stream.
 3. The 3D HUD appears anchored in your field of view with scanning controls and audio feedback.
 
 ### 2. Room Scanning & Spawning Devices
+
 1. Click **"Start Scan"** in the HUD (or use your controller / hand gesture).
 2. Look around the room. An animated 3D scanning mesh visualizes depth capture while Gemini identifies objects in view.
 3. Detected fixtures appear as spatial panels with a **Yellow** text label / gear icon indicating an **Unpaired** state.
 4. Click **"Stop Scan"** when finished. Any unmapped temporary placeholders are cleaned up automatically.
 
 ### 3. Pairing a Spatial Panel to a Real Device
+
 1. Point your controller ray or pinch gesture at an unpaired spatial card and click the **"Pair Device"** (`+`) button.
 2. An interactive 3D device picker will open, listing your discovered Home Assistant devices categorized by room (e.g., Kitchen, Living Room, Utility).
 3. Select the physical device from the list:
@@ -60,6 +69,7 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 4. To move an unpaired card before locking, grab and drag it in 3D space using your controller grip or pinch gesture.
 
 ### 4. Controlling Devices in XR
+
 - **Direct Touch & Ray Interaction**: Point your XR controller ray or use hand tracking pinch gestures to press buttons, drag brightness/color sliders, and switch temperature presets.
 - **Audio Feedback**: Voice and sound effects confirm actions such as starting scans, device pairing, vacuum docking, and Litter-Robot resets.
 - **Unpairing**: Click the **"Unpair"** button at the bottom of any paired UICard to unlink it and return it to an unpaired state or remove it from Firestore.
@@ -101,18 +111,22 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 ## Developer Setup & Deployment
 
 ### Prerequisites
+
 - Node.js (v20+ or v22 LTS recommended)
 - Firebase CLI (`npm install -g firebase-tools` or `npx firebase-tools`)
 - A Home Assistant instance with Nabu Casa Cloud (or direct external URL)
 - A Google Gemini API Key
 
 ### 1. Configuration & Secrets (`functions/.env`)
+
 Create `demos/xrhome/functions/.env` using the provided sample template:
+
 ```bash
 cp demos/xrhome/functions/.env.sample demos/xrhome/functions/.env
 ```
 
 Populate the required environment variables:
+
 ```ini
 # Home Assistant Cloud (Nabu Casa remote URL)
 HA_URL=https://your-instance.ui.nabu.casa
@@ -128,7 +142,9 @@ WEB_API_KEY=your_firebase_web_api_key_here
 ```
 
 ### 2. Local Testing & Validation
+
 Verify syntax and integrity across the project:
+
 ```bash
 cd demos/xrhome
 node --check main.js
@@ -138,18 +154,20 @@ node --check vision.js
 ```
 
 ### 3. Deploying to Firebase
+
 Deploy Cloud Functions and Hosting to your Firebase project:
+
 ```bash
 cd demos/xrhome
 
 # Deploy both Cloud Functions and Hosting
-npx -y firebase-tools@latest deploy --project xrhome-009ef8
+npx -y firebase-tools@latest deploy --project <your-project-id>
 
 # Or deploy Hosting only:
-npx -y firebase-tools@latest deploy --only hosting --project xrhome-009ef8
+npx -y firebase-tools@latest deploy --only hosting --project <your-project-id>
 
 # Or deploy Cloud Functions only:
-npx -y firebase-tools@latest deploy --only functions --project xrhome-009ef8
+npx -y firebase-tools@latest deploy --only functions --project <your-project-id>
 ```
 
 ---
