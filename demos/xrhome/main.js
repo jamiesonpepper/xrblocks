@@ -1212,24 +1212,33 @@ class VirtualLight3D extends THREE.Group {
           dishTelemetry.push(new xb.UIText({ text: `🔄 Current Cycle: ${cycleDisplay}`, style: { fontSize: 13, color: '#FFFFFF', fontWeight: 'bold' } }));
 
           // 2. Remaining Time / Duration
-          if (this._cycleChangedTimePending) {
-              dishTelemetry.push(new xb.UIText({ text: `⏱️ Updating estimated time...`, style: { fontSize: 13, color: 'rgba(255, 255, 255, 0.7)' } }));
-          } else {
-              const timeVal = (attrs.remaining_time && attrs.remaining_time !== 'unknown' && attrs.remaining_time !== 'unavailable')
-                  ? attrs.remaining_time
-                  : (attrs.total_time && attrs.total_time !== 'unknown' && attrs.total_time !== 'unavailable' ? attrs.total_time : null);
-              const timeUnit = (attrs.remaining_time && attrs.remaining_time !== 'unknown' && attrs.remaining_time !== 'unavailable')
-                  ? attrs.remaining_time_unit
-                  : attrs.total_time_unit;
+          const timeVal = (attrs.remaining_time && attrs.remaining_time !== 'unknown' && attrs.remaining_time !== 'unavailable')
+              ? attrs.remaining_time
+              : (attrs.total_time && attrs.total_time !== 'unknown' && attrs.total_time !== 'unavailable' ? attrs.total_time : null);
+          const timeUnit = (attrs.remaining_time && attrs.remaining_time !== 'unknown' && attrs.remaining_time !== 'unavailable')
+              ? attrs.remaining_time_unit
+              : attrs.total_time_unit;
 
+          if (this._cycleChangedTimePending) {
               if (timeVal) {
                   const remText = formatDishwasherRemainingTime(timeVal, timeUnit);
-                  if (remText) {
-                      const isUnderMin = (remText === 'Less than a minute');
-                      const isTotal = (!attrs.remaining_time || attrs.remaining_time === 'unknown' || attrs.remaining_time === 'unavailable');
-                      const remLabel = isUnderMin ? `⏱️ Less than a minute` : (isTotal ? `⏱️ ~${remText} (estimated)` : `⏱️ ${remText} remaining`);
-                      dishTelemetry.push(new xb.UIText({ text: remLabel, style: { fontSize: 13, color: '#00FF88', fontWeight: 'bold' } }));
-                  }
+                  dishTelemetry.push(new xb.UIText({ 
+                      text: `⏱️ ${remText || timeVal} (refreshing...)`, 
+                      style: { fontSize: 13, color: 'rgba(255, 255, 255, 0.8)', fontWeight: 'bold' } 
+                  }));
+              } else {
+                  dishTelemetry.push(new xb.UIText({ 
+                      text: `⏱️ Fetching cycle time...`, 
+                      style: { fontSize: 13, color: 'rgba(255, 255, 255, 0.7)' } 
+                  }));
+              }
+          } else if (timeVal) {
+              const remText = formatDishwasherRemainingTime(timeVal, timeUnit);
+              if (remText) {
+                  const isUnderMin = (remText === 'Less than a minute');
+                  const isTotal = (!attrs.remaining_time || attrs.remaining_time === 'unknown' || attrs.remaining_time === 'unavailable');
+                  const remLabel = isUnderMin ? `⏱️ Less than a minute` : (isTotal ? `⏱️ ~${remText} (estimated)` : `⏱️ ${remText} remaining`);
+                  dishTelemetry.push(new xb.UIText({ text: remLabel, style: { fontSize: 13, color: '#00FF88', fontWeight: 'bold' } }));
               }
           }
 
@@ -1545,18 +1554,80 @@ class VirtualLight3D extends THREE.Group {
       } else if (domain === 'climate' || cat === 'climate' || cat.includes('thermostat')) {
           // --- THERMOSTAT / CLIMATE UI (Based on Smart Bulb UICard architecture) ---
           const attrs = this.realDevice?.attributes || {};
-          const currentTemp = attrs.current_temperature ?? this.realDevice?.current_temperature ?? 21.6;
-          const targetTemp = attrs.temperature ?? this.realDevice?.temperature ?? 21.0;
-          const minTemp = attrs.min_temp ?? 9;
-          const maxTemp = attrs.max_temp ?? 32;
-          const hvacModes = attrs.hvac_modes || ['off', 'heat', 'cool', 'heat_cool'];
           const currentMode = this.realDevice?.state || 'heat';
           const hvacAction = attrs.hvac_action || '';
+          const hvacModes = attrs.hvac_modes || this.realDevice?.hvac_modes || ['off', 'heat', 'cool', 'heat_cool'];
           const normMode = (currentMode || 'heat').toLowerCase().trim();
           const isHeat = (normMode === 'heat');
           const isCool = (normMode === 'cool');
           const isHeatCool = (normMode === 'heat_cool' || normMode === 'auto');
           const isOff = (normMode === 'off');
+
+          // Check all potential setpoint attributes from Home Assistant (avoid arbitrary preset defaults)
+          let resolvedTarget = null;
+          if (attrs.temperature !== undefined && attrs.temperature !== null) {
+              resolvedTarget = Number(attrs.temperature);
+          } else if (attrs.target_temperature !== undefined && attrs.target_temperature !== null) {
+              resolvedTarget = Number(attrs.target_temperature);
+          } else if (attrs.setpoint !== undefined && attrs.setpoint !== null) {
+              resolvedTarget = Number(attrs.setpoint);
+          } else if (attrs.target_temp !== undefined && attrs.target_temp !== null) {
+              resolvedTarget = Number(attrs.target_temp);
+          }
+
+          // If in Heat or Cool mode and no single setpoint, check mode-specific targets
+          if (resolvedTarget === null || isNaN(resolvedTarget)) {
+              if (isHeat && attrs.target_temp_low !== undefined && attrs.target_temp_low !== null) {
+                  resolvedTarget = Number(attrs.target_temp_low);
+              } else if (isCool && attrs.target_temp_high !== undefined && attrs.target_temp_high !== null) {
+                  resolvedTarget = Number(attrs.target_temp_high);
+              }
+          }
+
+          // Check this.realDevice properties
+          if (resolvedTarget === null || isNaN(resolvedTarget)) {
+              const devTemp = this.realDevice?.temperature ?? this.realDevice?.target_temperature ?? this.realDevice?.setpoint ?? null;
+              if (devTemp !== null && devTemp !== undefined) {
+                  resolvedTarget = Number(devTemp);
+              }
+          }
+
+          // Check related sub-entities swallowed by climate
+          if ((resolvedTarget === null || isNaN(resolvedTarget)) && Array.isArray(this.realDevice?.related)) {
+              const relSetpoint = this.realDevice.related.find(r => 
+                  (r.entity_id.includes('setpoint') || r.entity_id.includes('target_temp') || r.entity_id.includes('target_temperature')) &&
+                  !isNaN(parseFloat(r.state))
+              );
+              if (relSetpoint) {
+                  resolvedTarget = parseFloat(relSetpoint.state);
+              }
+          }
+
+          // Determine temperature unit from Home Assistant entity
+          const tempUnit = attrs.temperature_unit || attrs.unit_of_measurement || 
+                           (this.realDevice?.related?.find(r => r.attributes?.unit_of_measurement)?.attributes?.unit_of_measurement) || 
+                           (attrs.min_temp > 40 || (resolvedTarget && resolvedTarget > 40) ? '°F' : '°C');
+          const isFahrenheit = tempUnit.includes('F');
+          const defaultMin = isFahrenheit ? 45 : 7;
+          const defaultMax = isFahrenheit ? 95 : 35;
+          const minTemp = attrs.min_temp ?? this.realDevice?.min_temp ?? defaultMin;
+          const maxTemp = attrs.max_temp ?? this.realDevice?.max_temp ?? defaultMax;
+          const tempStep = attrs.target_temp_step ?? (isFahrenheit ? 1.0 : 0.5);
+
+          // Resolve current ambient temperature from Home Assistant
+          let currentTemp = attrs.current_temperature ?? this.realDevice?.current_temperature ?? null;
+          if (currentTemp === null && Array.isArray(this.realDevice?.related)) {
+              const relCurrent = this.realDevice.related.find(r => 
+                  (r.entity_id.includes('current_temperature') || (r.entity_id.includes('temperature') && !r.entity_id.includes('target') && !r.entity_id.includes('setpoint'))) &&
+                  !isNaN(parseFloat(r.state))
+              );
+              if (relCurrent) currentTemp = parseFloat(relCurrent.state);
+          }
+
+          // Target temperature strictly from HA data; if missing, fallback to current ambient temperature
+          const targetTemp = (resolvedTarget !== null && !isNaN(resolvedTarget)) 
+              ? resolvedTarget 
+              : (currentTemp !== null && !isNaN(currentTemp) ? Number(currentTemp) : minTemp);
 
           // 1. Current Temperature Banner (Full Width)
           const currentTempBadge = new xb.UIPanel({
@@ -1572,7 +1643,9 @@ class VirtualLight3D extends THREE.Group {
               },
               children: [
                   new xb.UIText({
-                      text: `🌡️ Current: ${parseFloat(currentTemp).toFixed(1)} °C`,
+                      text: currentTemp !== null 
+                          ? `🌡️ Current: ${parseFloat(currentTemp).toFixed(isFahrenheit ? 0 : 1)} ${tempUnit}`
+                          : `🌡️ Current: -- ${tempUnit}`,
                       style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' }
                   })
               ]
@@ -1582,9 +1655,10 @@ class VirtualLight3D extends THREE.Group {
           // Helper: Build an adaptable slider row with - / + buttons and fire/snowflake icon
           const makeTempSliderRow = ({ icon, title, initialVal, onTempChange, onTempCommit }) => {
               let currentVal = parseFloat(initialVal);
+              const formatVal = (v) => `${icon} ${title}: ${v.toFixed(isFahrenheit ? 0 : 1)} ${tempUnit}`;
 
               const labelText = new xb.UIText({
-                  text: `${icon} ${title}: ${currentVal.toFixed(1)} °C`,
+                  text: formatVal(currentVal),
                   style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF', width: '100%' }
               });
 
@@ -1607,9 +1681,9 @@ class VirtualLight3D extends THREE.Group {
                       }
                   },
                   onClick: () => {
-                      const next = Math.max(minTemp, Math.min(maxTemp, Math.round((currentVal - 0.5) * 2) / 2));
+                      const next = Math.max(minTemp, Math.min(maxTemp, Math.round((currentVal - tempStep) / tempStep) * tempStep));
                       currentVal = next;
-                      labelText.text = `${icon} ${title}: ${next.toFixed(1)} °C`;
+                      labelText.text = formatVal(next);
                       onTempCommit(next);
                   }
               });
@@ -1633,9 +1707,9 @@ class VirtualLight3D extends THREE.Group {
                       }
                   },
                   onClick: () => {
-                      const next = Math.max(minTemp, Math.min(maxTemp, Math.round((currentVal + 0.5) * 2) / 2));
+                      const next = Math.max(minTemp, Math.min(maxTemp, Math.round((currentVal + tempStep) / tempStep) * tempStep));
                       currentVal = next;
-                      labelText.text = `${icon} ${title}: ${next.toFixed(1)} °C`;
+                      labelText.text = formatVal(next);
                       onTempCommit(next);
                   }
               });
@@ -1644,19 +1718,19 @@ class VirtualLight3D extends THREE.Group {
                   ariaLabel: `${this.labelText} ${title}`,
                   min: minTemp,
                   max: maxTemp,
-                  step: 0.5,
+                  step: tempStep,
                   value: currentVal,
                   style: { flexGrow: 1, height: 26, color: '#FFFFFF' },
                   onInput: (val) => {
-                      const rounded = Math.round(Number(val) * 2) / 2;
+                      const rounded = Math.round(Number(val) / tempStep) * tempStep;
                       currentVal = rounded;
-                      labelText.text = `${icon} ${title}: ${rounded.toFixed(1)} °C`;
+                      labelText.text = formatVal(rounded);
                       if (onTempChange) onTempChange(rounded);
                   },
                   onChange: (val) => {
-                      const rounded = Math.round(Number(val) * 2) / 2;
+                      const rounded = Math.round(Number(val) / tempStep) * tempStep;
                       currentVal = rounded;
-                      labelText.text = `${icon} ${title}: ${rounded.toFixed(1)} °C`;
+                      labelText.text = formatVal(rounded);
                       onTempCommit(rounded);
                   }
               });
@@ -1693,8 +1767,16 @@ class VirtualLight3D extends THREE.Group {
               }));
           } else if (isHeatCool) {
               // Dual Sliders: One for Heat (🔥) and One for Cool (❄️)
-              const lowTemp = attrs.target_temp_low ?? this.realDevice?.target_temp_low ?? Math.max(minTemp, targetTemp - 1);
-              const highTemp = attrs.target_temp_high ?? this.realDevice?.target_temp_high ?? Math.min(maxTemp, targetTemp + 1);
+              const lowTemp = (attrs.target_temp_low !== undefined && attrs.target_temp_low !== null)
+                  ? Number(attrs.target_temp_low)
+                  : ((attrs.target_temperature_low !== undefined && attrs.target_temperature_low !== null)
+                      ? Number(attrs.target_temperature_low)
+                      : (this.realDevice?.target_temp_low ?? Math.max(minTemp, targetTemp - (isFahrenheit ? 2 : 1))));
+              const highTemp = (attrs.target_temp_high !== undefined && attrs.target_temp_high !== null)
+                  ? Number(attrs.target_temp_high)
+                  : ((attrs.target_temperature_high !== undefined && attrs.target_temperature_high !== null)
+                      ? Number(attrs.target_temperature_high)
+                      : (this.realDevice?.target_temp_high ?? Math.min(maxTemp, targetTemp + (isFahrenheit ? 2 : 1))));
 
               cardChildren.push(...makeTempSliderRow({
                   icon: '🔥',
@@ -2869,9 +2951,13 @@ class VirtualLight3D extends THREE.Group {
   }
 
   setThermostatTemp(temp, commitToHa = true) {
-      const minT = this.realDevice?.attributes?.min_temp || 9;
-      const maxT = this.realDevice?.attributes?.max_temp || 32;
-      const clamped = Math.max(minT, Math.min(maxT, Math.round(temp * 2) / 2));
+      const attrs = this.realDevice?.attributes || {};
+      const tempUnit = attrs.temperature_unit || attrs.unit_of_measurement || (attrs.min_temp > 40 ? '°F' : '°C');
+      const isFahrenheit = tempUnit.includes('F');
+      const minT = attrs.min_temp ?? this.realDevice?.min_temp ?? (isFahrenheit ? 45 : 7);
+      const maxT = attrs.max_temp ?? this.realDevice?.max_temp ?? (isFahrenheit ? 95 : 35);
+      const step = attrs.target_temp_step ?? (isFahrenheit ? 1.0 : 0.5);
+      const clamped = Math.max(minT, Math.min(maxT, Math.round(temp / step) * step));
       
       if (!this.realDevice) this.realDevice = {};
       if (!this.realDevice.attributes) this.realDevice.attributes = {};
@@ -2881,10 +2967,10 @@ class VirtualLight3D extends THREE.Group {
       if (commitToHa && this.realDevice.id && smartHome) {
           if (this._tempDebounce) clearTimeout(this._tempDebounce);
           this._tempDebounce = setTimeout(() => {
-              console.log(`[Thermostat] Setting temperature for ${this.realDevice.id} -> ${clamped}°C`);
+              console.log(`[Thermostat] Setting temperature for ${this.realDevice.id} -> ${clamped} ${tempUnit}`);
               smartHome.setThermostatTemperature(this.realDevice.id, clamped).then(success => {
                   if (success !== false) {
-                      hud.log(`Thermostat set to ${clamped.toFixed(1)}°C`, '#FFFFFF');
+                      hud.log(`Thermostat set to ${clamped.toFixed(isFahrenheit ? 0 : 1)} ${tempUnit}`, '#FFFFFF');
                   }
               }).catch(err => {
                   console.warn("[Thermostat] Set temperature error:", err);
@@ -2894,19 +2980,23 @@ class VirtualLight3D extends THREE.Group {
   }
 
   setThermostatDualTemp({ low, high }, commitToHa = true) {
-      const minT = this.realDevice?.attributes?.min_temp || 9;
-      const maxT = this.realDevice?.attributes?.max_temp || 32;
+      const attrs = this.realDevice?.attributes || {};
+      const tempUnit = attrs.temperature_unit || attrs.unit_of_measurement || (attrs.min_temp > 40 ? '°F' : '°C');
+      const isFahrenheit = tempUnit.includes('F');
+      const minT = attrs.min_temp ?? this.realDevice?.min_temp ?? (isFahrenheit ? 45 : 7);
+      const maxT = attrs.max_temp ?? this.realDevice?.max_temp ?? (isFahrenheit ? 95 : 35);
+      const step = attrs.target_temp_step ?? (isFahrenheit ? 1.0 : 0.5);
 
       if (!this.realDevice) this.realDevice = {};
       if (!this.realDevice.attributes) this.realDevice.attributes = {};
 
       if (low !== undefined) {
-          const clampedLow = Math.max(minT, Math.min(maxT, Math.round(low * 2) / 2));
+          const clampedLow = Math.max(minT, Math.min(maxT, Math.round(low / step) * step));
           this.realDevice.attributes.target_temp_low = clampedLow;
           this.realDevice.target_temp_low = clampedLow;
       }
       if (high !== undefined) {
-          const clampedHigh = Math.max(minT, Math.min(maxT, Math.round(high * 2) / 2));
+          const clampedHigh = Math.max(minT, Math.min(maxT, Math.round(high / step) * step));
           this.realDevice.attributes.target_temp_high = clampedHigh;
           this.realDevice.target_temp_high = clampedHigh;
       }
@@ -2916,13 +3006,13 @@ class VirtualLight3D extends THREE.Group {
           this._tempDebounce = setTimeout(() => {
               const curLow = this.realDevice.attributes.target_temp_low;
               const curHigh = this.realDevice.attributes.target_temp_high;
-              console.log(`[Thermostat] Setting dual temperature for ${this.realDevice.id} -> Heat ${curLow}°C, Cool ${curHigh}°C`);
+              console.log(`[Thermostat] Setting dual temperature for ${this.realDevice.id} -> Heat ${curLow} ${tempUnit}, Cool ${curHigh} ${tempUnit}`);
               smartHome.setThermostatTemperature(this.realDevice.id, {
                   target_temp_low: curLow,
                   target_temp_high: curHigh
               }).then(success => {
                   if (success !== false) {
-                      hud.log(`🔥 ${curLow.toFixed(1)}°C | ❄️ ${curHigh.toFixed(1)}°C`, '#FFFFFF');
+                      hud.log(`🔥 ${curLow.toFixed(isFahrenheit ? 0 : 1)} ${tempUnit} | ❄️ ${curHigh.toFixed(isFahrenheit ? 0 : 1)} ${tempUnit}`, '#FFFFFF');
                   }
               }).catch(err => {
                   console.warn("[Thermostat] Set dual temperature error:", err);
@@ -2932,8 +3022,16 @@ class VirtualLight3D extends THREE.Group {
   }
 
   adjustThermostatTemp(delta) {
-      const currentSetpoint = this.realDevice?.attributes?.temperature ?? this.realDevice?.temperature ?? 21.0;
-      const nextTemp = Math.round((currentSetpoint + delta) * 2) / 2;
+      const attrs = this.realDevice?.attributes || {};
+      const currentSetpoint = attrs.temperature ?? 
+                              attrs.target_temperature ?? 
+                              attrs.setpoint ?? 
+                              this.realDevice?.temperature ?? 
+                              this.realDevice?.setpoint ?? 
+                              this.realDevice?.current_temperature ?? 
+                              20.0;
+      const step = attrs.target_temp_step ?? 0.5;
+      const nextTemp = Math.round((currentSetpoint + delta) / step) * step;
       this.setThermostatTemp(nextTemp, true);
       this.updateVisuals();
   }
@@ -3336,9 +3434,17 @@ async function initApp(preloadedConfig = null) {
                                 vl.realDevice.state = newState.state;
                                 vl.realDevice.isOn = (newState.state !== 'off');
                                 vl.isOn = (newState.state !== 'off');
-                                if (newState.attributes?.temperature !== undefined) {
+                                if (newState.attributes?.temperature !== undefined && newState.attributes?.temperature !== null) {
                                     vl.realDevice.attributes.temperature = newState.attributes.temperature;
                                     vl.realDevice.temperature = newState.attributes.temperature;
+                                }
+                                if (newState.attributes?.target_temperature !== undefined && newState.attributes?.target_temperature !== null) {
+                                    vl.realDevice.attributes.target_temperature = newState.attributes.target_temperature;
+                                    vl.realDevice.attributes.temperature = newState.attributes.target_temperature;
+                                    vl.realDevice.temperature = newState.attributes.target_temperature;
+                                }
+                                if (newState.attributes?.setpoint !== undefined && newState.attributes?.setpoint !== null) {
+                                    vl.realDevice.attributes.setpoint = newState.attributes.setpoint;
                                 }
                                 if (newState.attributes?.target_temp_low !== undefined) {
                                     vl.realDevice.attributes.target_temp_low = newState.attributes.target_temp_low;
@@ -3409,12 +3515,26 @@ async function initApp(preloadedConfig = null) {
                             if (entityId.includes('completion_time') || entityId.includes('end_time') || entityId.includes('completion')) {
                                 vl.realDevice.attributes.completion_time = newState.state;
                             }
-                            if (entityId.includes('remaining_time') || entityId.includes('remaining_program_time') || entityId.includes('program_progress')) {
+                            if (entityId.includes('remaining_time') || 
+                                entityId.includes('time_remaining') || 
+                                entityId.includes('running_time') || 
+                                entityId.includes('remaining_program_time') || 
+                                entityId.includes('program_remaining_time') || 
+                                entityId.includes('program_time') || 
+                                entityId.includes('duration') || 
+                                entityId.includes('cycle_duration') || 
+                                entityId.includes('program_duration') || 
+                                entityId.includes('countdown') || 
+                                entityId.includes('program_progress')) {
                                 vl.realDevice.attributes.remaining_time = newState.state;
                                 if (newState.attributes?.unit_of_measurement) {
                                     vl.realDevice.attributes.remaining_time_unit = newState.attributes.unit_of_measurement;
                                 }
                                 vl._cycleChangedTimePending = false;
+                                if (vl._cyclePendingTimeout) {
+                                    clearTimeout(vl._cyclePendingTimeout);
+                                    vl._cyclePendingTimeout = null;
+                                }
                             }
                             if (entityId.includes('door')) {
                                 vl.realDevice.attributes.door_open = (newState.state === 'on' || newState.state === 'open');
@@ -3428,14 +3548,36 @@ async function initApp(preloadedConfig = null) {
                                 vl.realDevice.attributes.current_cycle = newState.state;
                                 if (prevCycle && prevCycle !== newState.state) {
                                     vl._cycleChangedTimePending = true;
+                                    // Trigger immediate Home Assistant refresh for related time entities
+                                    if (smartHome && Array.isArray(vl.realDevice?.related)) {
+                                        const timeEntities = vl.realDevice.related.filter(r => 
+                                            r.entity_id.includes('time') || 
+                                            r.entity_id.includes('remaining') || 
+                                            r.entity_id.includes('duration') || 
+                                            r.entity_id.includes('countdown')
+                                        );
+                                        timeEntities.forEach(te => {
+                                            console.log(`[Dishwasher] Triggering immediate HA entity refresh for ${te.entity_id}`);
+                                            smartHome.requestEntityUpdate(te.entity_id);
+                                        });
+                                    }
+                                    if (vl._cyclePendingTimeout) clearTimeout(vl._cyclePendingTimeout);
+                                    vl._cyclePendingTimeout = setTimeout(() => {
+                                        vl._cycleChangedTimePending = false;
+                                        vl.updateVisuals();
+                                    }, 4000);
                                 }
                             }
-                            if (entityId.includes('total_time')) {
+                            if (entityId.includes('total_time') || entityId.includes('cycle_time')) {
                                 vl.realDevice.attributes.total_time = newState.state;
                                 if (newState.attributes?.unit_of_measurement) {
                                     vl.realDevice.attributes.total_time_unit = newState.attributes.unit_of_measurement;
                                 }
                                 vl._cycleChangedTimePending = false;
+                                if (vl._cyclePendingTimeout) {
+                                    clearTimeout(vl._cyclePendingTimeout);
+                                    vl._cyclePendingTimeout = null;
+                                }
                             }
                             if (entityId.includes('mode')) {
                                 vl.realDevice.attributes.mode = newState.state;
@@ -3456,7 +3598,15 @@ async function initApp(preloadedConfig = null) {
                             }
                         }
                         if (isClimate && newState) {
-                            if (entityId.includes('temperature') || entityId.includes('temp')) {
+                            if (entityId.includes('setpoint') || entityId.includes('target_temp') || entityId.includes('target_temperature') || entityId.includes('target')) {
+                                const val = parseFloat(newState.state);
+                                if (!isNaN(val)) {
+                                    if (!vl.realDevice.attributes) vl.realDevice.attributes = {};
+                                    vl.realDevice.attributes.temperature = val;
+                                    vl.realDevice.attributes.setpoint = val;
+                                    vl.realDevice.temperature = val;
+                                }
+                            } else if (entityId.includes('current_temperature') || entityId.includes('temperature') || entityId.includes('temp')) {
                                 const val = parseFloat(newState.state);
                                 if (!isNaN(val)) {
                                     if (!vl.realDevice.attributes) vl.realDevice.attributes = {};

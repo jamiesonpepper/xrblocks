@@ -147,9 +147,19 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
       });
       const statusSensor = dishwasherEntities.find(e => e.entity_id.includes('current_status') || e.entity_id.includes('status'));
       const cycleSensor = dishwasherEntities.find(e => e.entity_id.includes('current_cycle') || e.entity_id.includes('cycle'));
-      const remainingSensor = dishwasherEntities.find(e => e.entity_id.includes('remaining_time') || e.entity_id.includes('remaining'));
+      const remainingSensor = dishwasherEntities.find(e => 
+        e.entity_id.includes('remaining_time') || 
+        e.entity_id.includes('time_remaining') || 
+        e.entity_id.includes('running_time') || 
+        e.entity_id.includes('remaining_program_time') || 
+        e.entity_id.includes('program_remaining_time') || 
+        e.entity_id.includes('program_time') || 
+        e.entity_id.includes('duration') || 
+        e.entity_id.includes('countdown') || 
+        e.entity_id.includes('remaining')
+      );
       const completionTimeSensor = dishwasherEntities.find(e => e.entity_id.includes('completion_time') || e.entity_id.includes('end_time') || e.entity_id.includes('completion'));
-      const totalTimeSensor = dishwasherEntities.find(e => e.entity_id.includes('total_time'));
+      const totalTimeSensor = dishwasherEntities.find(e => e.entity_id.includes('total_time') || e.entity_id.includes('cycle_time'));
       const delayedStartSensor = dishwasherEntities.find(e => e.entity_id.includes('delayed_start'));
       const doorSensor = dishwasherEntities.find(e => e.entity_id.includes('door'));
       const rinseRefillSensor = dishwasherEntities.find(e => e.entity_id.includes('rinse_refill'));
@@ -436,6 +446,21 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
           const fn = (e.attributes?.friendly_name || '').toLowerCase();
           return (pName && (eId.includes(pName) || fn.includes(pName)));
         });
+
+        // Extract any subordinate setpoint or target temperature entity
+        const setpointSub = climateSubEntities.find(e => 
+          (e.entity_id.includes('setpoint') || e.entity_id.includes('target_temperature') || e.entity_id.includes('target_temp')) &&
+          !isNaN(parseFloat(e.state))
+        );
+        if (setpointSub) {
+          const sVal = parseFloat(setpointSub.state);
+          if (p.attributes.temperature === undefined || p.attributes.temperature === null) {
+            p.attributes.temperature = sVal;
+          }
+          if (p.attributes.setpoint === undefined || p.attributes.setpoint === null) {
+            p.attributes.setpoint = sVal;
+          }
+        }
 
         climateSubEntities.forEach(e => {
           swallowedEntityIds.add(e.entity_id);

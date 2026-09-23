@@ -532,8 +532,16 @@ export class FirebaseHAIntegration {
       }
       if (d.attributes?.countdown_entity === entityId || 
           entityId.includes('remaining_program_time') || 
-          entityId.includes('program_progress') || 
-          entityId.includes('remaining_time')) {
+          entityId.includes('program_remaining_time') || 
+          entityId.includes('remaining_time') || 
+          entityId.includes('time_remaining') || 
+          entityId.includes('running_time') || 
+          entityId.includes('program_time') || 
+          entityId.includes('duration') || 
+          entityId.includes('cycle_duration') || 
+          entityId.includes('program_duration') || 
+          entityId.includes('countdown') || 
+          entityId.includes('program_progress')) {
         d.attributes.remaining_time = newState.state;
         if (newState.attributes?.unit_of_measurement) {
           d.attributes.remaining_time_unit = newState.attributes.unit_of_measurement;
@@ -557,8 +565,13 @@ export class FirebaseHAIntegration {
           d.attributes.second_cavity_setpoint = parseFloat(newState.state);
           isRelated = true;
         }
-      } else if (entityId.includes('setpoint') || entityId.includes('target_temperature')) {
-        d.attributes.setpoint = parseFloat(newState.state);
+      } else if (entityId.includes('setpoint') || entityId.includes('target_temperature') || entityId.includes('target_temp')) {
+        const val = parseFloat(newState.state);
+        d.attributes.setpoint = val;
+        if (isClimate) {
+          d.attributes.temperature = val;
+          d.temperature = val;
+        }
         if (newState.attributes?.unit_of_measurement) {
           d.attributes.setpoint_unit = newState.attributes.unit_of_measurement;
         }
@@ -575,7 +588,7 @@ export class FirebaseHAIntegration {
         d.attributes.current_cycle = newState.state;
         isRelated = true;
       }
-      if (entityId.includes('total_time')) {
+      if (entityId.includes('total_time') || entityId.includes('cycle_time')) {
         d.attributes.total_time = newState.state;
         if (newState.attributes?.unit_of_measurement) {
           d.attributes.total_time_unit = newState.attributes.unit_of_measurement;
@@ -619,7 +632,15 @@ export class FirebaseHAIntegration {
       }
 
       if (isClimate) {
-        if (entityId.includes('temperature') || entityId.includes('temp')) {
+        if (entityId.includes('setpoint') || entityId.includes('target_temp') || entityId.includes('target_temperature')) {
+          const val = parseFloat(newState.state);
+          if (!isNaN(val)) {
+            d.attributes.temperature = val;
+            d.attributes.setpoint = val;
+            d.temperature = val;
+          }
+          isRelated = true;
+        } else if (entityId.includes('current_temperature') || entityId.includes('temperature') || entityId.includes('temp')) {
           const val = parseFloat(newState.state);
           if (!isNaN(val)) {
             d.attributes.current_temperature = val;
@@ -680,7 +701,14 @@ export class FirebaseHAIntegration {
             brightness: entity.attributes?.brightness ? Math.round((entity.attributes.brightness / 255) * 100) : 100,
             battery: battery,
             fanSpeed: entity.attributes?.fan_speed || null,
-            temperature: entity.attributes?.temperature !== undefined ? entity.attributes.temperature : null,
+            temperature: (entity.attributes?.temperature !== undefined && entity.attributes?.temperature !== null)
+              ? entity.attributes.temperature
+              : ((entity.attributes?.target_temperature !== undefined && entity.attributes?.target_temperature !== null)
+                 ? entity.attributes.target_temperature
+                 : ((entity.attributes?.setpoint !== undefined && entity.attributes?.setpoint !== null)
+                    ? entity.attributes.setpoint
+                    : (entity.attributes?.target_temp ?? null))),
+            setpoint: entity.attributes?.setpoint ?? entity.attributes?.target_temperature ?? entity.attributes?.temperature ?? null,
             target_temp_low: entity.attributes?.target_temp_low !== undefined ? entity.attributes.target_temp_low : null,
             target_temp_high: entity.attributes?.target_temp_high !== undefined ? entity.attributes.target_temp_high : null,
             current_temperature: entity.attributes?.current_temperature !== undefined ? entity.attributes.current_temperature : null,
@@ -829,6 +857,20 @@ export class FirebaseHAIntegration {
       }
     }
     return await this.controlDevice(deviceId, 'reset', { reset_button_entity: targetBtn });
+  }
+
+  async requestEntityUpdate(entityId) {
+    if (!entityId) return false;
+    if (this.wsConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        console.log(`[HA-DEBUG:requestEntityUpdate] WS homeassistant.update_entity on ${entityId}`);
+        await this.callServiceWs('homeassistant', 'update_entity', {}, { entity_id: entityId });
+        return true;
+      } catch (err) {
+        console.warn(`[HA-DEBUG:requestEntityUpdate] WS failed for ${entityId}:`, err);
+      }
+    }
+    return await this.controlDevice(entityId, 'update_entity', {}, 'homeassistant');
   }
 
   // --- Thermostat / Climate Controls ---
