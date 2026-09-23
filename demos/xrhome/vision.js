@@ -43,7 +43,7 @@ export class VisionManager {
             const payload = {
                 contents: [{
                     parts: [
-                        { text: "Analyze this image from a wide-angle room camera. Detect all smart home devices, appliances, and fixtures even if they are currently turned off. Specifically identify: door locks and smart deadbolts (lock), robot vacuums and charging/auto-empty docks (vacuum), dishwashers (dishwasher), ovens/stoves/ranges/microwaves (oven), automatic litter boxes and pet appliances (litter_robot), refrigerators/washers/dryers/other appliances (appliance), lights/lamps/ceiling lights (light), wall switches/smart plugs (switch), thermostats/AC units (climate), and smart TVs/speakers (media_player). Return a JSON array of objects with keys: label, category, ymin, xmin, ymax, xmax. Coordinates are normalized 0-1. If none, return an empty array." },
+                        { text: "Analyze this image from a wide-angle room camera. Detect all smart home devices, appliances, and fixtures even if they are currently turned off. Specifically identify: door locks and smart deadbolts (lock), robot vacuums and charging/auto-empty docks (vacuum), dishwashers (dishwasher), ovens/stoves/ranges/microwaves (oven), automatic litter boxes and pet appliances (litter_robot), refrigerators/washers/dryers/other appliances (appliance), lights/lamps/ceiling lights (light), wall switches/smart plugs (switch), thermostats/AC units (climate), security cameras and video doorbells (camera), and smart TVs/speakers (media_player). Return a JSON array of objects with keys: label, category, ymin, xmin, ymax, xmax. Coordinates are normalized 0-1. If none, return an empty array." },
                         {
                             inline_data: {
                                 mime_type: "image/jpeg",
@@ -62,7 +62,7 @@ export class VisionManager {
                                 label: { type: "STRING" },
                                 category: {
                                     type: "STRING",
-                                    enum: ["lock", "vacuum", "dishwasher", "oven", "litter_robot", "appliance", "light", "switch", "climate", "media_player"]
+                                    enum: ["lock", "vacuum", "dishwasher", "oven", "litter_robot", "appliance", "light", "switch", "climate", "media_player", "camera"]
                                 },
                                 ymin: { type: "NUMBER" },
                                 xmin: { type: "NUMBER" },

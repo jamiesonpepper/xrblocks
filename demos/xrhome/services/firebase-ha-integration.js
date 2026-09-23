@@ -14,6 +14,8 @@ export class FirebaseHAIntegration {
     this.wsConnected = false;
     this.reconnectAttempts = 0;
     this.wsPendingCalls = new Map();
+    this.webrtcSessions = new Map();
+    this.webrtcPendingOffers = new Map();
   }
 
   async listen(haUrl = null, haToken = null) {
@@ -121,6 +123,7 @@ export class FirebaseHAIntegration {
         type: 'subscribe_events',
         event_type: 'state_changed'
       }));
+      this.fetchLiveStates();
     } else if (msg.type === 'auth_invalid') {
       console.error("[HA WebSocket] Authentication failed:", msg.message);
       this.wsConnected = false;
@@ -128,6 +131,45 @@ export class FirebaseHAIntegration {
       const data = msg.event.data;
       if (!data) return;
       this.processStateChangedEvent(data.entity_id, data.new_state, data.old_state);
+    } else if (msg.type === 'event' && msg.id && this.webrtcPendingOffers.has(msg.id)) {
+      const session = this.webrtcPendingOffers.get(msg.id);
+      const ev = msg.event;
+      if (!ev) return;
+      if (ev.type === 'session') {
+        session.sessionId = ev.session_id;
+        console.log(`[HA WebRTC] Established session ID: ${session.sessionId} for ${session.entityId}`);
+        if (session.queuedCandidates && session.queuedCandidates.length > 0) {
+          for (const cand of session.queuedCandidates) {
+            this.sendIceCandidate(session.entityId, session.sessionId, cand);
+          }
+          session.queuedCandidates = [];
+        }
+      } else if (ev.type === 'answer' && ev.answer) {
+        console.log(`[HA WebRTC] Received remote SDP answer for ${session.entityId}`);
+        if (session.pc && session.pc.signalingState !== 'closed') {
+          session.pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: ev.answer }))
+            .catch(err => console.warn(`[HA WebRTC] Failed to set remote description for ${session.entityId}:`, err));
+        }
+      } else if (ev.type === 'candidate' && ev.candidate) {
+        console.log(`[HA WebRTC] Received remote ICE candidate for ${session.entityId}`);
+        if (session.pc && session.pc.signalingState !== 'closed') {
+          session.pc.addIceCandidate(new RTCIceCandidate(ev.candidate))
+            .catch(err => console.warn(`[HA WebRTC] Failed to add remote candidate for ${session.entityId}:`, err));
+        }
+      } else if (ev.type === 'error') {
+        console.error(`[HA WebRTC] Error event for ${session.entityId}:`, ev.message || ev.code);
+        if (session.onError) {
+          session.onError(new Error(ev.message || ev.code || 'WebRTC session error'));
+        }
+      }
+    } else if (msg.type === 'result' && msg.id && this.webrtcPendingOffers.has(msg.id)) {
+      const session = this.webrtcPendingOffers.get(msg.id);
+      if (msg.success === false) {
+        console.error(`[HA WebRTC] Offer rejected for ${session.entityId}:`, msg.error?.message);
+        if (session.onError) {
+          session.onError(new Error(msg.error?.message || 'WebRTC offer rejected'));
+        }
+      }
     } else if (msg.type === 'result' && msg.id && this.wsPendingCalls.has(msg.id)) {
       const { resolve, reject } = this.wsPendingCalls.get(msg.id);
       this.wsPendingCalls.delete(msg.id);
@@ -345,6 +387,37 @@ export class FirebaseHAIntegration {
                 d.attributes.reset_button_entity = resetBtn.entity_id;
               }
               console.log(`[HA-DEBUG:fetchLiveStates:LITTER_ROBOT] Hydrated litter=${d.attributes.litter_level}%, waste=${d.attributes.waste_drawer}%, status='${d.attributes.status}'`);
+            }
+          }
+
+          // Hydrate Camera Entities from Home Assistant
+          const cameraStates = states.filter(s => s.entity_id.startsWith('camera.'));
+          let camerasAdded = 0;
+          cameraStates.forEach(cam => {
+            if (!this.devices.has(cam.entity_id)) {
+              this.devices.set(cam.entity_id, {
+                id: cam.entity_id,
+                entity_id: cam.entity_id,
+                domain: 'camera',
+                name: cam.attributes?.friendly_name || cam.entity_id,
+                area: cam.attributes?.area || 'Other',
+                state: cam.state,
+                attributes: cam.attributes || {},
+                access_token: cam.attributes?.access_token || null,
+                entity_picture: cam.attributes?.entity_picture || null,
+                related: []
+              });
+              camerasAdded++;
+            } else {
+              const existing = this.devices.get(cam.entity_id);
+              if (cam.attributes?.access_token) existing.access_token = cam.attributes.access_token;
+              if (cam.attributes?.entity_picture) existing.entity_picture = cam.attributes.entity_picture;
+            }
+          });
+          if (camerasAdded > 0) {
+            console.log(`[HA-DEBUG:fetchLiveStates:CAMERA] Added ${camerasAdded} camera entities to device map.`);
+            if (this.onDevicesChanged) {
+              this.onDevicesChanged(this.devices);
             }
           }
           return true;
@@ -616,6 +689,8 @@ export class FirebaseHAIntegration {
             target_temp_step: entity.attributes?.target_temp_step || 0.5,
             hvac_modes: entity.attributes?.hvac_modes || ['off', 'heat', 'cool', 'heat_cool'],
             hvac_action: entity.attributes?.hvac_action || entity.state,
+            access_token: entity.attributes?.access_token || null,
+            entity_picture: entity.attributes?.entity_picture || null,
             related: entity.related || []
           });
         });
@@ -773,6 +848,151 @@ export class FirebaseHAIntegration {
   async setThermostatMode(deviceId, hvacMode) {
     console.log(`[HA-DEBUG:setThermostatMode] deviceId=${deviceId}, hvacMode=${hvacMode}`);
     return await this.controlDevice(deviceId, 'set_hvac_mode', { hvac_mode: hvacMode }, 'climate');
+  }
+
+  // --- Camera Controls & WebRTC Stream Resolution ---
+  sendIceCandidate(entityId, sessionId, candidateStr) {
+    if (!this.wsConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.wsMsgId++;
+    this.ws.send(JSON.stringify({
+      id: this.wsMsgId,
+      type: 'camera/webrtc/candidate',
+      entity_id: entityId,
+      session_id: sessionId,
+      candidate: candidateStr
+    }));
+  }
+
+  async startCameraWebRtc(entityId, onStream, onError) {
+    if (!this.wsConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      const err = new Error("WebSocket not connected to Home Assistant");
+      if (onError) onError(err);
+      throw err;
+    }
+
+    // Clean up existing session for this entity if any
+    this.stopCameraWebRtc(entityId);
+
+    console.log(`[HA WebRTC] Initiating WebRTC peer connection for ${entityId}...`);
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
+      ]
+    });
+
+    const session = {
+      entityId,
+      pc,
+      sessionId: null,
+      offerId: null,
+      queuedCandidates: [],
+      onStream,
+      onError
+    };
+
+    // Google Nest SDM API requires m-lines in exact order: audio, video, application
+    pc.addTransceiver('audio', { direction: 'recvonly' });
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    pc.createDataChannel('dataSendChannel');
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && event.candidate.candidate) {
+        if (session.sessionId) {
+          this.sendIceCandidate(entityId, session.sessionId, event.candidate.candidate);
+        } else {
+          session.queuedCandidates.push(event.candidate.candidate);
+        }
+      }
+    };
+
+    let streamDelivered = false;
+    let fallbackTimer = null;
+
+    pc.ontrack = (event) => {
+      console.log(`[HA WebRTC] Media track received for ${entityId}: kind=${event.track.kind}`);
+      if (event.streams && event.streams[0]) {
+        const stream = event.streams[0];
+        if (!streamDelivered) {
+          // Prefer delivering once the video track has arrived
+          if (event.track.kind === 'video' || stream.getVideoTracks().length > 0) {
+            streamDelivered = true;
+            if (fallbackTimer) clearTimeout(fallbackTimer);
+            if (onStream) onStream(stream);
+          } else if (!fallbackTimer) {
+            // If only audio arrives first, give a short grace period for video before fallback
+            fallbackTimer = setTimeout(() => {
+              if (!streamDelivered) {
+                streamDelivered = true;
+                if (onStream) onStream(stream);
+              }
+            }, 800);
+            session.fallbackTimer = fallbackTimer;
+          }
+        }
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log(`[HA WebRTC] Connection state for ${entityId}: ${pc.connectionState}`);
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        if (onError) onError(new Error(`WebRTC connection ${pc.connectionState}`));
+      }
+    };
+
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      this.wsMsgId++;
+      const offerId = this.wsMsgId;
+      session.offerId = offerId;
+
+      this.webrtcPendingOffers.set(offerId, session);
+      this.webrtcSessions.set(entityId, session);
+
+      console.log(`[HA WebRTC] Sending camera/webrtc/offer (id: ${offerId}) for ${entityId}`);
+      this.ws.send(JSON.stringify({
+        id: offerId,
+        type: 'camera/webrtc/offer',
+        entity_id: entityId,
+        offer: pc.localDescription.sdp
+      }));
+
+      return session;
+    } catch (err) {
+      console.error(`[HA WebRTC] Failed to create or send offer for ${entityId}:`, err);
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      pc.close();
+      if (onError) onError(err);
+      throw err;
+    }
+  }
+
+  stopCameraWebRtc(entityId) {
+    const session = this.webrtcSessions.get(entityId);
+    if (session) {
+      console.log(`[HA WebRTC] Stopping WebRTC session for ${entityId}`);
+      if (session.fallbackTimer) {
+        clearTimeout(session.fallbackTimer);
+        session.fallbackTimer = null;
+      }
+      try {
+        if (session.pc) {
+          session.pc.ontrack = null;
+          session.pc.onicecandidate = null;
+          session.pc.onconnectionstatechange = null;
+          session.pc.close();
+        }
+      } catch (e) {
+        console.warn(`[HA WebRTC] Error closing peer connection for ${entityId}:`, e);
+      }
+      if (session.offerId) {
+        this.webrtcPendingOffers.delete(session.offerId);
+      }
+      this.webrtcSessions.delete(entityId);
+    }
   }
 
   // --- Switch / Generic Appliance Controls ---

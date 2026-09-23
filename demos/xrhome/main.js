@@ -52,6 +52,15 @@ class HUDInteraction extends xb.Script {
             if (objectToMove.updateMatrixWorld) objectToMove.updateMatrixWorld(true);
         }
 
+        // --- Live Camera Texture Pump: drive camera video to canvas on every XRRequestFrame ---
+        if (virtualLights && virtualLights.length > 0) {
+            for (const vl of virtualLights) {
+                if (vl.isViewingCamera && vl.updateCameraStream) {
+                    vl.updateCameraStream();
+                }
+            }
+        }
+
         // --- Card Pivoting: UICards smoothly pivot to always face the camera/user ---
         let activeCam = null;
         try {
@@ -302,7 +311,7 @@ if (xb.ui && xb.ui.setTheme) {
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
 import { VisionManager } from './vision.js?v=27';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=58';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=59';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
@@ -756,6 +765,7 @@ function getCategoryIcon(cat, domain) {
     if (key.includes('oven') || key.includes('stove') || key.includes('range')) return 'microwave';
     if (key.includes('washer') || key.includes('dryer') || key.includes('laundry')) return 'local_laundry_service';
     if (key.includes('climate') || key.includes('thermostat')) return 'thermostat';
+    if (key.includes('camera') || key.includes('doorbell') || key.includes('cam')) return 'videocam';
     if (key.includes('media') || key.includes('tv')) return 'tv';
     if (key.includes('switch') || key.includes('plug')) return 'toggle_on';
     return 'lightbulb';
@@ -1827,6 +1837,107 @@ class VirtualLight3D extends THREE.Group {
 
           cardChildren.push(makeUnpairBtn());
 
+      } else if (domain === 'camera' || cat === 'camera' || cat.includes('camera') || cat.includes('doorbell')) {
+          // --- SMART CAMERA UI ---
+          const isStreaming = !!this.isViewingCamera;
+          let statusText = '📹 Status: Ready';
+          let statusBorderColor = 'rgba(255, 255, 255, 0.4)';
+          if (isStreaming) {
+              if (this.cameraStreamError) {
+                  statusText = '⚠️ Status: WebRTC Unavailable';
+                  statusBorderColor = '#FF4444';
+              } else if (this.isWebRtcConnected) {
+                  statusText = '🟢 Status: Live WebRTC';
+                  statusBorderColor = '#00FF88';
+              } else {
+                  statusText = '🔄 Status: Connecting WebRTC...';
+                  statusBorderColor = '#00DDFF';
+              }
+          }
+
+          const statusBadge = new xb.UIPanel({
+              style: {
+                  width: '100%',
+                  padding: 8,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                  borderWidth: 1,
+                  borderColor: statusBorderColor,
+                  alignItems: 'center',
+                  justifyContent: 'center'
+              },
+              children: [
+                  new xb.UIText({ text: statusText, style: { fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' } })
+              ]
+          });
+          cardChildren.push(statusBadge);
+
+          // Live Camera Stream Viewer rendered directly within the existing UICard above the buttons
+          if (isStreaming && this._cameraTexture) {
+              const videoView = new xb.UIImage({
+                  src: this._cameraTexture,
+                  style: {
+                      width: '100%',
+                      height: 180,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: 'rgba(255, 255, 255, 0.4)'
+                  }
+              });
+              cardChildren.push(videoView);
+          }
+
+          // Two side-by-side action buttons: [View / Stop / Retry] and [Unpair]
+          const isRetry = isStreaming && !!this.cameraStreamError;
+          const viewBtn = new xb.UIButton({
+              label: isRetry ? 'Retry' : (isStreaming ? 'Stop' : 'View'),
+              icon: isRetry ? 'refresh' : (isStreaming ? 'videocam_off' : 'videocam'),
+              ariaLabel: isRetry ? 'Retry Camera Stream' : (isStreaming ? 'Stop Camera Stream' : 'View Camera Stream'),
+              userData: { interactive: true },
+              style: {
+                  flexGrow: 1,
+                  height: 36,
+                  borderRadius: 8,
+                  backgroundColor: isStreaming ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.12)',
+                  borderWidth: 1,
+                  borderColor: isStreaming ? '#FFFFFF' : 'rgba(255, 255, 255, 0.5)',
+                  color: '#FFFFFF',
+                  ':hover': {
+                      backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                      color: '#000000',
+                      borderColor: '#FFFFFF',
+                  },
+              },
+              onClick: () => this.toggleCameraStream()
+          });
+
+          const unpairBtn = new xb.UIButton({
+              label: 'Unpair',
+              icon: 'link_off',
+              ariaLabel: 'Unpair camera',
+              userData: { interactive: true },
+              style: {
+                  flexGrow: 1,
+                  height: 36,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.16)',
+                  borderWidth: 1,
+                  borderColor: '#FFFFFF',
+                  color: '#FFFFFF',
+                  ':hover': {
+                      backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                      color: '#000000',
+                      borderColor: '#FFFFFF',
+                  },
+              },
+              onClick: () => this.handleConfigClick()
+          });
+
+          cardChildren.push(new xb.UIPanel({
+              style: { width: '100%', flexDirection: 'row', gap: 6 },
+              children: [viewBtn, unpairBtn]
+          }));
+
       } else {
           // --- LIGHT OR GENERIC SWITCH UI ---
           // 1. Power Toggle & Unpair (Equal size buttons with clean icons and text)
@@ -2062,6 +2173,9 @@ class VirtualLight3D extends THREE.Group {
       
       if (vl.realDevice) {
             // UNPAIR
+            if (vl.isViewingCamera && vl.stopCameraStream) {
+                vl.stopCameraStream();
+            }
             hud.speak("Unpairing device...");
             const devId = vl.realDevice.id;
             hud.log(`Unpairing ${devId}...`, '#FFFFFF');
@@ -2154,13 +2268,14 @@ class VirtualLight3D extends THREE.Group {
               (targetCat === 'appliance' && (domain === 'appliance' || domain === 'dishwasher' || domain === 'oven' || domain === 'litter_robot' || name.includes('washer') || name.includes('dryer') || name.includes('fridge') || name.includes('refrigerator') || name.includes('litter'))) ||
               (targetCat === 'light' && (domain === 'light' || name.includes('lamp') || name.includes('light'))) ||
               (targetCat === 'switch' && (domain === 'switch' || name.includes('plug') || name.includes('switch'))) ||
-              (targetCat === 'climate' && (domain === 'climate' || name.includes('thermostat')))
+              (targetCat === 'climate' && (domain === 'climate' || name.includes('thermostat'))) ||
+              (targetCat === 'camera' && (domain === 'camera' || name.includes('camera') || name.includes('doorbell') || name.includes('cam')))
           ));
           if (isMatch) {
               recommended.push(d);
           }
-          const isAppliance = (domain === 'oven' || domain === 'dishwasher' || domain === 'litter_robot' || domain === 'vacuum' || domain === 'appliance' || domain === 'climate' || d.id.startsWith('appliance.') || d.id.startsWith('vacuum.') || d.id.startsWith('climate.'));
-          const isApplianceTarget = (targetCat === 'oven' || targetCat === 'dishwasher' || targetCat === 'litter_robot' || targetCat === 'pet' || targetCat === 'vacuum' || targetCat === 'appliance' || targetCat === 'climate');
+          const isAppliance = (domain === 'oven' || domain === 'dishwasher' || domain === 'litter_robot' || domain === 'vacuum' || domain === 'appliance' || domain === 'climate' || domain === 'camera' || d.id.startsWith('appliance.') || d.id.startsWith('vacuum.') || d.id.startsWith('climate.') || d.id.startsWith('camera.'));
+          const isApplianceTarget = (targetCat === 'oven' || targetCat === 'dishwasher' || targetCat === 'litter_robot' || targetCat === 'pet' || targetCat === 'vacuum' || targetCat === 'appliance' || targetCat === 'climate' || targetCat === 'camera');
           
           // In Room browsing mode, filter out appliances unless the target anchor is specifically an appliance
           if (!isAppliance || isApplianceTarget) {
@@ -2921,6 +3036,201 @@ class VirtualLight3D extends THREE.Group {
               }
           });
       }
+  }
+
+  toggleCameraStream() {
+      if (this.isViewingCamera && !this.cameraStreamError) {
+          this.stopCameraStream();
+      } else {
+          this.startCameraStream();
+      }
+  }
+
+  updateCameraStream() {
+      if (!this.isViewingCamera || !this._cameraVideo || !this._cameraCanvas || !this._cameraCtx) return;
+      if (this._cameraVideo.readyState >= 2 && this._cameraVideo.videoWidth > 0) {
+          if (!this._firstCameraFrameLogged) {
+              this._firstCameraFrameLogged = true;
+              console.log(`[VirtualLight3D:Camera] First frame drawn to texture: ${this._cameraVideo.videoWidth}x${this._cameraVideo.videoHeight}`);
+          }
+          this._cameraCtx.drawImage(this._cameraVideo, 0, 0, this._cameraCanvas.width, this._cameraCanvas.height);
+          if (this._cameraTexture) {
+              this._cameraTexture.needsUpdate = true;
+          }
+      }
+  }
+
+  async startCameraStream() {
+      if (!this.realDevice || !smartHome) return;
+      this.isViewingCamera = true;
+      this.isWebRtcConnected = false;
+      this.cameraStreamError = null;
+      this._firstCameraFrameLogged = false;
+
+      hud.speak("Starting Camera Stream");
+      hud.log(`Connecting WebRTC for ${this.labelText}...`, '#00DDFF');
+
+      if (!this._cameraCanvas) {
+          this._cameraCanvas = document.createElement('canvas');
+          this._cameraCanvas.width = 640;
+          this._cameraCanvas.height = 360;
+          this._cameraCtx = this._cameraCanvas.getContext('2d');
+      }
+      this._cameraCtx.fillStyle = '#111111';
+      this._cameraCtx.fillRect(0, 0, 640, 360);
+      this._cameraCtx.fillStyle = '#FFFFFF';
+      this._cameraCtx.font = 'bold 22px sans-serif';
+      this._cameraCtx.textAlign = 'center';
+      this._cameraCtx.textBaseline = 'middle';
+      this._cameraCtx.fillText('Connecting to WebRTC stream...', 320, 180);
+
+      if (!this._cameraTexture) {
+          this._cameraTexture = new THREE.CanvasTexture(this._cameraCanvas);
+          this._cameraTexture.colorSpace = THREE.SRGBColorSpace;
+          this._cameraTexture.minFilter = THREE.LinearFilter;
+          this._cameraTexture.magFilter = THREE.LinearFilter;
+      } else {
+          this._cameraTexture.needsUpdate = true;
+      }
+
+      this.rebuildPanel();
+
+      if (!this._cameraVideo) {
+          this._cameraVideo = document.createElement('video');
+          this._cameraVideo.autoplay = true;
+          this._cameraVideo.playsInline = true;
+          this._cameraVideo.muted = true;
+          // Keep in viewport with non-zero opacity behind canvas so browser compositor actively decodes frames
+          this._cameraVideo.style.position = 'fixed';
+          this._cameraVideo.style.bottom = '0px';
+          this._cameraVideo.style.right = '0px';
+          this._cameraVideo.style.width = '320px';
+          this._cameraVideo.style.height = '180px';
+          this._cameraVideo.style.opacity = '0.01';
+          this._cameraVideo.style.pointerEvents = 'none';
+          this._cameraVideo.style.zIndex = '-999';
+          document.body.appendChild(this._cameraVideo);
+
+          this._cameraVideo.onloadedmetadata = () => {
+              console.log(`[VirtualLight3D:Camera] Video metadata ready: ${this._cameraVideo.videoWidth}x${this._cameraVideo.videoHeight}`);
+          };
+          this._cameraVideo.onplaying = () => {
+              console.log(`[VirtualLight3D:Camera] Video stream playing`);
+          };
+      }
+
+      const entityId = this.realDevice.id;
+
+      try {
+          await smartHome.startCameraWebRtc(entityId, (stream) => {
+              if (!this.isViewingCamera) return;
+              console.log(`[VirtualLight3D:Camera] WebRTC live stream active for ${entityId}`);
+              const isFirstActivation = !this.isWebRtcConnected;
+              this.isWebRtcConnected = true;
+              this.cameraStreamError = null;
+              if (isFirstActivation) {
+                  hud.log(`🟢 WebRTC live: ${this.labelText}`, '#00FF88');
+              }
+
+              if (this._cameraVideo.srcObject !== stream) {
+                  this._cameraVideo.srcObject = stream;
+              }
+
+              if (this._cameraVideo.paused) {
+                  this._cameraVideo.play().catch(e => {
+                      if (e.name !== 'AbortError') {
+                          console.warn('[VirtualLight3D:Camera] Play error:', e);
+                      }
+                  });
+              }
+
+              // Pipeline 1: Native hardware video decoder callback
+              if ('requestVideoFrameCallback' in this._cameraVideo) {
+                  const onVideoFrame = () => {
+                      if (!this.isViewingCamera || !this._cameraVideo) return;
+                      this.updateCameraStream();
+                      this._cameraVideo.requestVideoFrameCallback(onVideoFrame);
+                  };
+                  this._cameraVideo.requestVideoFrameCallback(onVideoFrame);
+              }
+
+              // Pipeline 2: High-frequency timer fallback (independent of window.requestAnimationFrame)
+              if (!this._cameraInterval) {
+                  this._cameraInterval = setInterval(() => {
+                      if (!this.isViewingCamera) {
+                          clearInterval(this._cameraInterval);
+                          this._cameraInterval = null;
+                          return;
+                      }
+                      this.updateCameraStream();
+                  }, 33);
+              }
+
+              if (isFirstActivation) {
+                  this.rebuildPanel();
+              }
+          }, (err) => {
+              if (!this.isViewingCamera) return;
+              console.warn(`[VirtualLight3D:Camera] WebRTC failed for ${entityId}:`, err);
+              this.isWebRtcConnected = false;
+              this.cameraStreamError = err?.message || 'WebRTC Stream Unavailable';
+              if (this._cameraCtx) {
+                  this._cameraCtx.fillStyle = '#220000';
+                  this._cameraCtx.fillRect(0, 0, this._cameraCanvas.width, this._cameraCanvas.height);
+                  this._cameraCtx.fillStyle = '#FFFFFF';
+                  this._cameraCtx.font = 'bold 20px sans-serif';
+                  this._cameraCtx.textAlign = 'center';
+                  this._cameraCtx.textBaseline = 'middle';
+                  this._cameraCtx.fillText('⚠️ WebRTC Stream Unavailable', this._cameraCanvas.width / 2, this._cameraCanvas.height / 2);
+                  if (this._cameraTexture) this._cameraTexture.needsUpdate = true;
+              }
+              this.rebuildPanel();
+          });
+      } catch (err) {
+          console.error(`[VirtualLight3D:Camera] Error starting WebRTC for ${entityId}:`, err);
+          this.isWebRtcConnected = false;
+          this.cameraStreamError = err?.message || 'WebRTC Stream Unavailable';
+          if (this._cameraCtx) {
+              this._cameraCtx.fillStyle = '#220000';
+              this._cameraCtx.fillRect(0, 0, this._cameraCanvas.width, this._cameraCanvas.height);
+              this._cameraCtx.fillStyle = '#FFFFFF';
+              this._cameraCtx.font = 'bold 20px sans-serif';
+              this._cameraCtx.textAlign = 'center';
+              this._cameraCtx.textBaseline = 'middle';
+              this._cameraCtx.fillText('⚠️ WebRTC Stream Unavailable', this._cameraCanvas.width / 2, this._cameraCanvas.height / 2);
+              if (this._cameraTexture) this._cameraTexture.needsUpdate = true;
+          }
+          this.rebuildPanel();
+      }
+  }
+
+  stopCameraStream() {
+      this.isViewingCamera = false;
+      this.isWebRtcConnected = false;
+      this.cameraStreamError = null;
+      this._firstCameraFrameLogged = false;
+
+      if (this._cameraInterval) {
+          clearInterval(this._cameraInterval);
+          this._cameraInterval = null;
+      }
+      if (this.realDevice?.id && smartHome?.stopCameraWebRtc) {
+          smartHome.stopCameraWebRtc(this.realDevice.id);
+      }
+      if (this._cameraVideo) {
+          this._cameraVideo.pause();
+          this._cameraVideo.srcObject = null;
+          try {
+              if (this._cameraVideo.parentNode) {
+                  this._cameraVideo.parentNode.removeChild(this._cameraVideo);
+              }
+          } catch (_) {}
+          this._cameraVideo = null;
+      }
+
+      hud.speak("Camera Stream Stopped");
+      hud.log(`Camera feed stopped`, '#FFFFFF');
+      this.rebuildPanel();
   }
   
   checkClick() { return false; }

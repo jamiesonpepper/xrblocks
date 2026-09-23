@@ -86,7 +86,7 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
     try {
       const templateQuery = `
       {% set ns = namespace(items=[]) %}
-      {% for s in states if s.domain in ['light', 'switch', 'lock', 'vacuum', 'climate', 'button', 'select', 'sensor', 'binary_sensor', 'media_player', 'fan', 'cover'] %}
+      {% for s in states if s.domain in ['light', 'switch', 'lock', 'vacuum', 'climate', 'camera', 'button', 'select', 'sensor', 'binary_sensor', 'media_player', 'fan', 'cover'] %}
         {% set a = area_name(s.entity_id) %}
         {% set ns.items = ns.items + [{'entity_id': s.entity_id, 'area': a if a else 'Other'}] %}
       {% endfor %}
@@ -117,7 +117,7 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
 
     // Filter to relevant domains (lights, switches, locks, vacuums, appliances, sensors)
     const allowedDomains = [
-      'light', 'switch', 'lock', 'vacuum', 'climate',
+      'light', 'switch', 'lock', 'vacuum', 'climate', 'camera',
       'button', 'select', 'sensor', 'binary_sensor', 'media_player', 'fan', 'cover'
     ];
 
@@ -356,7 +356,7 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
 
     // --- 4. VACUUM + DOCK UNIFICATION ---
     // Primary controllable device domains + readable sensors
-    const primaryDomains = ['light', 'switch', 'lock', 'vacuum', 'climate', 'sensor', 'media_player', 'fan', 'cover'];
+    const primaryDomains = ['light', 'switch', 'lock', 'vacuum', 'climate', 'camera', 'sensor', 'media_player', 'fan', 'cover'];
     const primaryDevices = [];
     const secondaryEntities = [];
 
@@ -696,5 +696,127 @@ exports.resetAnchors = functions.https.onRequest(async (req, res) => {
   } catch (error) {
     console.error("resetAnchors Error:", error);
     return res.status(500).json({ error: error.message || error });
+  }
+});
+
+// 8. Stream & Snapshot Proxy for Home Assistant Cameras (CORS-Enabled)
+const cameraHttpsAgent = new (require('https').Agent)({
+  keepAlive: true,
+  maxSockets: 30,
+  timeout: 60000
+});
+const cameraHttpAgent = new (require('http').Agent)({
+  keepAlive: true,
+  maxSockets: 30,
+  timeout: 60000
+});
+
+exports.cameraProxy = functions.runWith({ timeoutSeconds: 300, memory: '256MB' }).https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    return res.status(204).send("");
+  }
+
+  const entity_id = req.query.entity_id;
+  if (!entity_id) {
+    return res.status(400).send("Missing entity_id query parameter.");
+  }
+
+  try {
+    const haUrl = process.env.HA_URL.replace(/\/$/, '');
+    const isStream = req.query.stream === 'true';
+    const path = isStream ? `/api/camera_proxy_stream/${entity_id}` : `/api/camera_proxy/${entity_id}`;
+    
+    const token = process.env.HA_TOKEN;
+    const https = require('https');
+    const http = require('http');
+
+    const targetUrl = new URL(`${haUrl}${path}`);
+    const client = targetUrl.protocol === 'https:' ? https : http;
+    const agent = targetUrl.protocol === 'https:' ? cameraHttpsAgent : cameraHttpAgent;
+
+    const haReq = client.request({
+      protocol: targetUrl.protocol,
+      hostname: targetUrl.hostname,
+      port: targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80),
+      path: `${targetUrl.pathname}${targetUrl.search}`,
+      method: 'GET',
+      agent: agent,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Host': targetUrl.hostname
+      }
+    }, (haRes) => {
+      if (haRes.statusCode >= 400) {
+        if (!res.headersSent) {
+          return res.status(haRes.statusCode).send(`Home Assistant returned error: ${haRes.statusCode}`);
+        }
+        return;
+      }
+
+      const contentType = haRes.headers['content-type'] || (isStream ? 'multipart/x-mixed-replace; boundary=--frameboundary' : 'image/jpeg');
+      
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type'
+      });
+
+      if (typeof res.flushHeaders === 'function') {
+        res.flushHeaders();
+      }
+
+      haRes.on('data', (chunk) => {
+        if (!res.writableEnded) {
+          res.write(chunk);
+          if (typeof res.flush === 'function') {
+            res.flush();
+          }
+        }
+      });
+
+      haRes.on('end', () => {
+        if (!res.writableEnded) {
+          res.end();
+        }
+      });
+
+      haRes.on('error', (err) => {
+        console.warn('haRes stream error:', err.message);
+        if (!res.writableEnded) {
+          try { res.end(); } catch (_) {}
+        }
+      });
+    });
+
+    let clientAborted = false;
+
+    haReq.on('error', (err) => {
+      if (clientAborted) return;
+      console.error('haReq error:', err.message);
+      if (!res.headersSent && !res.writableEnded) {
+        res.status(502).send(`Gateway Error: ${err.message}`);
+      }
+    });
+
+    // Clean up backend streaming request only when client terminates connection
+    res.on('close', () => {
+      clientAborted = true;
+      if (!res.writableEnded) {
+        haReq.destroy();
+      }
+    });
+
+    haReq.end();
+  } catch (err) {
+    console.error("cameraProxy Error:", err);
+    if (!res.headersSent && !res.writableEnded) {
+      res.status(500).send(err.message);
+    }
   }
 });
