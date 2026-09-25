@@ -311,7 +311,7 @@ if (xb.ui && xb.ui.setTheme) {
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
 import { VisionManager } from './vision.js?v=27';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=59';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=60';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
@@ -1395,8 +1395,8 @@ class VirtualLight3D extends THREE.Group {
           }
 
           if (attrs.lamp_entity) {
-              const lampStateStr = String(attrs.lamp_state || '').toLowerCase();
-              const lampOn = lampStateStr === 'on' || lampStateStr.includes('on') || lampStateStr === 'true';
+              const lampStateStr = String(attrs.lamp_state || '').toLowerCase().trim();
+              const lampOn = lampStateStr && !['off', 'false', '0', 'unavailable', 'unknown'].includes(lampStateStr);
               const isLampControllable = (attrs.lamp_controllable !== false) &&
                                          !attrs.lamp_entity.startsWith('binary_sensor.') &&
                                          !attrs.lamp_entity.startsWith('sensor.') &&
@@ -2903,8 +2903,9 @@ class VirtualLight3D extends THREE.Group {
 
   toggleOvenLamp() {
       if (!this.realDevice || !smartHome) return;
-      const currentLamp = String(this.realDevice.attributes?.lamp_state || 'off').toLowerCase();
-      const nextLamp = (currentLamp === 'on' || currentLamp === 'lamp_on' || currentLamp === 'true') ? 'off' : 'on';
+      const currentLamp = String(this.realDevice.attributes?.lamp_state || 'off').toLowerCase().trim();
+      const isCurrentlyOn = currentLamp && !['off', 'false', '0', 'unavailable', 'unknown'].includes(currentLamp);
+      const nextLamp = isCurrentlyOn ? 'off' : 'on';
       hud.speak(`Oven Lamp ${nextLamp}`);
       const lampEnt = this.realDevice.attributes?.lamp_entity || null;
       smartHome.toggleOvenLamp(this.realDevice.id, nextLamp, lampEnt).then((res) => {
@@ -3509,8 +3510,10 @@ async function initApp(preloadedConfig = null) {
                                 }
                             }
                             if (entityId.includes('lamp') || entityId.includes('light') || vl.realDevice.attributes?.lamp_entity === entityId) {
-                                vl.realDevice.attributes.lamp_state = newState.state;
-                                console.log(`[HA-DEBUG:OVEN:LAMP-UPDATE] Updated oven lamp_state to '${newState.state}'`);
+                                const s = String(newState.state || '').toLowerCase().trim();
+                                const isLampOn = s && !['off', 'false', '0', 'unavailable', 'unknown'].includes(s);
+                                vl.realDevice.attributes.lamp_state = isLampOn ? 'on' : 'off';
+                                console.log(`[HA-DEBUG:OVEN:LAMP-UPDATE] Updated oven lamp_state to '${vl.realDevice.attributes.lamp_state}' (from ${entityId}='${newState.state}')`);
                             }
                             if (entityId.includes('completion_time') || entityId.includes('end_time') || entityId.includes('completion')) {
                                 vl.realDevice.attributes.completion_time = newState.state;

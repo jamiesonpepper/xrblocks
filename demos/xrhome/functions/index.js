@@ -247,6 +247,12 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
         lampState = lampSensor.state;
         lampControllable = false;
       }
+
+      if (lampState !== undefined) {
+        const s = String(lampState).toLowerCase().trim();
+        const isLampOn = s && !['off', 'false', '0', 'unavailable', 'unknown'].includes(s);
+        lampState = isLampOn ? 'on' : 'off';
+      }
       
       const secSetpointSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_second_cavity_setpoint' || (e.entity_id.includes('second') && e.entity_id.includes('setpoint')));
       const secJobSensor = ovenEntities.find(e => e.entity_id === 'sensor.oven_second_cavity_job_state');
@@ -551,7 +557,8 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
               const lService = (option === 'on') ? 'turn_on' : 'turn_off';
               result = await callHaApi(`/api/services/switch/${lService}`, 'POST', { entity_id: lampEntity });
             } else {
-              result = await callHaApi('/api/services/select/select_option', 'POST', { entity_id: lampEntity, option });
+              const selectOption = (option === 'off') ? 'off' : 'high';
+              result = await callHaApi('/api/services/select/select_option', 'POST', { entity_id: lampEntity, option: selectOption });
             }
             return res.status(200).json({ success: true, controllable: true, result });
           } catch (lampErr) {

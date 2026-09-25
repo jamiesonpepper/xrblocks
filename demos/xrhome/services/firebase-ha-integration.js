@@ -325,8 +325,10 @@ export class FirebaseHAIntegration {
               }
 
               if (lampRaw) {
-                d.attributes.lamp_state = lampRaw.state;
-                console.log(`[HA-DEBUG:fetchLiveStates:OVEN] Hydrated lamp_state='${lampRaw.state}' from ${lampRaw.entity_id}`);
+                const s = String(lampRaw.state || '').toLowerCase().trim();
+                const isLampOn = s && !['off', 'false', '0', 'unavailable', 'unknown'].includes(s);
+                d.attributes.lamp_state = isLampOn ? 'on' : 'off';
+                console.log(`[HA-DEBUG:fetchLiveStates:OVEN] Hydrated lamp_state='${d.attributes.lamp_state}' (raw='${lampRaw.state}') from ${lampRaw.entity_id}`);
               }
 
               // Operating state & status
@@ -525,10 +527,12 @@ export class FirebaseHAIntegration {
 
       // Match via specific attributes
       if (d.attributes?.lamp_entity === entityId || (isOven && (entityId.includes('lamp') || entityId.includes('light')))) {
-        d.attributes.lamp_state = newState.state;
+        const s = String(newState.state || '').toLowerCase().trim();
+        const isLampOn = s && !['off', 'false', '0', 'unavailable', 'unknown'].includes(s);
+        d.attributes.lamp_state = isLampOn ? 'on' : 'off';
         if (!d.attributes.lamp_entity) d.attributes.lamp_entity = entityId;
         isRelated = true;
-        console.log(`[HA-DEBUG:WS-EVENT:OVEN-LAMP] ${entityId} -> lamp_state='${newState.state}'`);
+        console.log(`[HA-DEBUG:WS-EVENT:OVEN-LAMP] ${entityId} (raw='${newState.state}') -> lamp_state='${d.attributes.lamp_state}'`);
       }
       if (d.attributes?.countdown_entity === entityId || 
           entityId.includes('remaining_program_time') || 
@@ -812,7 +816,8 @@ export class FirebaseHAIntegration {
           const lService = (option === 'on') ? 'turn_on' : (option === 'off' ? 'turn_off' : 'toggle');
           wsRes = await this.callServiceWs('light', lService, {}, { entity_id: targetLamp });
         } else if (lDomain === 'select') {
-          wsRes = await this.callServiceWs('select', 'select_option', { option }, { entity_id: targetLamp });
+          const selectOption = (option === 'off') ? 'off' : 'high';
+          wsRes = await this.callServiceWs('select', 'select_option', { option: selectOption }, { entity_id: targetLamp });
         } else if (lDomain === 'switch') {
           const sService = (option === 'on') ? 'turn_on' : 'turn_off';
           wsRes = await this.callServiceWs('switch', sService, {}, { entity_id: targetLamp });
