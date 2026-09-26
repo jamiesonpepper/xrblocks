@@ -182,8 +182,7 @@ demos/xrhome/
 ├── main.js                    # Core XR application, 3D UICards, drag & ray interaction
 ├── hud.js                     # 2D/3D Heads-Up Display and audio manager
 ├── vision.js                  # Gemini 2.5 Flash Vision integration & schema parser
-├── keypad.js                  # 3D spatial virtual keypad for spatial input
-├── managers.js                # Helper managers & audio state
+├── keypad.js                  # 3D spatial virtual keypad for PIN entry and numeric input
 ├── webrtc.js                  # Camera feed capturing & frame management
 ├── auth.js                    # Firebase Auth client wrapper
 ├── services/

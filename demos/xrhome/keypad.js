@@ -3,47 +3,53 @@ import * as xb from 'xrblocks';
 
 /**
  * VirtualKeypad
- * 3D UI for entering numeric codes (Matter Pairing Codes).
- * Refactored to use xb.SpatialPanel for consistent styling and input.
+ * 3D UICard for entering numeric codes and security PINs.
+ * Styled with XRHome translucent dark glassmorphism and crisp white borders.
  */
 export class VirtualKeypad {
   constructor() {
-    // We no longer use a wrapper THREE.Group. We use SpatialPanel directly as the root.
     this.group = null;
     this.panel = null;
     this.value = '';
+    this.title = 'ENTER PIN';
+    this.masked = false;
+    this.maxLength = 8;
     this.onEnter = null; // Callback(code)
     this.onCancel = null; // Callback()
     this.visible = false;
 
     // UI References
+    this.headerText = null;
     this.displayText = null;
   }
 
   init(parent) {
     const cardChildren = [];
 
-    // Header
-    cardChildren.push(new xb.UIText({
-      text: 'ENTER PAIRING CODE',
+    // Header Title
+    this.headerText = new xb.UIText({
+      text: this.title,
       style: {
         fontSize: 16,
-        color: '#aaaaaa',
+        color: '#FFFFFF',
         textAlign: 'center',
         width: '100%',
       }
-    }));
+    });
+    cardChildren.push(this.headerText);
 
-    // Display
+    // PIN Display Box
     this.displayText = new xb.UIText({
       text: '_',
       style: {
-        fontSize: 20,
-        color: '#00FF00',
+        fontSize: 22,
+        color: '#FFFFFF',
         textAlign: 'center',
         width: '100%',
-        backgroundColor: 'rgba(0, 0, 0, 0.6)',
-        padding: 8,
+        backgroundColor: 'rgba(0, 0, 0, 0.40)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.25)',
+        padding: 10,
         borderRadius: 8,
       }
     });
@@ -61,7 +67,6 @@ export class VirtualKeypad {
       const rowButtons = [];
       for (const char of rowChars) {
         let iconName = undefined;
-        let ariaLabel = undefined;
         if (char === 'OK') {
           iconName = 'check_circle';
         } else if (char === 'DEL') {
@@ -73,7 +78,7 @@ export class VirtualKeypad {
           icon: iconName,
           style: {
             flexGrow: 1,
-            height: 44,
+            height: 42,
             borderRadius: 8,
           },
           onClick: () => this.handleInput(char),
@@ -84,34 +89,38 @@ export class VirtualKeypad {
         style: {
           width: '100%',
           flexDirection: 'row',
-          gap: 8,
+          gap: 6,
           justifyContent: 'center',
         },
         children: rowButtons,
       }));
     }
 
-    // Cancel Button
+    // Cancel / Dismiss Button
     cardChildren.push(new xb.UIButton({
       label: 'Cancel',
       icon: 'close',
       style: {
         width: '100%',
-        height: 40,
+        height: 38,
         borderRadius: 8,
       },
       onClick: () => this.handleInput('CANCEL'),
     }));
 
+    // Modern XRHome Translucent Glassmorphism UICard
     this.panel = new xb.UICard({
-      size: { width: 0.5, height: 'auto' },
+      size: { width: 0.40, height: 'auto' },
+      anchorX: 'center',
+      anchorY: 'top',
       manipulation: true,
-      edge: { scale: true },
       style: {
         flexDirection: 'column',
-        gap: 10,
-        padding: 16,
-        backgroundColor: 'rgba(25, 25, 30, 0.95)',
+        gap: 8,
+        padding: 14,
+        backgroundColor: 'rgba(0, 0, 0, 0.20)',
+        borderWidth: 1.5,
+        borderColor: '#FFFFFF',
         borderRadius: 16,
       },
       children: cardChildren,
@@ -125,22 +134,48 @@ export class VirtualKeypad {
     }
   }
 
-  open(initialValue, onEnter, onCancel) {
-    this.value = initialValue || '';
+  /**
+   * Open the keypad for input.
+   * Supports both legacy string initialValue and options object:
+   *   open('1234', onEnter, onCancel)
+   *   open({ title: 'ENTER LOCK PIN', initialValue: '', masked: true, maxLength: 6 }, onEnter, onCancel)
+   */
+  open(optionsOrValue, onEnter, onCancel) {
+    if (typeof optionsOrValue === 'object' && optionsOrValue !== null) {
+      this.title = optionsOrValue.title || 'ENTER PIN';
+      this.value = optionsOrValue.initialValue || '';
+      this.masked = optionsOrValue.masked !== undefined ? !!optionsOrValue.masked : false;
+      this.maxLength = optionsOrValue.maxLength || 8;
+    } else {
+      this.title = 'ENTER PIN';
+      this.value = optionsOrValue || '';
+      this.masked = false;
+      this.maxLength = 16;
+    }
+
     this.onEnter = onEnter;
     this.onCancel = onCancel;
     this.visible = true;
-    this.group.visible = true;
 
-    // Ensure panel is rebuilt/ready if needed (SpatialPanel is usually static)
+    if (this.headerText) {
+      this.headerText.text = this.title;
+    }
+
+    if (this.group) {
+      this.group.visible = true;
+    }
+
     this.updateDisplay();
   }
 
   close() {
     this.visible = false;
-    this.group.visible = false;
+    if (this.group) {
+      this.group.visible = false;
+    }
     this.onEnter = null;
     this.onCancel = null;
+    this.value = '';
   }
 
   cancel() {
@@ -159,7 +194,7 @@ export class VirtualKeypad {
       this.updateDisplay();
     } else {
       // Digits (0-9)
-      if (this.value.length < 21) {
+      if (this.value.length < this.maxLength) {
         this.value += char;
         this.updateDisplay();
       }
@@ -168,19 +203,14 @@ export class VirtualKeypad {
 
   updateDisplay() {
     if (this.displayText) {
-      this.displayText.text = this.value || '_';
-      // Check usage: does SpatialPanel Text update auto-refresh?
-      // Usually yes, if it's a getter/setter.
-      // If not, we might need a refresh call, but xb.SpatialPanel standard is reactive text property.
-
-      // Force redraw of that item/row if supported, or panel update
-      if (this.panel && this.panel.needsUpdate) {
-        // this.panel.needsUpdate(); // If API exists
+      if (!this.value || this.value.length === 0) {
+        this.displayText.text = '_';
+      } else if (this.masked) {
+        this.displayText.text = '•'.repeat(this.value.length);
+      } else {
+        this.displayText.text = this.value;
       }
     }
-    
-    // Ensure Troika texts that generate asynchronously receive depth enforcement
-    this.enforceDepth();
   }
 
   enforceDepth() {

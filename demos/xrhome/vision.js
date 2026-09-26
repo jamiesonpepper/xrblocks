@@ -98,7 +98,6 @@ export class VisionManager {
                 
                 console.log(`[Vision] Parsed Devices: ${devices.length} found.`);
                 if (this.onDevicesFound) this.onDevicesFound(devices, cameraMatrix);
-                if (this.onLightsFound) this.onLightsFound(devices, cameraMatrix);
                 if (this.onStatus) this.onStatus(`Found ${devices.length} devices`);
             } else {
                 console.warn(`[Vision] No candidates in response.`);

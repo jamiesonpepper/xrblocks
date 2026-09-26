@@ -3,13 +3,18 @@
  * Entry point for XRHome.
  */
 
-import { EasterEggManager } from './managers.js';
-
-// XR Interaction Logic
 // XR Interaction Logic
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
 const _dummyLookObj = new THREE.Object3D();
+
+// Reusable scratch vectors to eliminate per-frame GC allocations
+const _scratchCardPos = new THREE.Vector3();
+const _scratchTargetPos = new THREE.Vector3();
+const _scratchCamPos = new THREE.Vector3();
+const _scratchDragPos = new THREE.Vector3();
+const _scratchDragQuat = new THREE.Quaternion();
+const _scratchDragOffset = new THREE.Vector3();
 
 // Drag State
 let dragController = null;
@@ -19,6 +24,8 @@ let dragQuaternion = new THREE.Quaternion();
 // Vision Buffers (Global for access by toggleScan)
 let latestFrameBlob = null;
 let latestCameraMatrix = null;
+let lastScannedCameraMatrix = null;
+let lastScanTimestamp = 0;
 
 // Protect against upstream XRBlocks ScriptMixin calling non-existent super.dispose() on UIKit nodes
 if (typeof xb !== 'undefined' && xb.Script && xb.Script.prototype) {
@@ -35,28 +42,30 @@ class HUDInteraction extends xb.Script {
         if (dragController && dragController.userData.selected) {
             const objectToMove = dragController.userData.selected;
             
-            // Get controller world pos/rot
-            const cPos = new THREE.Vector3();
-            const cQuat = new THREE.Quaternion();
-            dragController.getWorldPosition(cPos);
-            dragController.getWorldQuaternion(cQuat);
+            // Get controller world pos/rot using scratch objects
+            dragController.getWorldPosition(_scratchDragPos);
+            dragController.getWorldQuaternion(_scratchDragQuat);
             
             // Apply local offset stored in dragOffset (rotated)
-            const v = dragOffset.clone().applyQuaternion(cQuat);
-            objectToMove.position.copy(cPos).add(v);
+            _scratchDragOffset.copy(dragOffset).applyQuaternion(_scratchDragQuat);
+            objectToMove.position.copy(_scratchDragPos).add(_scratchDragOffset);
             
             // Lock rotation to controller
-            objectToMove.quaternion.copy(cQuat).multiply(dragQuaternion);
+            objectToMove.quaternion.copy(_scratchDragQuat).multiply(dragQuaternion);
             
             // Force Panel Matrix World sync to ensure hitting raycasts align with visible location immediately
             if (objectToMove.updateMatrixWorld) objectToMove.updateMatrixWorld(true);
         }
 
-        // --- Live Camera Texture Pump: drive camera video to canvas on every XRRequestFrame ---
+        // --- Live Camera Texture Pump: drive camera video to canvas only when new frame ready ---
         if (virtualLights && virtualLights.length > 0) {
             for (const vl of virtualLights) {
                 if (vl.isViewingCamera && vl.updateCameraStream) {
-                    vl.updateCameraStream();
+                    const vid = vl.cameraVideoElement;
+                    if (!vid || (vid.readyState >= 2 && vid.currentTime !== vl._lastCameraFrameTime)) {
+                        if (vid) vl._lastCameraFrameTime = vid.currentTime;
+                        vl.updateCameraStream();
+                    }
                 }
             }
         }
@@ -74,8 +83,7 @@ class HUDInteraction extends xb.Script {
         } catch (e) {}
 
         if (activeCam && virtualLights && virtualLights.length > 0) {
-            const camPos = new THREE.Vector3();
-            activeCam.getWorldPosition(camPos);
+            activeCam.getWorldPosition(_scratchCamPos);
 
             for (const vl of virtualLights) {
                 // If actively dragging this card, skip pivoting so the drag feels natural
@@ -94,15 +102,17 @@ class HUDInteraction extends xb.Script {
                     continue;
                 }
 
-                // Pivot to face camera horizontally (upright billboard)
-                const cardWorldPos = new THREE.Vector3();
-                vl.getWorldPosition(cardWorldPos);
+                // Pivot to face camera horizontally using scratch vectors
+                vl.getWorldPosition(_scratchCardPos);
 
-                const targetPos = new THREE.Vector3(camPos.x, cardWorldPos.y, camPos.z);
-                if (cardWorldPos.distanceToSquared(targetPos) > 0.005) {
-                    _dummyLookObj.position.copy(cardWorldPos);
-                    _dummyLookObj.lookAt(targetPos);
-                    vl.quaternion.slerp(_dummyLookObj.quaternion, 0.1);
+                _scratchTargetPos.set(_scratchCamPos.x, _scratchCardPos.y, _scratchCamPos.z);
+                if (_scratchCardPos.distanceToSquared(_scratchTargetPos) > 0.005) {
+                    _dummyLookObj.position.copy(_scratchCardPos);
+                    _dummyLookObj.lookAt(_scratchTargetPos);
+                    // Angular hysteresis: only slerp if angle delta > 1 degree (0.018 rad) to avoid dirtying scene matrixWorld
+                    if (vl.quaternion.angleTo(_dummyLookObj.quaternion) > 0.018) {
+                        vl.quaternion.slerp(_dummyLookObj.quaternion, 0.1);
+                    }
                 }
             }
         }
@@ -281,20 +291,6 @@ function onXRSelect(event) {
     // If we were dragging, ignore the click
     if (dragController === controller) return;
 
-    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-
-    // 1. Check Keypad Interaction (High Priority)
-    if (keypad.visible && keypad.panel && keypad.panel.mesh) {
-        const keypadIntersects = raycaster.intersectObject(keypad.panel.mesh);
-        if (keypadIntersects.length > 0) {
-            const hit = keypadIntersects[0];
-            // UV to 0..1
-            if (hit.uv) {
-                keypad.handleClick(hit.uv);
-            }
-            return; // Consume event
-        }
-    }
 }
 
 import * as xb from 'xrblocks';
@@ -376,7 +372,6 @@ async function setupUI() {
     const overlay = document.getElementById('config-overlay');
     const startBtn = document.getElementById('start-btn');
     const geminiInput = document.getElementById('gemini-key');
-    const matterInput = document.getElementById('matter-code');
 
     // 1. Fetch Cloud Function backend config first so headsets auto-load without manual key entry
     let backendConfig = null;
@@ -394,7 +389,6 @@ async function setupUI() {
     }
 
     if (auth.config.geminiKey) geminiInput.value = auth.config.geminiKey;
-    if (auth.config.matterCode) matterInput.value = auth.config.matterCode;
 
     // Auto-start if configured (from Cloud Function or localStorage)
     if (auth.hasConfig()) {
@@ -405,8 +399,7 @@ async function setupUI() {
 
     startBtn.addEventListener('click', () => {
         const config = {
-            geminiKey: geminiInput.value,
-            matterCode: matterInput.value
+            geminiKey: geminiInput.value
         };
         auth.saveConfig(config);
         
@@ -415,58 +408,9 @@ async function setupUI() {
     });
 }
 
-// --- 2D Virtual Light (Desktop) ---
-class VirtualLight2D {
-    constructor(geminiData, labelText) {
-        this.geminiData = geminiData;
-        this.labelText = labelText; // Display Name
-        this.label = labelText;     // Alias for pairing logic
-        
-        // Store Normalized Coordinates for HUD Drawing
-        this.xmin = geminiData.xmin;
-        this.xmax = geminiData.xmax;
-        this.ymin = geminiData.ymin;
-        this.ymax = geminiData.ymax;
-        
-        this.cx = (this.xmin + this.xmax) / 2;
-        this.cy = (this.ymin + this.ymax) / 2;
-        
-        this.isOn = false;
-        this.brightness = 100;
-        this.realDevice = null;
-        this.linkedNodeId = null; 
-    }
-
-    checkClick(normX, normY) {
-        // Simple 2D Box Hit Test
-        return (normX >= this.xmin && normX <= this.xmax && 
-                normY >= this.ymin && normY <= this.ymax);
-    }
-
-    toggle() {
-        this.isOn = !this.isOn;
-        console.log(`[2D Light] Toggle ${this.labelText} -> ${this.isOn}`);
-        
-        // Send to real device
-        if (this.realDevice && smartHome) {
-            hud.speak(this.isOn ? "Turning On" : "Turning Off");
-            smartHome.toggleLight(this.realDevice.id, this.isOn);
-        }
-        
-        // Force HUD Redraw
-        if (hud && hud.drawLights) hud.drawLights(virtualLights);
-    }
-    
-    setBrightness(val) {
-        this.brightness = val;
-        if (this.realDevice && smartHome) {
-            smartHome.setBrightness(this.realDevice.name, val);
-        }
-    }
-    
-    updateVisuals() {
-        // No-op for 2D object, HUD handles drawing based on state
-    }
+function toTitleCase(str) {
+    if (!str || typeof str !== 'string') return '';
+    return str.replace(/\b\w/g, c => c.toUpperCase());
 }
 
 function hslToRgb(h, s = 1.0, l = 0.5) {
@@ -777,7 +721,7 @@ class VirtualLight3D extends THREE.Group {
       super();
       this.geminiData = geminiData; // Keep for xmin/xmax/ymin/ymax
       this.category = (geminiData && geminiData.category) || 'light';
-      this.originalLabel = labelText || (this.category ? `Smart ${this.category.charAt(0).toUpperCase() + this.category.slice(1)}` : "Device");
+      this.originalLabel = toTitleCase(labelText) || (this.category ? `Smart ${toTitleCase(this.category)}` : "Device");
       this.labelText = this.originalLabel;
       this.label = this.labelText; // Alias for pairing logic
       this.isOn = false;
@@ -3733,8 +3677,6 @@ async function initApp(preloadedConfig = null) {
     }
 
     // Mount Scripts immediately to start per-frame loops
-    const getDeps = () => ({ virtualLights, smartHome, hud, VirtualLight3D });
-    xb.add(new EasterEggManager(getDeps));
     xb.add(new HUDInteraction());
 
     // Attach XR Controller Listeners
@@ -3847,14 +3789,13 @@ function startVisionLoop() {
         spawnVirtualLights(lights, cameraMatrix);
     };
 
-    vision.onLightsFound = handleDevicesFound;
     vision.onDevicesFound = handleDevicesFound;
 
     hud.speak("Vision System Ready. Click button to scan.");
     
     // Decoupled Scanning Logic:
     // 1. Fast Capture Loop (300ms) - Keeps frame buffer fresh / "Live"
-    // 2. Slow Analysis Loop (5000ms) - Sends latest frame to API
+    // 2. Slow Analysis Loop (Motion-Gated) - Sends latest frame to API only when pose changes
 
     // Buffers are now global
 
@@ -3927,17 +3868,50 @@ function startVisionLoop() {
     }, 300);
 
     // --- XR 3D ANALYSIS LOOP ---
+    // Motion-Gated: Only analyze when headset moves or pans to a new viewpoint
+    const _poseCurrPos = new THREE.Vector3();
+    const _poseLastPos = new THREE.Vector3();
+    const _poseCurrQuat = new THREE.Quaternion();
+    const _poseLastQuat = new THREE.Quaternion();
+    const _poseScale = new THREE.Vector3();
+
     setInterval(() => {
         if (!isScanning || hud.mode === '2D') return;
         
         if (latestFrameBlob && latestCameraMatrix) {
-            console.log("Scanning 3D (using latest frame & matrix)..."); 
-            const matrixToPass = latestCameraMatrix.clone();
-            vision.analyzeFrame(latestFrameBlob, matrixToPass);
+            const now = Date.now();
+            let shouldScan = false;
+
+            if (!lastScannedCameraMatrix || (now - lastScanTimestamp > 30000)) {
+                // First scan of session or periodic heartbeat (30s max idle)
+                shouldScan = true;
+            } else {
+                latestCameraMatrix.decompose(_poseCurrPos, _poseCurrQuat, _poseScale);
+                lastScannedCameraMatrix.decompose(_poseLastPos, _poseLastQuat, _poseScale);
+
+                const posDelta = _poseCurrPos.distanceTo(_poseLastPos);
+                const angleDelta = _poseCurrQuat.angleTo(_poseLastQuat);
+
+                // Only send to Gemini if user translated > 0.45m or rotated > 22 degrees (0.38 rad)
+                if (posDelta > 0.45 || angleDelta > 0.38) {
+                    shouldScan = true;
+                }
+            }
+
+            if (shouldScan) {
+                console.log("Scanning 3D (camera pose changed sufficiently or initial scan)..."); 
+                lastScannedCameraMatrix = latestCameraMatrix.clone();
+                lastScanTimestamp = now;
+                const matrixToPass = latestCameraMatrix.clone();
+                vision.analyzeFrame(latestFrameBlob, matrixToPass);
+            } else {
+                // Standing still; drop redundant frame without calling Gemini API
+                console.log("[Vision] Headset stationary; skipping redundant frame analysis.");
+            }
             
             latestFrameBlob = null; 
         }
-    }, 5000);
+    }, 4000);
 
     // --- 2D DESKTOP CAPTURE & ANALYSIS LOOP ---
     // Matches exact behavior of commit 3d289675a
@@ -4097,6 +4071,8 @@ async function toggleScan() {
         // This prevents the fast loop from grabbing a stale frame while we flush
         latestFrameBlob = null;
         latestCameraMatrix = null;
+        lastScannedCameraMatrix = null;
+        lastScanTimestamp = 0;
         
         // 1b. Lifecycle: Inject hidden VideoView to force WebGL to poll AR frames
         if (hud.mode !== '2D') {
@@ -4242,37 +4218,7 @@ async function startAssignmentFlow() {
 
 async function refreshRealDevices() {
     try {
-        console.log("Fetching Matter Devices...");
-        
-        // 1. Auto-Commission if code is present and we have no devices?
-        // Or just Try to Commission on every start if code exists?
-        // Commissioning ignores if already commissioned (usually).
-        if (auth.config.matterCode) {
-            const codes = auth.config.matterCode.split(',').map(c => c.trim()).filter(c => c.length > 0);
-            
-            if (codes.length > 0) {
-                hud.log(`Processing ${codes.length} Pairing Codes...`, '#FFFF00');
-                
-                for (const code of codes) {
-                    try {
-                        // Skip if we think it's already done? Hard to know without state.
-                        // Ideally backend handles idempotency or we just try.
-                        hud.log(`Pairing code ending in ...${code.slice(-4)}`, '#FFFF00');
-                        const res = await smartHome.commissionDevice(code);
-                        if (res.success) {
-                             hud.speak("Device Paired!");
-                             hud.log(`Paired Node: ${res.nodeId}`, '#00FF00');
-                        } else {
-                             console.warn("Pairing failed for " + code, res);
-                             // Don't spam HUD failure unless critical
-                        }
-                    } catch(err) {
-                        console.error("Pairing Loop Error", err);
-                    }
-                }
-            }
-        }
-        
+        console.log("Fetching Smart Home Devices...");
         const devices = await smartHome.listDevices();
         console.log("Raw Devices Returned:", devices);
         
@@ -4332,47 +4278,13 @@ function configureNextLight() {
         // For now, let's just log.
     }
     
-    hud.speak(`Configuring Light ${configIndex + 1}. Select a device from the list.`);
+    hud.speak(`Configuring Device ${configIndex + 1}. Select a device from the list.`);
     
-    // Inject "Pair New Device" Option
-    const menuItems = [
-        { 
-            type: 'PAIR_ACTION', 
-            traits: { "sdm.devices.traits.Info": { customName: "➕ Pair New Matter Device" } } 
-        },
-        ...realDevices
-    ];
+    const menuItems = [...realDevices];
 
     // Open Menu
     // We reuse openSearchMenu logic but specific to this flow
     menu.show(menuItems, async (device) => {
-        
-        // Handle Pairing Action
-        if (device.type === 'PAIR_ACTION') {
-            const code = prompt("Enter 11 or 21-digit Matter Pairing Code:");
-            if (code) {
-                hud.speak("Pairing device...");
-                hud.log("Pairing...", '#FFFF00');
-                const res = await smartHome.commissionDevice(code);
-                if (res.success) {
-                    hud.speak("Success! Pairing Complete.");
-                    hud.log("Paired!", '#00FF00');
-                    // Refresh and Re-Show Menu
-                    await refreshRealDevices();
-                    configureNextLight(); // Recursively call to re-show menu
-                } else {
-                    hud.speak("Pairing Failed. Check console.");
-                    hud.log("Error: " + (res.error?.message || "Unknown"), '#FF0000');
-                    // Re-show menu?
-                    setTimeout(configureNextLight, 2000);
-                }
-            } else {
-                // Cancelled
-                configureNextLight();
-            }
-            return;
-        }
-
         // Normal Select
         vl.realDevice = device;
         if (vl.mesh) vl.mesh.material.color.setHex(0x00FF00); // Green (Done)
@@ -4400,171 +4312,108 @@ function configureNextLight() {
 // Removed Voice Command and Speech Recognition logic completely per user request
 
 
-// Updated spawnVirtualLights to use Historical Matrix
+// Updated spawnVirtualLights with spatial proximity gating & TitleCase normalization
 async function spawnVirtualLights(lights, cameraMatrix) {
-    if (!lights) return;
+    if (!lights || !Array.isArray(lights) || lights.length === 0) return;
     
     console.log("[Spawn] Update Virtual Lights", lights);
 
-    // Check Mode
-    const is3D = (hud.mode === '3D');
+    const PROXIMITY_THRESHOLD = 0.45; // 45cm proximity threshold for spatial stickiness
+    const _checkPos = new THREE.Vector3();
 
-    const keptLights = [];
-    const newCandidates = [];
-    
-    // Keep lights that are already linked (Paired), or being selected/moved by user
-    for (const vl of virtualLights) {
-        if (vl.linkedNodeId || vl.isSelectingDevice || vl.hasBeenMoved) {
-            keptLights.push(vl);
-        } else {
-            // Remove unlinked ones from scene to be replaced
-            // FIXED: Remove regardless of vl.mesh existence (since we removed mesh from 3D lights)
-            if (vl.parent) vl.parent.remove(vl); // Standard Three.js remove
-            else {
-                // Try xb.remove if available, or scene remove
-                try { xb.remove(vl); } catch(e) { 
-                    if (xb.scene) xb.scene.remove(vl);
-                }
-            }
-            
-            // Dispose if possible
-            if (vl.mesh) {
-                if (vl.mesh.geometry) vl.mesh.geometry.dispose();
-                if (vl.mesh.material) vl.mesh.material.dispose();
-            }
+    // Get Camera for projection
+    let cam = null;
+    try {
+        if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+            cam = xb.renderer.xr.getCamera();
         }
+    } catch (err) { console.warn("[Spawn] XR Camera error:", err); }
+    if (!cam) {
+        cam = xb.camera;
     }
-    
-    // 2. Process New Detections
+
     for (const l of lights) {
-        const exists = keptLights.find(kl => kl.labelText === l.label);
-        if (!exists) {
-             newCandidates.push(l);
-        }
-    }
+        const rawLabel = l.label || (l.category ? `Smart ${toTitleCase(l.category)}` : "Device");
+        const label = toTitleCase(rawLabel);
 
-    // 3. Rebuild List
-    virtualLights = [...keptLights];
-
-    // 4. Create Objects for New Candidates
-    let deviceIdx = virtualLights.length + 1;
-    
-    for (const l of newCandidates) {
-        const label = l.label || "Light " + (deviceIdx++);
+        // Unproject Bounding Box Center
+        const cx = (l.xmin + l.xmax) / 2;
+        const cy = (l.ymin + l.ymax) / 2;
+        const boxSize = Math.max(l.xmax - l.xmin, l.ymax - l.ymin);
         
-        if (is3D) {
-            // --- 3D MODE ---
-            // Unproject Bounding Box Center
-            const cx = (l.xmin + l.xmax) / 2;
-            const cy = (l.ymin + l.ymax) / 2;
-    
+        let z = -1.15; 
+        if (boxSize > 0) {
+             const size = Math.max(0.05, boxSize);
+             z = -Math.max(0.75, Math.min(1.45, 0.15 / size)); 
+        }
 
-            // Estimate depth based on bounding box size using true perspective inversion.
-            // Typical smart home devices (switches, bulbs, lamps) average ~0.15m in physical scale.
-            // Clamped to a comfortable, easily readable near-field MR range (0.75m - 1.45m) so panels
-            // sit right next to physical objects instead of floating far away in physical space.
-            const boxSize = Math.max(l.xmax - l.xmin, l.ymax - l.ymin);
-            
-            let z = -1.15; 
-            if (boxSize > 0) {
-                 const size = Math.max(0.05, boxSize);
-                 z = -Math.max(0.75, Math.min(1.45, 0.15 / size)); 
-            }
-            
-            // Get Camera
-            let cam = null;
+        let vH = 1.8; 
+        let vW = 3.2; 
+        if (cam && cam.isPerspectiveCamera) {
+            vH = 2 * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * Math.abs(z);
+            vW = vH * cam.aspect;
+        }
+
+        const x = (cx - 0.5) * vW; 
+        const y = -(cy - 0.5) * vH;
+
+        // Calculate world placement candidate
+        const candidatePos = new THREE.Vector3();
+        let lookTarget = null;
+
+        if (cameraMatrix) {
+            candidatePos.set(x, y, z).applyMatrix4(cameraMatrix);
+            let currentCam = xb.camera;
             try {
                 if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
-                    cam = xb.renderer.xr.getCamera();
+                    currentCam = xb.renderer.xr.getCamera();
                 }
-            } catch (err) { console.warn("[Spawn] XR Camera error:", err); }
-            
-            if (!cam) {
-                cam = xb.camera; // Fallback to main camera
-            }
-
-            let vH = 1.8; 
-            let vW = 3.2; 
-            
-            if (cam && cam.isPerspectiveCamera) {
-                vH = 2 * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * Math.abs(z);
-                vW = vH * cam.aspect;
-            }
-
-            const x = (cx - 0.5) * vW; 
-            const y = -(cy - 0.5) * vH; 
-            
-            // Create a 3D panel with base width 0.36m
-            const vLight = new VirtualLight3D(l, label, 0.36, 0.5);
-            
-            // Keep uniform scale at full size or slightly larger for effortless readability (1.0 - 1.25)
-            const targetVisibleWidth = Math.max(0.36, (l.xmax - l.xmin) * vW * 1.2);
-            const uniformScale = Math.max(1.0, Math.min(1.25, targetVisibleWidth / 0.36));
-            vLight.scale.setScalar(uniformScale);
-            
-            // POSITIONING: Use Historical Camera Matrix with true local-floor coordinates
-            if (cameraMatrix) {
-                 // The coordinates (x, y, z) are relative to the camera at time of capture
-                 vLight.position.set(x, y, z);
-                 
-                 // Transform by camera pose at time of capture into world coordinates
-                 vLight.applyMatrix4(cameraMatrix);
-                 
-                 // Make the panel face the user's current camera position
-                 let currentCam = xb.camera;
-                 try {
-                     if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
-                         currentCam = xb.renderer.xr.getCamera();
-                     }
-                 } catch (err) {}
-                 if (currentCam) vLight.lookAt(currentCam.position);
-                 
-                 console.log(`[Spawn] Placed '${label}' via Historical Matrix at`, vLight.position);
-                 vLight.updateMatrixWorld(true);
-            } else if (cam) {
-                 const camPos = new THREE.Vector3();
-                 const camDir = new THREE.Vector3();
-                 cam.getWorldPosition(camPos);
-                 cam.getWorldDirection(camDir);
-                 
-                 const basePos = camPos.clone().add(camDir.multiplyScalar(Math.abs(z)));
-                 basePos.y = Math.max(0.8, camPos.y + y);
-                 
-                 vLight.position.copy(basePos);
-                 vLight.lookAt(camPos); 
-                 
-                 console.log(`[Spawn] Placed '${label}' via Fallback Math at`, vLight.position);
-                 vLight.updateMatrixWorld(true);
-            } else {
-                 console.warn(`[Spawn] No Camera! Using Safe Center with Offset.`);
-                 vLight.position.set(x, 1.4 + y, z); 
-                 vLight.updateMatrixWorld(true);
-            }
-            
-            // Check if this candidate overlaps an already paired light bulb (within 0.4m)
-            const overlapsPaired = keptLights.some(kl => {
-                return (kl.realDevice || kl.linkedNodeId) && kl.position && kl.position.distanceTo(vLight.position) < 0.4;
-            });
-            if (overlapsPaired) {
-                console.log(`[Spawn] Skipping candidate '${label}' overlapping already paired device at`, vLight.position);
-                continue;
-            }
-
-            virtualLights.push(vLight);
-            xb.add(vLight); 
-            console.log(`[Spawn] Added 3D Light '${label}' at ${vLight.position.x.toFixed(2)}, ${vLight.position.y.toFixed(2)}, ${vLight.position.z.toFixed(2)}`);
+            } catch (_) {}
+            if (currentCam) lookTarget = currentCam.position;
+        } else if (cam) {
+            const camPos = new THREE.Vector3();
+            const camDir = new THREE.Vector3();
+            cam.getWorldPosition(camPos);
+            cam.getWorldDirection(camDir);
+            candidatePos.copy(camPos).add(camDir.multiplyScalar(Math.abs(z)));
+            candidatePos.y = Math.max(0.8, camPos.y + y);
+            lookTarget = camPos;
         } else {
-            // --- 2D MODE ---
-            const vLight = new VirtualLight2D(l, label);
-            virtualLights.push(vLight);
+            candidatePos.set(x, 1.4 + y, z);
         }
+
+        // Spatial Proximity Gating:
+        // Check if ANY existing card is already placed in this physical spot (< 45cm)
+        const isNearExisting = virtualLights.some(existing => {
+            existing.getWorldPosition(_checkPos);
+            return _checkPos.distanceTo(candidatePos) < PROXIMITY_THRESHOLD;
+        });
+
+        if (isNearExisting) {
+            console.log(`[Spawn] Proximity match for '${label}' near existing card; preserving stationary position.`);
+            continue;
+        }
+
+        // Create new 3D panel with standardized title-cased label
+        const vLight = new VirtualLight3D(l, label, 0.36, 0.5);
+        const targetVisibleWidth = Math.max(0.36, (l.xmax - l.xmin) * vW * 1.2);
+        const uniformScale = Math.max(1.0, Math.min(1.25, targetVisibleWidth / 0.36));
+        vLight.scale.setScalar(uniformScale);
+
+        vLight.position.copy(candidatePos);
+        if (lookTarget) vLight.lookAt(lookTarget);
+        vLight.updateMatrixWorld(true);
+
+        virtualLights.push(vLight);
+        xb.add(vLight);
+        console.log(`[Spawn] Added new 3D Device '${label}' at ${vLight.position.x.toFixed(2)}, ${vLight.position.y.toFixed(2)}, ${vLight.position.z.toFixed(2)}`);
     }
-    
-    // 5. Update Colors / State for Kept Lights
-    for (const vl of keptLights) {
+
+    // Refresh visuals for any existing lights
+    for (const vl of virtualLights) {
         if (vl.updateVisuals) vl.updateVisuals();
     }
-    
+
     // Re-Link
     linkLightsToDevices();
  } 
@@ -4700,32 +4549,6 @@ class GestureSystem {
             const isPinching = pinchDist < 0.02; // 2cm
             const pinchCenter = new THREE.Vector3().addVectors(indexTip, thumbTip).multiplyScalar(0.5);
 
-            // A0. Check Keypad Interaction (Highest Priority)
-            if (keypad.visible && keypad.panel && keypad.panel.mesh) {
-                const keypadPos = new THREE.Vector3();
-                keypad.panel.mesh.getWorldPosition(keypadPos);
-                
-                // Distance check (Assume 0.8x0.8 plane)
-                if (Math.abs(pinchCenter.z - keypadPos.z) < 0.1 && 
-                    Math.abs(pinchCenter.x - keypadPos.x) < 0.4 && 
-                    Math.abs(pinchCenter.y - keypadPos.y) < 0.4) {
-                    
-                    if (isPinching && !keypad.lastPinch) {
-                         const localX = pinchCenter.x - (keypadPos.x - 0.4); 
-                         const localY = pinchCenter.y - (keypadPos.y - 0.4);
-                         
-                         // Map to 0..1 (Width/Height is 0.8)
-                         const u = Math.max(0, Math.min(1, localX / 0.8));
-                         const v = Math.max(0, Math.min(1, localY / 0.8));
-                         
-                         keypad.handleClick({x: u, y: v});
-                    }
-                    keypad.lastPinch = isPinching;
-                    continue; 
-                }
-            }
-            
-            // Menu Interaction Removed (Direct Keypad used)
 
             // B. Check against lights
             for (const vl of virtualLights) {
@@ -4854,79 +4677,10 @@ window.addEventListener('pointerdown', (event) => {
                 });
             } else {
                 // --- PAIR FLOW ---
-                if (hud.mode === '3D') {
-                     // 3D MODE: Direct Keypad (No Menu)
-                     if (!keypad.visible) {
-                         // Initialize if needed
-                         if (!keypad.panel) keypad.init(xb.scene);
-                         
-                         hud.speak("Enter Pairing Code.");
-                         
-                         // Position keypad centered in front of the camera
-                         if (vl.mesh) {
-                             const camPos = new THREE.Vector3();
-                             const camDir = new THREE.Vector3();
-                             let cam = xb.camera;
-                             if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
-                                 cam = xb.renderer.xr.getCamera();
-                             }
-                             cam.getWorldPosition(camPos);
-                             cam.getWorldDirection(camDir);
-                             
-                             // Spawn exactly 5.0m in front of the user's view
-                             const spawnPos = camPos.clone().add(camDir.multiplyScalar(5.0));
-                             keypad.group.position.copy(spawnPos);
-                             
-                             // Face the user's headset perfectly
-                             keypad.group.lookAt(camPos); 
-                             keypad.group.rotateY(Math.PI); // Flipped so +Z faces camera natively.
-                             keypad.group.updateMatrixWorld(true);
-                             
-                             console.log(`[Keypad Legacy] Spawned at ${keypad.group.position.toArray().map(n=>n.toFixed(2))} facing headset at ${camPos.toArray().map(n=>n.toFixed(2))}`);
-                         }
-
-                         keypad.open("", (code) => {
-                              if (code) {
-                                  hud.speak("Pairing device...");
-                                  hud.log("Pairing...", '#FFFF00');
-                                  
-                                  smartHome.commissionDevice(code, vl.label).then(res => {
-                                       if (res.success) {
-                                          hud.speak("Success! Paired and Linked.");
-                                          hud.log("Paired!", '#00FF00');
-                                          vl.linkedNodeId = res.nodeId;
-                                          refreshRealDevices();
-                                      } else {
-                                          hud.speak("Pairing Failed.");
-                                          hud.log("Error: " + (res.error?.message || "Unknown"), '#FF0000');
-                                      }
-                                  });
-                              } else {
-                                  hud.speak("Pairing cancelled.");
-                              }
-                         }, () => {
-                             hud.speak("Cancelled.");
-                         });
-                     }
-                } else {
-                    // 2D MODE: Prompt
-                    const code = prompt("Enter 11 or 21-digit Matter Pairing Code:");
-                    if (code) {
-                        hud.speak("Pairing device...");
-                        hud.log("Pairing...", '#FFFF00');
-                        
-                        smartHome.commissionDevice(code, vl.label).then(res => {
-                             if (res.success) {
-                                hud.speak("Success! Logic Pairing Complete.");
-                                hud.log("Paired!", '#00FF00');
-                                vl.linkedNodeId = res.nodeId;
-                                refreshRealDevices();
-                            } else {
-                                hud.speak("Pairing Failed.");
-                                hud.log("Error: " + (res.error?.message || "Unknown"), '#FF0000');
-                            }
-                        });
-                    }
+                if (typeof vl.handleConfigClick === 'function') {
+                    vl.handleConfigClick();
+                } else if (typeof startAssignmentFlow === 'function') {
+                    startAssignmentFlow(vl);
                 }
             }
         }
