@@ -701,7 +701,11 @@ export class FirebaseHAIntegration {
             area: entity.area || entity.attributes?.area || 'Other',
             state: entity.state,
             attributes: entity.attributes || {},
-            isOn: (entity.state === 'on' || entity.state === 'cleaning' || entity.state === 'locked' || entity.state === 'running' || (domain === 'climate' && entity.state !== 'off')),
+            isOn: (entity.state === 'on' || entity.state === 'cleaning' || entity.state === 'locked' || entity.state === 'running' || entity.state === 'open' || entity.state === 'opening' || (domain === 'climate' && entity.state !== 'off')),
+            current_position: entity.attributes?.current_position !== undefined ? entity.attributes.current_position : null,
+            obstruction: !!(entity.attributes?.obstruction_detected || entity.attributes?.obstruction),
+            code_format: entity.attributes?.code_format || null,
+            device_class: entity.attributes?.device_class || null,
             brightness: entity.attributes?.brightness ? Math.round((entity.attributes.brightness / 255) * 100) : 100,
             battery: battery,
             fanSpeed: entity.attributes?.fan_speed || null,
@@ -767,6 +771,26 @@ export class FirebaseHAIntegration {
   async controlLock(deviceId, action) {
     // action: 'lock' | 'unlock' | 'open'
     return await this.controlDevice(deviceId, action);
+  }
+
+  // --- Cover / Garage Door Controls ---
+  async openCover(deviceId, code = null) {
+    const serviceData = code ? { code: String(code) } : {};
+    return await this.controlDevice(deviceId, 'open_cover', serviceData, 'cover');
+  }
+
+  async closeCover(deviceId, code = null) {
+    const serviceData = code ? { code: String(code) } : {};
+    return await this.controlDevice(deviceId, 'close_cover', serviceData, 'cover');
+  }
+
+  async stopCover(deviceId) {
+    return await this.controlDevice(deviceId, 'stop_cover', {}, 'cover');
+  }
+
+  async toggleCover(deviceId, code = null) {
+    const serviceData = code ? { code: String(code) } : {};
+    return await this.controlDevice(deviceId, 'toggle', serviceData, 'cover');
   }
 
   // --- Vacuum Controls & Station Commands ---
@@ -1063,6 +1087,25 @@ export class FirebaseHAIntegration {
               d.state = 'unlocked';
               d.isOn = false;
               d._pendingAction = { state: 'unlocked', expiresAt: Date.now() + 5000 };
+          }
+          if (service === 'open_cover') {
+              d.state = 'opening';
+              d.isOn = true;
+              d._pendingAction = { state: 'opening', expiresAt: Date.now() + 5000 };
+          }
+          if (service === 'close_cover') {
+              d.state = 'closing';
+              d.isOn = false;
+              d._pendingAction = { state: 'closing', expiresAt: Date.now() + 5000 };
+          }
+          if (service === 'stop_cover') {
+              d.state = 'stopped';
+          }
+          if (service === 'toggle' && (entity_id.startsWith('cover.') || d.domain === 'cover')) {
+              const isCurrentlyOpen = d.state === 'open' || d.state === 'opening' || d.isOn;
+              d.state = isCurrentlyOpen ? 'closing' : 'opening';
+              d.isOn = !isCurrentlyOpen;
+              d._pendingAction = { state: d.state, expiresAt: Date.now() + 5000 };
           }
           if (service === 'start' || service === 'start_pause') { d.state = 'cleaning'; d.isOn = true; }
           if (service === 'pause') { d.state = 'paused'; }

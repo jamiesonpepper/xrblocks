@@ -306,13 +306,13 @@ if (xb.ui && xb.ui.setTheme) {
 }
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=27';
-import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=60';
+import { VisionManager } from './vision.js?v=28';
+import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=61';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
 import { HUDManager } from './hud.js?v=27';
-import { VirtualKeypad } from './keypad.js?v=26';
+import { VirtualKeypad } from './keypad.js?v=27';
 
 // Globals
 const auth = new AuthManager();
@@ -702,6 +702,7 @@ const scanningWeb = new ScanningWebEffect();
 // Category icon helper for smart appliances and devices
 function getCategoryIcon(cat, domain) {
     const key = (domain || cat || '').toLowerCase();
+    if (key.includes('garage') || key.includes('cover') || key.includes('overhead')) return 'garage';
     if (key.includes('lock')) return 'lock';
     if (key.includes('vacuum') || key.includes('roborock') || key.includes('roomba')) return 'cleaning_services';
     if (key.includes('litter') || key.includes('pet')) return 'pets';
@@ -855,7 +856,171 @@ class VirtualLight3D extends THREE.Group {
               onClick: () => this.handleConfigClick()
           });
           cardChildren.push(btn);
-      } else if (domain === 'lock' || cat === 'lock' || cat.includes('lock') || cat.includes('door')) {
+      } else if (domain === 'cover' || domain === 'garage_door' || cat === 'garage_door' || cat.includes('garage') || (this.realDevice && this.realDevice.id && this.realDevice.id.startsWith('cover.'))) {
+          // --- GARAGE DOOR OPENER UI ---
+          const rawState = (this.realDevice?.state || '').toLowerCase();
+          const isOpen = rawState === 'open';
+          const isClosed = rawState === 'closed';
+          const isOpening = rawState === 'opening';
+          const isClosing = rawState === 'closing';
+          const isStopped = rawState === 'stopped';
+
+          let statusText = '⚪ CLOSED';
+          let statusBorderColor = 'rgba(255, 255, 255, 0.4)';
+          let statusTextColor = '#FFFFFF';
+
+          if (isOpening) {
+              statusText = '⬆️ OPENING...';
+              statusBorderColor = '#00DDFF';
+              statusTextColor = '#00DDFF';
+          } else if (isClosing) {
+              statusText = '⬇️ CLOSING...';
+              statusBorderColor = '#00DDFF';
+              statusTextColor = '#00DDFF';
+          } else if (isOpen) {
+              statusText = '🟢 OPEN';
+              statusBorderColor = '#00FF88';
+              statusTextColor = '#00FF88';
+          } else if (isStopped) {
+              statusText = '⏸️ STOPPED';
+              statusBorderColor = '#FFCC00';
+              statusTextColor = '#FFCC00';
+          }
+
+          const statusRowChildren = [
+              new xb.UIPanel({
+                  style: {
+                      padding: 8,
+                      borderRadius: 8,
+                      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                      borderWidth: 1.5,
+                      borderColor: statusBorderColor,
+                      flexGrow: 1,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                  },
+                  children: [
+                      new xb.UIText({ text: statusText, style: { fontSize: 13, fontWeight: 'bold', color: statusTextColor } })
+                  ]
+              })
+          ];
+
+          if (this.realDevice?.current_position !== null && this.realDevice?.current_position !== undefined) {
+              statusRowChildren.push(new xb.UIPanel({
+                  style: {
+                      padding: 6,
+                      borderRadius: 8,
+                      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                      borderWidth: 1,
+                      borderColor: 'rgba(255, 255, 255, 0.4)',
+                  },
+                  children: [
+                      new xb.UIText({ text: `📐 ${this.realDevice.current_position}%`, style: { fontSize: 12, color: '#FFFFFF' } })
+                  ]
+              }));
+          }
+
+          if (this.realDevice?.battery !== null && this.realDevice?.battery !== undefined) {
+              statusRowChildren.push(new xb.UIPanel({
+                  style: {
+                      padding: 6,
+                      borderRadius: 8,
+                      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                      borderWidth: 1,
+                      borderColor: 'rgba(255, 255, 255, 0.4)',
+                  },
+                  children: [
+                      new xb.UIText({ text: `🔋 ${this.realDevice.battery}%`, style: { fontSize: 12, color: '#FFFFFF' } })
+                  ]
+              }));
+          }
+
+          cardChildren.push(new xb.UIPanel({
+              style: { width: '100%', flexDirection: 'row', gap: 6, alignItems: 'center' },
+              children: statusRowChildren
+          }));
+
+          if (this.realDevice?.obstruction) {
+              cardChildren.push(new xb.UIPanel({
+                  style: {
+                      width: '100%',
+                      padding: 6,
+                      borderRadius: 8,
+                      backgroundColor: 'rgba(255, 85, 85, 0.25)',
+                      borderWidth: 1,
+                      borderColor: '#FF5555',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                  },
+                  children: [
+                      new xb.UIText({ text: '⚠️ Obstruction Detected', style: { fontSize: 12, fontWeight: 'bold', color: '#FF8888' } })
+                  ]
+              }));
+          }
+
+          const shouldClose = isOpen || isOpening;
+          const actionBtn = new xb.UIButton({
+              label: shouldClose ? 'Close Door' : 'Open Door',
+              icon: shouldClose ? 'arrow_downward' : 'arrow_upward',
+              ariaLabel: shouldClose ? 'Close Garage Door' : 'Open Garage Door',
+              userData: { interactive: true },
+              style: {
+                  flexGrow: 2,
+                  height: 42,
+                  borderRadius: 10,
+                  backgroundColor: shouldClose ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.32)',
+                  borderWidth: 1.5,
+                  borderColor: '#FFFFFF',
+                  fontSize: 14,
+                  fontWeight: 'bold',
+                  color: '#FFFFFF',
+                  ':hover': {
+                      backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                      color: '#000000',
+                      borderColor: '#FFFFFF',
+                  },
+              },
+              onClick: () => {
+                  if (shouldClose) {
+                      this.closeGarageDoor();
+                  } else {
+                      this.openGarageDoor();
+                  }
+              }
+          });
+
+          const stopBtn = new xb.UIButton({
+              label: 'Stop',
+              icon: 'stop',
+              ariaLabel: 'Stop Garage Door',
+              userData: { interactive: true },
+              style: {
+                  flexGrow: 1,
+                  height: 42,
+                  borderRadius: 10,
+                  backgroundColor: 'rgba(255, 255, 255, 0.14)',
+                  borderWidth: 1,
+                  borderColor: '#FFFFFF',
+                  fontSize: 13,
+                  fontWeight: 'bold',
+                  color: '#FFFFFF',
+                  ':hover': {
+                      backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                      color: '#000000',
+                      borderColor: '#FFFFFF',
+                  },
+              },
+              onClick: () => this.stopGarageDoor()
+          });
+
+          cardChildren.push(new xb.UIPanel({
+              style: { width: '100%', flexDirection: 'row', gap: 6 },
+              children: [actionBtn, stopBtn]
+          }));
+
+          cardChildren.push(makeUnpairBtn());
+
+      } else if ((domain === 'lock' || cat === 'lock' || cat.includes('lock') || cat.includes('door')) && !cat.includes('garage')) {
           // --- DOOR LOCK UI ---
           const rawState = (this.realDevice?.state || '').toLowerCase();
           const isJammed = rawState === 'jammed';
@@ -2283,25 +2448,28 @@ class VirtualLight3D extends THREE.Group {
       devices.forEach(d => {
           const domain = d.domain || d.id.split('.')[0];
           const name = (d.name || d.id).toLowerCase();
-          const isMatch = (targetCat && (
-              domain.includes(targetCat) ||
-              name.includes(targetCat) ||
-              (targetCat === 'lock' && (domain === 'lock' || name.includes('lock') || name.includes('deadbolt'))) ||
-              (targetCat === 'vacuum' && (domain === 'vacuum' || name.includes('vacuum') || name.includes('roborock') || name.includes('roomba') || name.includes('q8'))) ||
-              (targetCat === 'dishwasher' && (domain === 'dishwasher' || name.includes('dishwasher') || name.includes('dish'))) ||
-              (targetCat === 'oven' && (domain === 'oven' || name.includes('oven') || name.includes('stove') || name.includes('range') || name.includes('microwave'))) ||
-              ((targetCat === 'litter_robot' || targetCat === 'pet') && (domain === 'litter_robot' || name.includes('litter') || name.includes('whisker'))) ||
-              (targetCat === 'appliance' && (domain === 'appliance' || domain === 'dishwasher' || domain === 'oven' || domain === 'litter_robot' || name.includes('washer') || name.includes('dryer') || name.includes('fridge') || name.includes('refrigerator') || name.includes('litter'))) ||
-              (targetCat === 'light' && (domain === 'light' || name.includes('lamp') || name.includes('light'))) ||
-              (targetCat === 'switch' && (domain === 'switch' || name.includes('plug') || name.includes('switch'))) ||
-              (targetCat === 'climate' && (domain === 'climate' || name.includes('thermostat'))) ||
-              (targetCat === 'camera' && (domain === 'camera' || name.includes('camera') || name.includes('doorbell') || name.includes('cam')))
-          ));
+          const isGarageTarget = (targetCat === 'garage_door' || targetCat === 'garage' || targetCat === 'cover');
+          const isMatch = isGarageTarget
+              ? (d.id.startsWith('cover.') || domain === 'cover')
+              : (targetCat && (
+                  domain.includes(targetCat) ||
+                  name.includes(targetCat) ||
+                  (targetCat === 'lock' && (domain === 'lock' || name.includes('lock') || name.includes('deadbolt'))) ||
+                  (targetCat === 'vacuum' && (domain === 'vacuum' || name.includes('vacuum') || name.includes('roborock') || name.includes('roomba') || name.includes('q8'))) ||
+                  (targetCat === 'dishwasher' && (domain === 'dishwasher' || name.includes('dishwasher') || name.includes('dish'))) ||
+                  (targetCat === 'oven' && (domain === 'oven' || name.includes('oven') || name.includes('stove') || name.includes('range') || name.includes('microwave'))) ||
+                  ((targetCat === 'litter_robot' || targetCat === 'pet') && (domain === 'litter_robot' || name.includes('litter') || name.includes('whisker'))) ||
+                  (targetCat === 'appliance' && (domain === 'appliance' || domain === 'dishwasher' || domain === 'oven' || domain === 'litter_robot' || name.includes('washer') || name.includes('dryer') || name.includes('fridge') || name.includes('refrigerator') || name.includes('litter'))) ||
+                  (targetCat === 'light' && (domain === 'light' || name.includes('lamp') || name.includes('light'))) ||
+                  (targetCat === 'switch' && (domain === 'switch' || name.includes('plug') || name.includes('switch'))) ||
+                  (targetCat === 'climate' && (domain === 'climate' || name.includes('thermostat'))) ||
+                  (targetCat === 'camera' && (domain === 'camera' || name.includes('camera') || name.includes('doorbell') || name.includes('cam')))
+              ));
           if (isMatch) {
               recommended.push(d);
           }
-          const isAppliance = (domain === 'oven' || domain === 'dishwasher' || domain === 'litter_robot' || domain === 'vacuum' || domain === 'appliance' || domain === 'climate' || domain === 'camera' || d.id.startsWith('appliance.') || d.id.startsWith('vacuum.') || d.id.startsWith('climate.') || d.id.startsWith('camera.'));
-          const isApplianceTarget = (targetCat === 'oven' || targetCat === 'dishwasher' || targetCat === 'litter_robot' || targetCat === 'pet' || targetCat === 'vacuum' || targetCat === 'appliance' || targetCat === 'climate' || targetCat === 'camera');
+          const isAppliance = (domain === 'oven' || domain === 'dishwasher' || domain === 'litter_robot' || domain === 'vacuum' || domain === 'appliance' || domain === 'climate' || domain === 'camera' || domain === 'cover' || d.id.startsWith('appliance.') || d.id.startsWith('vacuum.') || d.id.startsWith('climate.') || d.id.startsWith('camera.') || d.id.startsWith('cover.'));
+          const isApplianceTarget = (targetCat === 'oven' || targetCat === 'dishwasher' || targetCat === 'litter_robot' || targetCat === 'pet' || targetCat === 'vacuum' || targetCat === 'appliance' || targetCat === 'climate' || targetCat === 'camera' || targetCat === 'garage_door' || targetCat === 'garage' || targetCat === 'cover');
           
           // In Room browsing mode, filter out appliances unless the target anchor is specifically an appliance
           if (!isAppliance || isApplianceTarget) {
@@ -2688,6 +2856,12 @@ class VirtualLight3D extends THREE.Group {
               colorStr = this.stateColor;
           } else if (domain === 'climate' || this.category === 'climate') {
               colorStr = '#FFFFFF';
+          } else if (domain === 'cover' || domain === 'garage_door' || this.category === 'garage_door') {
+              const gState = String(this.realDevice?.state || '').toLowerCase();
+              if (gState === 'open') colorStr = '#00FF88';
+              else if (gState === 'opening' || gState === 'closing') colorStr = '#00DDFF';
+              else if (gState === 'stopped') colorStr = '#FFCC00';
+              else colorStr = '#FFFFFF';
           } else {
               colorStr = isOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.55)';
           }
@@ -2703,6 +2877,10 @@ class VirtualLight3D extends THREE.Group {
       const domain = (this.realDevice && this.realDevice.domain) ? this.realDevice.domain : (this.realDevice && this.realDevice.id ? this.realDevice.id.split('.')[0] : (this.category || 'light'));
       if (domain === 'lock') {
           this.toggleLock();
+          return;
+      }
+      if (domain === 'cover' || domain === 'garage_door' || this.category === 'garage_door') {
+          this.toggleGarageDoor();
           return;
       }
       if (domain === 'vacuum') {
@@ -2892,6 +3070,129 @@ class VirtualLight3D extends THREE.Group {
       }).catch(err => {
           console.warn("Litter-Robot reset error:", err);
           hud.log("Reset Error", '#FF5555');
+      });
+  }
+
+  hasPinRequirement() {
+      const attrs = this.realDevice?.attributes || {};
+      return !!(attrs.code_format || attrs.code_arm_required || this.realDevice?.code_format);
+  }
+
+  openKeypadForGarage(onPinEntered) {
+      if (keypad) {
+          if (!keypad.panel && (xb.scene || xb.add)) {
+              const kpParent = xb.scene || { add: (obj) => xb.add(obj) };
+              keypad.init(kpParent);
+          }
+          if (keypad.panel) {
+              const cardWorldPos = new THREE.Vector3();
+              this.getWorldPosition(cardWorldPos);
+              const offset = new THREE.Vector3(0.42, 0, 0.05).applyQuaternion(this.quaternion);
+              keypad.panel.position.copy(cardWorldPos).add(offset);
+              keypad.panel.quaternion.copy(this.quaternion);
+          }
+          keypad.open({
+              title: 'ENTER GARAGE PIN',
+              masked: true,
+              maxLength: 8
+          }, (enteredPin) => {
+              onPinEntered(enteredPin);
+          }, () => {
+              hud.speak("PIN entry cancelled");
+              hud.log("Garage Door: Action Cancelled", 'rgba(255, 255, 255, 0.7)');
+          });
+      } else {
+          onPinEntered(null);
+      }
+  }
+
+  toggleGarageDoor() {
+      if (!this.realDevice || !smartHome) return;
+      const rawState = (this.realDevice.state || '').toLowerCase();
+      const isOpen = (rawState === 'open' || rawState === 'opening');
+      if (isOpen) {
+          this.closeGarageDoor();
+      } else {
+          this.openGarageDoor();
+      }
+  }
+
+  openGarageDoor(pin = null) {
+      if (!this.realDevice || !smartHome) return;
+      if (pin === null && this.hasPinRequirement()) {
+          this.openKeypadForGarage((enteredPin) => {
+              this.openGarageDoor(enteredPin);
+          });
+          return;
+      }
+
+      hud.speak("Opening Garage Door");
+      hud.log(`Opening ${this.labelText}...`, '#00DDFF');
+
+      smartHome.openCover(this.realDevice.id, pin).then(success => {
+          if (success !== false) {
+              this.realDevice.state = 'opening';
+              this.realDevice.isOn = true;
+              this.isOn = true;
+              this.updateVisuals();
+              hud.speak("Garage Door Opening");
+              hud.log(`${this.labelText} Opening`, '#00FF88');
+          } else {
+              hud.speak("Failed to open garage door");
+              hud.log(`Failed to open ${this.labelText}`, '#FF0000');
+          }
+      }).catch(err => {
+          console.error("Open garage door error:", err);
+          hud.log(`Error opening ${this.labelText}`, '#FF0000');
+      });
+  }
+
+  closeGarageDoor(pin = null) {
+      if (!this.realDevice || !smartHome) return;
+      const attrs = this.realDevice.attributes || {};
+      const requirePinOnClose = attrs.code_format && attrs.code_arm_required;
+      if (pin === null && requirePinOnClose) {
+          this.openKeypadForGarage((enteredPin) => {
+              this.closeGarageDoor(enteredPin);
+          });
+          return;
+      }
+
+      hud.speak("Closing Garage Door");
+      hud.log(`Closing ${this.labelText}...`, '#00DDFF');
+
+      smartHome.closeCover(this.realDevice.id, pin).then(success => {
+          if (success !== false) {
+              this.realDevice.state = 'closing';
+              this.realDevice.isOn = false;
+              this.isOn = false;
+              this.updateVisuals();
+              hud.speak("Garage Door Closing");
+              hud.log(`${this.labelText} Closing`, '#00DDFF');
+          } else {
+              hud.speak("Failed to close garage door");
+              hud.log(`Failed to close ${this.labelText}`, '#FF0000');
+          }
+      }).catch(err => {
+          console.error("Close garage door error:", err);
+          hud.log(`Error closing ${this.labelText}`, '#FF0000');
+      });
+  }
+
+  stopGarageDoor() {
+      if (!this.realDevice || !smartHome) return;
+      hud.speak("Stopping Garage Door");
+      smartHome.stopCover(this.realDevice.id).then(success => {
+          if (success !== false) {
+              this.realDevice.state = 'stopped';
+              this.updateVisuals();
+              hud.log(`${this.labelText} Stopped`, '#FFCC00');
+          } else {
+              hud.log(`Failed to stop ${this.labelText}`, '#FF0000');
+          }
+      }).catch(err => {
+          console.error("Stop garage door error:", err);
+          hud.log(`Error stopping ${this.labelText}`, '#FF0000');
       });
   }
 
@@ -3405,7 +3706,15 @@ async function initApp(preloadedConfig = null) {
                                 }
                             } else {
                                 vl.realDevice.state = newState.state;
-                                vl.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on'].includes(newState.state);
+                                vl.isOn = ['on', 'cleaning', 'locked', 'running', 'lamp_on', 'open', 'opening'].includes(newState.state);
+                                if (vl.realDevice.domain === 'cover' || vl.category === 'garage_door') {
+                                    if (newState.attributes?.current_position !== undefined) {
+                                        vl.realDevice.current_position = newState.attributes.current_position;
+                                    }
+                                    if (newState.attributes?.obstruction_detected !== undefined || newState.attributes?.obstruction !== undefined) {
+                                        vl.realDevice.obstruction = !!(newState.attributes.obstruction_detected || newState.attributes.obstruction);
+                                    }
+                                }
                             }
                             vl.realDevice.attributes = { ...vl.realDevice.attributes, ...newState.attributes };
                         }
@@ -3743,6 +4052,20 @@ async function initApp(preloadedConfig = null) {
                 console.warn("Could not find Camera or Scene for 3D HUD");
              }
         }, 500);
+    }
+    
+    // 5b. Init VirtualKeypad
+    try {
+        const kpParent = xb.scene || (xb.core && xb.core.scene) || null;
+        if (kpParent) {
+            keypad.init(kpParent);
+            console.log("[Keypad] Initialized VirtualKeypad in 3D Scene");
+        } else if (typeof xb.add === 'function') {
+            keypad.init({ add: (obj) => xb.add(obj) });
+            console.log("[Keypad] Initialized VirtualKeypad with xb.add");
+        }
+    } catch (kpErr) {
+        console.warn("[Keypad] VirtualKeypad init warning:", kpErr);
     }
     
     // 6. Init Vision Loop
@@ -4476,7 +4799,9 @@ async function spawnVirtualLights(lights, cameraMatrix) {
                   const stateChanged = (vl.realDevice.state !== currentDev.state) ||
                                        (vl.isOn !== currentDev.isOn) ||
                                        (vl.realDevice.battery !== currentDev.battery) ||
-                                       (vl.realDevice.fanSpeed !== currentDev.fanSpeed);
+                                       (vl.realDevice.fanSpeed !== currentDev.fanSpeed) ||
+                                       (vl.realDevice.current_position !== currentDev.current_position) ||
+                                       (vl.realDevice.obstruction !== currentDev.obstruction);
                   if (isLock) {
                       console.log(`[HA-DEBUG:linkLightsToDevices:LOCK-CHECK] ${vl.labelText} (${vl.realDevice.id}): vlState='${vl.realDevice.state}', vlIsOn=${vl.isOn} vs mapState='${currentDev.state}', mapIsOn=${currentDev.isOn}, stateChanged=${stateChanged}`);
                   }
