@@ -4,18 +4,18 @@ Feature: Home Assistant Cloud Device Mapping to SLAM Anchors
   So that I can control my real-world smart lights using physical context and spatial UI
 
   Scenario: Authenticating with Firebase and Home Assistant Cloud
-    Given the XR application is authenticated via Firebase Auth
-    When the system queries the Firebase Realtime Database for user devices
-    Then it should receive a list of available smart home devices synchronized via Home Assistant Cloud
+    Given the XR application is authenticated via Firebase Auth using Google credentials
+    When the system queries the Firebase Realtime Database or Firestore under the authenticated user's ID
+    Then it should receive a list of available smart home devices synchronized via the user's Home Assistant Cloud
     And the system should filter the list to identify controllable smart lights
 
   Scenario: Mapping SLAM-discovered lights to Home Assistant Cloud devices
     Given the house-scale SLAM scan has identified 3D light fixtures (Feature #1)
-    And the system has retrieved the list of smart lights from Firebase
+    And the system has retrieved the list of smart lights for the authenticated user
     When the user enters the "Device Mapping" mode in the XR app
     And the user selects an unmapped virtual spatial panel anchored to a physical light or smart home device
     And the user assigns a specific Home Assistant Cloud device to this spatial panel
-    Then the Firebase Realtime Database should store this mapping associating the WebXR Anchor UUID to the Home Assistant Cloud Device ID
+    Then the Firebase Realtime Database or Firestore should store this mapping under the authenticated user's profile, associating the WebXR Anchor UUID to the Home Assistant Cloud Device ID
     And the spatial panel should visually update the label text to green to indicate it is mapped
     And the spatial panel should be locked in position and the label text should be automatically updated to use the official device name synced from Home Assistant Cloud.
 
@@ -64,5 +64,5 @@ Feature: Home Assistant Cloud Device Mapping to SLAM Anchors
     When the user stops the "House Scan" session
     Then the system should evaluate all discovered virtual spatial panels
     And any spatial panel that has not been successfully mapped to a Home Assistant Cloud device should be discarded
-    And the system should remove all unmapped anchor coordinates from the Firebase Realtime Database
-    And only the coordinates of fully mapped devices should be retained for future sessions
+    And the system should remove all unmapped anchor coordinates from the authenticated user's database records
+    And only the coordinates of fully mapped devices for that user should be retained for future sessions

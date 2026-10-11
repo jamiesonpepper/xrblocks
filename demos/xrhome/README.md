@@ -42,6 +42,13 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 - **Smart Cameras (Live WebRTC via Google Nest SDM)**: Native real-time WebRTC live video streaming directly within the 3D UICard using Home Assistant's WebSocket API (`camera/webrtc/offer`). Conforms to Google Nest Smart Device Management (SDM) requirements (strictly ordered audio, video, and application datachannel m-lines), handles ICE candidate exchange, and pumps hardware-decoded video frames directly into WebXR rendering via `requestVideoFrameCallback` and the `XRRequestFrame` engine loop.
 - **Device Tree Filtering**: Compound appliance sub-entities (e.g., loose sensors, buttons, cavity lights, subordinate thermostat sensors) are automatically unified and hidden from the pairing list, keeping the device tree clean and intuitive.
 
+### 4. Multi-Account Support & User-Isolated Spatial Anchors (Version 2.13)
+
+- **Google Authentication & Account Isolation**: Sign in using Google OAuth directly within the in-headset configuration overlay or via the `pairing.html` companion page. Each user's Gemini API Key, Home Assistant Long-Lived Access Token, and Nabu Casa Remote URL are isolated strictly under `users/{uid}/config`.
+- **User-Scoped 3D Spatial Anchors**: Spatial device anchors (position, rotation, paired entity bindings) in Cloud Firestore Native are scoped to the authenticated user (`users/{userId}/anchors`). User A's custom device pairings will never overwrite or interfere with User B's physical room layout.
+- **Headset Companion Pairing Page (`pairing.html`)**: Avoid typing complex long-lived tokens and API keys on headset virtual keyboards. Open `pairing.html` on a desktop or phone browser, sign in with Google, and save credentials directly to your headset user profile.
+- **Dynamic Key Synchronization & Clear Error Handling**: Gemini API credentials synchronize dynamically with `VisionManager`. HTTP 402 errors ("Payment Required" / depleted prepayment credits in Google AI Studio) are parsed with clear diagnostic messages on the HUD and UI.
+
 ---
 
 ## User Interaction Guide
@@ -130,18 +137,12 @@ cp demos/xrhome/functions/.env.sample demos/xrhome/functions/.env
 Populate the required environment variables:
 
 ```ini
-# Home Assistant Cloud (Nabu Casa remote URL)
-HA_URL=https://your-instance.ui.nabu.casa
-
-# Home Assistant Long-Lived Access Token (Profile > Security > Long-Lived Access Tokens)
-HA_TOKEN=your_long_lived_access_token_here
-
-# Google Gemini API Key (for 2.5 Flash Vision object detection)
-GEMINI_API_KEY=your_gemini_api_key_here
-
-# Firebase Web API Key (for client-side Firebase Auth/Firestore)
+# Firebase Client Configuration (Auth/Web)
+# Public Web API Key enabling Google Authentication in the client
 WEB_API_KEY=your_firebase_web_api_key_here
 ```
+
+> **Note on Multi-User Credentials**: Personal Gemini API Keys, Home Assistant Long-Lived Access Tokens, and Nabu Casa URLs are configured dynamically per-user in headset or through `pairing.html` and isolated securely under each user's authenticated Google profile (`users/{uid}/config`). Backend environment variables (`HA_URL`, `HA_TOKEN`, `GEMINI_API_KEY`) remain supported as optional shared/kiosk fallbacks.
 
 ### 2. Local Testing & Validation
 
@@ -194,5 +195,6 @@ demos/xrhome/
 └── features/
     ├── hass_mapping.feature   # BDD feature spec: Home Assistant Cloud Device Mapping
     ├── house_scale_slam.feature # BDD feature spec: House-Scale SLAM & Spatial Anchoring
+    ├── multiuser_auth_and_pairings.feature # BDD feature spec: Multi-User Google Auth & Isolated Pairings
     └── implementation_plan.md # Architecture & integration design document
 ```

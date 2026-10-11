@@ -41,15 +41,26 @@ This document outlines the architecture and implementation for integrating Home 
 
 ## Detailed Components
 
-### 1. Configuration & Security Setup
-- **`functions/.env`**: Stores `HA_URL` (e.g., `https://<id>.ui.nabu.casa`) and `HA_TOKEN` (Long-Lived Access Token).
-- **`getConfig` Cloud Function**: Securely supplies the necessary connection endpoints and tokens to authenticated headset/browser client sessions so manual token entry on headset virtual keyboards is unnecessary.
+### 1. Configuration & Multi-User Security Setup
+- **Multi-User Google Authentication**: Client uses Firebase Auth with GoogleAuthProvider to authenticate users (`auth.js`).
+- **User-Isolated Storage & Security Rules**:
+  - Credentials and configurations (`geminiKey`, `haToken`, `haUrl`/`nabuCasaUrl`) are stored under `users/{uid}/config`.
+  - Firebase Realtime Database and Firestore enforce rules such that only the user with `auth.uid === $uid` can read or write their credentials and pairings.
+  - This ensures complete multi-user isolation: User A cannot read or modify User B's Gemini Key, Home Assistant API Key, or device pairings.
+- **Dynamic In-UI Key Prompt**:
+  - The configuration overlay allows users to sign in with Google, enter their Gemini API Key, Home Assistant Long-Lived Access Token, and Nabu Casa URL.
+  - When saved, credentials are bound to the authenticated user's ID, loaded into the active session, and remembered for that user.
+- **Fallback / Headset Auto-Load (`getConfig`)**:
+  - For headless or shared kiosk environments, default configuration can still be preloaded via environment variables if desired.
 
-### 2. Backend Integration (`functions/index.js`)
-- **`getConfig`**: Returns runtime configuration (`haUrl`, `haToken`, `geminiKey`, `firebaseApiKey`).
-- **`getHaDevices`**: Aggregates raw Home Assistant entities across domains (`light`, `switch`, `vacuum`, `climate`, `water_heater`, `sensor`, `binary_sensor`) into compound appliances with friendly names, areas, and related telemetry.
-- **`controlHaDevice`**: Handles command execution with validation and graceful error reporting (`{ success, controllable, error }`).
-- **Spatial Anchors**: Manages 3D world poses in native Firestore (`saveAnchor`, `getAnchors`, `deleteAnchor`, `resetAnchors`).
+### 2. Backend & Persistence Integration (`functions/index.js`, `services/firebase-ha-integration.js`)
+- **`getConfig`**: Returns project ID and public configuration.
+- **Per-User Spatial Anchor Persistence**:
+  - `saveDeviceAnchor(anchorData, userId)`: Stores 3D anchors under user-scoped path (`users/{userId}/anchors/{anchorId}`).
+  - `getSavedAnchors(userId)`: Fetches spatial anchors specifically mapped by the active authenticated user.
+  - `deleteDeviceAnchor(entityId, userId)`: Deletes an anchor exclusively for the active user.
+  - `resetAllAnchors(userId)`: Wipes anchors only for the active user, never touching other users' smart home configurations.
+- **`getHaDevices` & `controlHaDevice`**: Supports user-provided `haUrl` and `haToken` to query and control each user's unique Home Assistant instance.
 
 ### 3. Client WebSocket Event Bus (`services/firebase-ha-integration.js`)
 - **`connectWebSocket(haUrl, haToken)`**:

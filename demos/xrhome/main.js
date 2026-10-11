@@ -371,38 +371,179 @@ let configIndex = 0;
 async function setupUI() {
     const overlay = document.getElementById('config-overlay');
     const startBtn = document.getElementById('start-btn');
+    const saveBtn = document.getElementById('save-btn');
     const geminiInput = document.getElementById('gemini-key');
+    const haTokenInput = document.getElementById('ha-token');
+    const haUrlInput = document.getElementById('ha-url');
+    const googleLoginBtn = document.getElementById('google-login-btn');
+    const signoutBtn = document.getElementById('signout-btn');
+    const unauthView = document.getElementById('unauth-view');
+    const authView = document.getElementById('auth-view');
+    const userPhoto = document.getElementById('user-photo');
+    const userDisplayName = document.getElementById('user-display-name');
+    const userEmail = document.getElementById('user-email');
+    const statusMsg = document.getElementById('config-status');
 
-    // 1. Fetch Cloud Function backend config first so headsets auto-load without manual key entry
+    // 1. Fetch Cloud Function backend config first
     let backendConfig = null;
     try {
         const configRes = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/getConfig');
         if (configRes.ok) {
             backendConfig = await configRes.json();
-            if (backendConfig.geminiKey && !auth.config.geminiKey) {
-                auth.config.geminiKey = backendConfig.geminiKey;
-                auth.saveConfig(auth.config);
-            }
         }
     } catch (e) {
         console.warn("Could not pre-fetch remote config in setupUI:", e);
     }
 
-    if (auth.config.geminiKey) geminiInput.value = auth.config.geminiKey;
+    if (!backendConfig) backendConfig = { projectId: 'xrhome-009ef8' };
 
-    // Auto-start if configured (from Cloud Function or localStorage)
-    if (auth.hasConfig()) {
-         overlay.style.display = 'none';
-         initApp(backendConfig);
-         return;
+    // 2. Initialize Firebase Auth
+    if (backendConfig.firebaseApiKey) {
+        auth.initFirebase({
+            apiKey: backendConfig.firebaseApiKey,
+            authDomain: `${backendConfig.projectId}.firebaseapp.com`,
+            projectId: backendConfig.projectId,
+            databaseURL: `https://${backendConfig.projectId}-default-rtdb.firebaseio.com/`
+        });
     }
 
-    startBtn.addEventListener('click', () => {
-        const config = {
-            geminiKey: geminiInput.value
+    // Helper to update UI based on authentication status and user-isolated config
+    function updateAuthUI(user, userConfig) {
+        if (user) {
+            if (unauthView) unauthView.style.display = 'none';
+            if (authView) authView.style.display = 'flex';
+            if (userDisplayName) userDisplayName.innerText = user.displayName || 'Google User';
+            if (userEmail) userEmail.innerText = user.email || user.uid;
+            if (userPhoto) {
+                if (user.photoURL) {
+                    userPhoto.src = user.photoURL;
+                    userPhoto.style.display = 'block';
+                } else {
+                    userPhoto.style.display = 'none';
+                }
+            }
+            if (geminiInput) geminiInput.value = userConfig?.geminiKey || '';
+            if (haTokenInput) haTokenInput.value = userConfig?.haToken || '';
+            if (haUrlInput) haUrlInput.value = userConfig?.haUrl || '';
+            if (statusMsg) {
+                statusMsg.style.color = '#4caf50';
+                statusMsg.innerText = `Connected as ${user.email}. Keys stored exclusively under your user profile.`;
+            }
+        } else {
+            if (unauthView) unauthView.style.display = 'block';
+            if (authView) authView.style.display = 'none';
+            if (geminiInput) geminiInput.value = auth.config.geminiKey || '';
+            if (haTokenInput) haTokenInput.value = auth.config.haToken || '';
+            if (haUrlInput) haUrlInput.value = auth.config.haUrl || '';
+            if (statusMsg) {
+                statusMsg.style.color = '#aaa';
+                statusMsg.innerText = 'Sign in with Google to protect and isolate your smart home pairings.';
+            }
+        }
+    }
+
+    // Wire up auth state listener
+    auth.onUserChanged = (user, config) => {
+        updateAuthUI(user, config);
+        if (config?.geminiKey) {
+            vision.init(config.geminiKey);
+        }
+    };
+
+    // Initialize display with current local state
+    updateAuthUI(auth.getUser(), auth.config);
+
+    // Google Sign-in button
+    if (googleLoginBtn) {
+        googleLoginBtn.addEventListener('click', async () => {
+            try {
+                if (statusMsg) {
+                    statusMsg.style.color = '#4285f4';
+                    statusMsg.innerText = 'Signing in with Google...';
+                }
+                const user = await auth.signInWithGoogle();
+                if (statusMsg) {
+                    statusMsg.style.color = '#4caf50';
+                    statusMsg.innerText = `Welcome, ${user.displayName || user.email}!`;
+                }
+            } catch (err) {
+                console.error("Google Sign-In Error:", err);
+                if (statusMsg) {
+                    statusMsg.style.color = '#f44336';
+                    statusMsg.innerText = `Sign-in error: ${err.message || 'Cancelled'}`;
+                }
+            }
+        });
+    }
+
+    // Sign out button
+    if (signoutBtn) {
+        signoutBtn.addEventListener('click', async () => {
+            await auth.signOut();
+            if (statusMsg) {
+                statusMsg.style.color = '#aaa';
+                statusMsg.innerText = 'Signed out. Personal pairings disconnected.';
+            }
+        });
+    }
+
+    // Save Keys button
+    if (saveBtn) {
+        saveBtn.addEventListener('click', async () => {
+            const newConfig = {
+                geminiKey: geminiInput ? geminiInput.value.trim() : '',
+                haToken: haTokenInput ? haTokenInput.value.trim() : '',
+                haUrl: haUrlInput ? haUrlInput.value.trim() : ''
+            };
+            if (statusMsg) {
+                statusMsg.style.color = '#4285f4';
+                statusMsg.innerText = 'Saving configuration...';
+            }
+            try {
+                await auth.saveUserConfig(newConfig);
+                if (newConfig.geminiKey) {
+                    vision.init(newConfig.geminiKey);
+                }
+                if (statusMsg) {
+                    statusMsg.style.color = '#4caf50';
+                    statusMsg.innerText = auth.currentUser 
+                        ? 'Credentials saved securely under your Google profile!' 
+                        : 'Credentials saved locally.';
+                }
+            } catch (e) {
+                if (statusMsg) {
+                    statusMsg.style.color = '#f44336';
+                    statusMsg.innerText = `Save failed: ${e.message}`;
+                }
+            }
+        });
+    }
+
+    // Launch Demo button
+    startBtn.addEventListener('click', async () => {
+        const newConfig = {
+            geminiKey: geminiInput ? geminiInput.value.trim() : '',
+            haToken: haTokenInput ? haTokenInput.value.trim() : '',
+            haUrl: haUrlInput ? haUrlInput.value.trim() : ''
         };
-        auth.saveConfig(config);
-        
+
+        if (!newConfig.geminiKey && !backendConfig?.geminiKey) {
+            if (statusMsg) {
+                statusMsg.style.color = '#f44336';
+                statusMsg.innerText = 'Please enter a Gemini API Key to proceed.';
+            }
+            return;
+        }
+
+        try {
+            await auth.saveUserConfig(newConfig);
+            if (newConfig.geminiKey) {
+                vision.init(newConfig.geminiKey);
+            }
+        } catch (e) {
+            console.warn("Could not save user config before launch:", e);
+        }
+
         overlay.style.display = 'none';
         initApp(backendConfig);
     });
@@ -3620,8 +3761,17 @@ async function initApp(preloadedConfig = null) {
             projectId: apiConfig.projectId,
         };
         smartHome = new FirebaseHAIntegration(apiConfig.projectId);
-        await smartHome.listen(apiConfig.haUrl, apiConfig.haToken);
-        console.log(`Home Assistant Connected! Successfully retrieved ${smartHome.devices.size} devices.`);
+
+        // Scope smartHome to active user and custom HA/Nabu Casa credentials
+        const currentUserId = auth.getUserId();
+        const activeHaUrl = auth.config.haUrl || apiConfig.haUrl;
+        const activeHaToken = auth.config.haToken || apiConfig.haToken;
+
+        if (currentUserId) {
+            smartHome.setUserCredentials(currentUserId, activeHaUrl, activeHaToken);
+        }
+        await smartHome.listen(activeHaUrl, activeHaToken);
+        console.log(`Home Assistant Connected for user ${currentUserId || 'default'}! Successfully retrieved ${smartHome.devices.size} devices.`);
         
         // Listen for device changes
         smartHome.onDevicesChanged = (devices) => {

@@ -1,62 +1,171 @@
 <!doctype html>
 <html lang="en">
 <head>
-    <title>XRHome Foyer Pairing</title>
+    <title>XRHome Headset Pairing</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
         body {
             background: #111;
             color: #ddd;
-            font-family: sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
         }
         .config-box {
-            background: #222;
-            padding: 24px;
+            background: #1e1e1e;
+            padding: 28px;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 480px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-sizing: border-box;
+        }
+        .config-box h2 {
+            margin-top: 0;
+            margin-bottom: 6px;
+            font-size: 22px;
+            color: #fff;
+        }
+        .sub-header {
+            font-size: 13px;
+            color: #888;
+            margin-top: 0;
+            margin-bottom: 20px;
+            line-height: 1.4;
+        }
+        .user-card {
+            display: flex;
+            align-items: center;
+            background: #282828;
+            border: 1px solid rgba(255, 255, 255, 0.15);
             border-radius: 8px;
-            width: 90%;
-            max-width: 500px;
+            padding: 10px 14px;
+            gap: 12px;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+        }
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #4285f4;
+            background: #444;
+        }
+        .user-info {
+            flex-grow: 1;
+            overflow: hidden;
+        }
+        .user-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .user-email {
+            font-size: 12px;
+            color: #9aa0a6;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .btn-signout {
+            background: transparent;
+            border: 1px solid #555;
+            color: #ccc;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-signout:hover {
+            background: #3e3e3e;
+            color: #fff;
+            border-color: #888;
         }
         .input-group {
-            margin-bottom: 16px;
+            margin-bottom: 18px;
         }
         .input-group label {
             display: block;
-            margin-bottom: 8px;
-            font-size: 14px;
-            color: #aaa;
+            margin-bottom: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #ccc;
         }
         .input-group input {
             width: 100%;
-            padding: 8px;
-            background: #333;
+            padding: 10px;
+            background: #2a2a2a;
             border: 1px solid #444;
             color: white;
-            border-radius: 4px;
+            border-radius: 6px;
             box-sizing: border-box;
+            font-size: 14px;
+            transition: border-color 0.2s;
         }
-        button {
+        .input-group input:focus {
+            outline: none;
+            border-color: #4285f4;
+            background: #303030;
+        }
+        .hint-text {
+            display: block;
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+        }
+        button.primary-btn {
             width: 100%;
             padding: 12px;
             background: #4285f4;
             border: none;
             color: white;
-            border-radius: 4px;
-            font-size: 16px;
+            border-radius: 6px;
+            font-size: 15px;
+            font-weight: 500;
             cursor: pointer;
-            margin-top: 10px;
+            transition: background 0.2s;
+            margin-top: 8px;
         }
-        button:hover { background: #5c97f6; }
+        button.primary-btn:hover { background: #5c97f6; }
+        .google-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 12px 16px;
+            background: #ffffff;
+            color: #3c4043;
+            border: 1px solid #dadce0;
+            border-radius: 6px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s, box-shadow 0.2s;
+            box-sizing: border-box;
+        }
+        .google-btn:hover {
+            background: #f8f9fa;
+            box-shadow: 0 1px 3px rgba(60,64,67,0.3);
+        }
         #status {
-            margin-top: 12px;
+            margin-top: 14px;
             color: #4caf50;
             text-align: center;
+            font-size: 13px;
+            min-height: 18px;
         }
         #ui-panel { display: none; }
     </style>
@@ -73,24 +182,54 @@
 <body>
 
     <div class="config-box">
-        <h2>XRHome Foyer Pairing</h2>
-        <p style="font-size: 13px; color: #888;">Synchronize your home.google.com session directly to your headset.</p>
+        <h2>XRHome Headset Pairing</h2>
+        <p class="sub-header">Sign in with your Google account to configure your Home Assistant connection and Gemini API key for your headset.</p>
         
         <div id="auth-panel">
-            <button id="auth-btn">Sign in with Google First</button>
+            <button id="auth-btn" class="google-btn">
+                <svg width="18" height="18" viewBox="0 0 18 18" style="margin-right: 10px; vertical-align: middle;">
+                    <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.616z"/>
+                    <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+                    <path fill="#FBBC05" d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/>
+                    <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z"/>
+                </svg>
+                Sign in with Google
+            </button>
+            <div style="font-size: 11px; color: #777; margin-top: 8px; text-align: center;">
+                Credentials and device pairings are securely isolated to your account.
+            </div>
         </div>
 
         <div id="ui-panel">
+            <div class="user-card">
+                <img id="user-photo" src="" alt="Avatar" class="user-avatar" />
+                <div class="user-info">
+                    <div id="user-display-name" class="user-name">Authenticated User</div>
+                    <div id="user-email" class="user-email"></div>
+                </div>
+                <button id="signout-btn" type="button" class="btn-signout" title="Sign out / Switch account">Sign out</button>
+            </div>
+
             <form id="save-form">
                 <div class="input-group">
-                    <label>Authorization Header (SAPISIDHASH...)</label>
-                    <input type="text" id="auto-oauth-token" autocomplete="off" required />
+                    <label for="gemini-api-key">Gemini API Key</label>
+                    <input type="password" id="gemini-api-key" placeholder="AIzaSy..." autocomplete="off" />
+                    <span class="hint-text">Required for Google Gemini Vision spatial scanning. (Note: In Google AI Studio, ensure your project has active prepay credits or is on Free Tier. Depleted prepay credits return HTTP 402).</span>
                 </div>
+
                 <div class="input-group">
-                    <label>Cookie Header (__Secure-1PSID...)</label>
-                    <input type="text" id="auto-cookie-token" autocomplete="off" required />
+                    <label for="ha-api-token">Home Assistant Long-Lived Access Token</label>
+                    <input type="password" id="ha-api-token" placeholder="eyJhbGciOiJIUzI1Ni..." autocomplete="off" />
+                    <span class="hint-text">Generated from your Home Assistant user profile</span>
                 </div>
-                <button type="submit" id="save-btn">Save to Headset</button>
+
+                <div class="input-group">
+                    <label for="ha-remote-url">Home Assistant / Nabu Casa Remote URL</label>
+                    <input type="url" id="ha-remote-url" placeholder="https://[remote-id].ui.nabu.casa" autocomplete="off" />
+                    <span class="hint-text">Nabu Casa Cloud URL or local instance URL</span>
+                </div>
+
+                <button type="submit" id="save-btn" class="primary-btn">Save to Headset Profile</button>
                 <div id="status"></div>
             </form>
         </div>
@@ -98,12 +237,26 @@
 
     <script type="module">
         import { initializeApp } from 'firebase/app';
-        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
+        import { getAuth, signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
         import { getDatabase, ref, set, get } from 'firebase/database';
 
         async function init() {
-            const response = await fetch('/api/config');
-            const config = await response.json();
+            let config = null;
+            try {
+                const response = await fetch('/api/config');
+                if (response.ok) config = await response.json();
+            } catch (e) {}
+
+            if (!config) {
+                try {
+                    const fallbackRes = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/getConfig');
+                    if (fallbackRes.ok) config = await fallbackRes.json();
+                } catch (e) {
+                    console.error("Failed to load Firebase config:", e);
+                }
+            }
+
+            if (!config) config = { projectId: 'xrhome-009ef8' };
             
             const firebaseApp = initializeApp({
                 apiKey: config.firebaseApiKey,
@@ -116,8 +269,12 @@
             const db = getDatabase(firebaseApp);
 
             const authBtn = document.getElementById('auth-btn');
+            const signoutBtn = document.getElementById('signout-btn');
             const authPanel = document.getElementById('auth-panel');
             const uiPanel = document.getElementById('ui-panel');
+            const userPhoto = document.getElementById('user-photo');
+            const userDisplayName = document.getElementById('user-display-name');
+            const userEmail = document.getElementById('user-email');
             const statusDiv = document.getElementById('status');
             const form = document.getElementById('save-form');
             
@@ -125,21 +282,40 @@
                 signInWithPopup(auth, new GoogleAuthProvider());
             });
 
+            signoutBtn.addEventListener('click', () => {
+                signOut(auth);
+            });
+
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
                     authPanel.style.display = 'none';
                     uiPanel.style.display = 'block';
+
+                    userDisplayName.innerText = user.displayName || 'Google User';
+                    userEmail.innerText = user.email || user.uid;
+                    if (user.photoURL) {
+                        userPhoto.src = user.photoURL;
+                        userPhoto.style.display = 'block';
+                    } else {
+                        userPhoto.style.display = 'none';
+                    }
                     
-                    // Fetch existing
-                    const snapshot = await get(ref(db, `users/${user.uid}/foyerCredentials`));
-                    if (snapshot.exists()) {
-                        const vals = snapshot.val();
-                        document.getElementById('auto-oauth-token').value = vals.authorization || "";
-                        document.getElementById('auto-cookie-token').value = vals.cookie || "";
+                    // Fetch existing user configuration
+                    const configSnap = await get(ref(db, `users/${user.uid}/config`));
+                    if (configSnap.exists()) {
+                        const vals = configSnap.val();
+                        document.getElementById('gemini-api-key').value = vals.geminiKey || "";
+                        document.getElementById('ha-api-token').value = vals.haToken || "";
+                        document.getElementById('ha-remote-url').value = vals.haUrl || "";
+                        statusDiv.style.color = '#4caf50';
+                        statusDiv.innerText = "Loaded existing profile configuration.";
+                    } else {
+                        statusDiv.innerText = "";
                     }
                 } else {
                     authPanel.style.display = 'block';
                     uiPanel.style.display = 'none';
+                    statusDiv.innerText = "";
                 }
             });
 
@@ -148,16 +324,29 @@
                 const user = auth.currentUser;
                 if (!user) return;
                 
-                const authorization = document.getElementById('auto-oauth-token').value;
-                const cookie = document.getElementById('auto-cookie-token').value;
+                const geminiKey = document.getElementById('gemini-api-key').value.trim();
+                const haToken = document.getElementById('ha-api-token').value.trim();
+                const haUrl = document.getElementById('ha-remote-url').value.trim();
                 
-                statusDiv.innerText = "Saving...";
-                await set(ref(db, `users/${user.uid}/foyerCredentials`), {
-                    authorization,
-                    cookie,
-                    updatedAt: Date.now()
-                });
-                statusDiv.innerText = "Saved successfully! You can now put on your headset.";
+                statusDiv.style.color = '#4285f4';
+                statusDiv.innerText = "Saving to your secure user profile...";
+                
+                try {
+                    // Save isolated user configuration
+                    await set(ref(db, `users/${user.uid}/config`), {
+                        geminiKey,
+                        haToken,
+                        haUrl,
+                        updatedAt: Date.now()
+                    });
+
+                    statusDiv.style.color = '#4caf50';
+                    statusDiv.innerText = "Saved successfully! You can now put on your headset.";
+                } catch (err) {
+                    console.error("Failed saving pairing config:", err);
+                    statusDiv.style.color = '#f44336';
+                    statusDiv.innerText = `Save failed: ${err.message}`;
+                }
             });
         }
         

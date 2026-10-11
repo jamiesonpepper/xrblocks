@@ -19,7 +19,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.85);
             color: white;
             display: flex;
             flex-direction: column;
@@ -27,49 +27,171 @@
             justify-content: center;
             z-index: 1000;
             font-family: sans-serif;
+            overflow-y: auto;
+            padding: 20px 0;
+            box-sizing: border-box;
         }
         .config-box {
-            background: #222;
-            padding: 24px;
-            border-radius: 8px;
+            background: #1e1e1e;
+            padding: 26px;
+            border-radius: 12px;
             width: 90%;
-            max-width: 400px;
+            max-width: 480px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-sizing: border-box;
+        }
+        .config-box h2 {
+            margin-top: 0;
+            margin-bottom: 6px;
+            font-size: 22px;
+            letter-spacing: -0.5px;
+        }
+        .google-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 11px 16px;
+            background: #ffffff;
+            color: #3c4043;
+            border: 1px solid #dadce0;
+            border-radius: 6px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s, box-shadow 0.2s;
+            box-sizing: border-box;
+        }
+        .google-btn:hover {
+            background: #f8f9fa;
+            box-shadow: 0 1px 3px rgba(60,64,67,0.3);
+        }
+        .user-card {
+            display: flex;
+            align-items: center;
+            background: #282828;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            padding: 10px 14px;
+            gap: 12px;
+            box-sizing: border-box;
+        }
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #4285f4;
+            background: #444;
+        }
+        .user-info {
+            flex-grow: 1;
+            overflow: hidden;
+        }
+        .user-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .user-email {
+            font-size: 12px;
+            color: #9aa0a6;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .btn-signout {
+            background: transparent;
+            border: 1px solid #555;
+            color: #ccc;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-signout:hover {
+            background: #3e3e3e;
+            color: #fff;
+            border-color: #888;
         }
         .input-group {
             margin-bottom: 16px;
         }
         .input-group label {
             display: block;
-            margin-bottom: 8px;
-            font-size: 14px;
-            color: #aaa;
+            margin-bottom: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #ccc;
         }
         .input-group input {
             width: 100%;
-            padding: 8px;
-            background: #333;
+            padding: 10px;
+            background: #2a2a2a;
             border: 1px solid #444;
             color: white;
-            border-radius: 4px;
+            border-radius: 6px;
             box-sizing: border-box;
+            font-size: 14px;
+            transition: border-color 0.2s;
         }
-        button#start-btn {
-            width: 100%;
+        .input-group input:focus {
+            outline: none;
+            border-color: #4285f4;
+            background: #303030;
+        }
+        .hint-text {
+            display: block;
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+        }
+        .btn-primary {
+            flex: 1;
             padding: 12px;
             background: #4285f4;
             border: none;
             color: white;
-            border-radius: 4px;
-            font-size: 16px;
+            border-radius: 6px;
+            font-size: 15px;
+            font-weight: 500;
             cursor: pointer;
+            transition: background 0.2s;
         }
-        button#start-btn:hover {
+        .btn-primary:hover {
             background: #5c97f6;
         }
-        button#start-btn:disabled {
-            background: #555;
+        .btn-primary:disabled {
+            background: #444;
             cursor: not-allowed;
+            color: #888;
         }
+        .btn-secondary {
+            padding: 12px 18px;
+            background: #2e2e2e;
+            border: 1px solid #444;
+            color: #eee;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-secondary:hover {
+            background: #3e3e3e;
+        }
+        .status-msg {
+            font-size: 12px;
+            text-align: center;
+            margin-top: 10px;
+            min-height: 18px;
+            color: #4caf50;
+        }
+        
         /* Hidden elements for processing */
         #webrtc-video {
             display: block;
@@ -98,6 +220,10 @@
     <script type="importmap">
       {
         "imports": {
+          "firebase/app": "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js",
+          "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js",
+          "firebase/database": "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js",
+          "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js",
           "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
           "three/": "https://cdn.jsdelivr.net/npm/three@0.184.0/",
           "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
@@ -125,17 +251,68 @@
     <!-- Config Overlay -->
     <div id="config-overlay">
         <div class="config-box">
-            <h2>XRHome Config</h2>
-            <form id="config-form" onsubmit="event.preventDefault();">
-                <!-- Hidden username for accessibility/password managers -->
-                <input type="text" name="username" autocomplete="username" style="display:none" />
-                <div class="input-group">
-                    <label for="gemini-key">Gemini API Key</label>
-                    <input type="password" id="gemini-key" placeholder="AIza..." autocomplete="current-password" />
+            <h2>XRHome Configuration</h2>
+            <p style="font-size: 13px; color: #888; margin-top: 0; margin-bottom: 16px;">
+                Authenticate with Google to securely store and isolate your Gemini API Key, Home Assistant API Key, and spatial device pairings.
+            </p>
+
+            <!-- Google Authentication Section -->
+            <div id="auth-section" style="margin-bottom: 20px;">
+                <div id="unauth-view">
+                    <button id="google-login-btn" type="button" class="google-btn">
+                        <svg width="18" height="18" viewBox="0 0 18 18" style="margin-right: 10px; vertical-align: middle;">
+                            <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.616z"/>
+                            <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+                            <path fill="#FBBC05" d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/>
+                            <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z"/>
+                        </svg>
+                        Sign in with Google
+                    </button>
+                    <div style="font-size: 11px; color: #777; margin-top: 6px; text-align: center;">
+                        Only you can access your saved keys & device pairings when signed in.
+                    </div>
                 </div>
 
+                <div id="auth-view" style="display: none;">
+                    <div class="user-card">
+                        <img id="user-photo" src="" alt="Avatar" class="user-avatar" />
+                        <div class="user-info">
+                            <div id="user-display-name" class="user-name">Authenticated User</div>
+                            <div id="user-email" class="user-email"></div>
+                        </div>
+                        <button id="signout-btn" type="button" class="btn-signout" title="Sign out / Switch account">Sign out</button>
+                    </div>
+                </div>
+            </div>
 
-                <button id="start-btn" type="button">Start Demo</button>
+            <!-- Credentials Form -->
+            <form id="config-form" onsubmit="event.preventDefault();">
+                <input type="text" name="username" autocomplete="username" style="display:none" />
+                
+                <div class="input-group">
+                    <label for="gemini-key">Gemini API Key</label>
+                    <input type="password" id="gemini-key" placeholder="AIzaSy..." autocomplete="current-password" />
+                    <span class="hint-text">Required for Google Gemini Vision spatial scanning. (Note: In Google AI Studio, ensure your project has active prepay credits or is on Free Tier. Depleted prepay credits return HTTP 402).</span>
+                </div>
+
+                <div class="input-group">
+                    <label for="ha-token">Home Assistant API Key / Long-Lived Token</label>
+                    <input type="password" id="ha-token" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." autocomplete="off" />
+                    <span class="hint-text">Your user profile's Long-Lived Access Token</span>
+                </div>
+
+                <div class="input-group">
+                    <label for="ha-url">Home Assistant Nabu Casa Key / Remote URL</label>
+                    <input type="url" id="ha-url" placeholder="https://[remote-id].ui.nabu.casa" autocomplete="off" />
+                    <span class="hint-text">Cloud or local URL (e.g. https://xxxxxx.ui.nabu.casa)</span>
+                </div>
+
+                <div id="config-status" class="status-msg"></div>
+
+                <div style="display: flex; gap: 10px; margin-top: 16px;">
+                    <button id="save-btn" type="button" class="btn-secondary">Save Keys</button>
+                    <button id="start-btn" type="button" class="btn-primary">Launch XRHome</button>
+                </div>
             </form>
         </div>
     </div>
@@ -145,6 +322,6 @@
     <canvas id="process-canvas"></canvas>
 
     <!-- Main Logic -->
-    <script type="module" src="main.js?v=82"></script>
+    <script type="module" src="main.js?v=83"></script>
   </body>
 </html>

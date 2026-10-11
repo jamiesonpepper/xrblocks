@@ -85,7 +85,20 @@ export class VisionManager {
                 console.error(`[Vision] API Error Status: ${response.status} ${response.statusText}`);
                 const errorText = await response.text();
                 console.error(`[Vision] API Error Body: ${errorText}`);
-                throw new Error(`API Error: ${response.status}`);
+                
+                let userFriendlyMessage = `API Error: ${response.status}`;
+                try {
+                    const errorJson = JSON.parse(errorText);
+                    if (errorJson?.error?.message) {
+                        if (response.status === 402) {
+                            userFriendlyMessage = "Gemini 402: Prepayment credits depleted in AI Studio. Please top up credits or use a free-tier key.";
+                        } else {
+                            userFriendlyMessage = `Gemini API Error (${response.status}): ${errorJson.error.message}`;
+                        }
+                    }
+                } catch (_) {}
+
+                throw new Error(userFriendlyMessage);
             }
 
             const data = await response.json();

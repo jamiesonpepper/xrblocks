@@ -14,17 +14,18 @@ exports.getConfig = functions.https.onRequest((req, res) => {
     geminiKey: process.env.GEMINI_API_KEY || "",
     firebaseApiKey: process.env.WEB_API_KEY || "",
     haUrl: process.env.HA_URL || "",
-    haToken: process.env.HA_TOKEN || ""
+    haToken: process.env.HA_TOKEN || "",
+    projectId: process.env.GCLOUD_PROJECT || "xrhome-009ef8"
   });
 });
 
 // Helper to make Home Assistant REST API calls with retries on transient connection drops
-async function callHaApi(endpoint, method = 'GET', body = null) {
-  const haUrl = process.env.HA_URL;
-  const haToken = process.env.HA_TOKEN;
+async function callHaApi(endpoint, method = 'GET', body = null, customUrl = null, customToken = null) {
+  const haUrl = customUrl || process.env.HA_URL;
+  const haToken = customToken || process.env.HA_TOKEN;
 
   if (!haUrl || !haToken) {
-    throw new Error("Missing HA_URL or HA_TOKEN in environment variables.");
+    throw new Error("Missing HA_URL or HA_TOKEN in request headers or environment variables.");
   }
 
   const url = `${haUrl.replace(/\/$/, '')}${endpoint}`;
@@ -72,14 +73,17 @@ async function callHaApi(endpoint, method = 'GET', body = null) {
 exports.getHaDevices = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
+  res.set("Access-Control-Allow-Headers", "Content-Type, x-ha-url, x-ha-token, x-user-id");
   
   if (req.method === "OPTIONS") {
     return res.status(204).send("");
   }
 
+  const customUrl = req.headers['x-ha-url'] || req.query.haUrl;
+  const customToken = req.headers['x-ha-token'] || req.query.haToken;
+
   try {
-    const states = await callHaApi('/api/states');
+    const states = await callHaApi('/api/states', 'GET', null, customUrl, customToken);
 
     // Query entity area assignments from Home Assistant template API
     let areaMap = {};
@@ -92,11 +96,12 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
       {% endfor %}
       {{ ns.items | to_json }}
       `;
-      const haUrl = process.env.HA_URL.replace(/\/$/, '');
+      const haUrl = (customUrl || process.env.HA_URL || '').replace(/\/$/, '');
+      const haToken = customToken || process.env.HA_TOKEN;
       const templateResponse = await fetch(`${haUrl}/api/template`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${process.env.HA_TOKEN}`,
+          'Authorization': `Bearer ${haToken}`,
           'Content-Type': 'application/json',
           'Connection': 'close'
         },
@@ -517,13 +522,16 @@ exports.getHaDevices = functions.https.onRequest(async (req, res) => {
 exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
+  res.set("Access-Control-Allow-Headers", "Content-Type, x-ha-url, x-ha-token, x-user-id");
   
   if (req.method === "OPTIONS") {
     return res.status(204).send("");
   }
 
-  const { entity_id, service, domain, service_data } = req.body || {};
+  const { entity_id, service, domain, service_data, haUrl, haToken } = req.body || {};
+  const customUrl = req.headers['x-ha-url'] || haUrl;
+  const customToken = req.headers['x-ha-token'] || haToken;
+  const executeHa = (endpoint, m = 'POST', b = null) => callHaApi(endpoint, m, b, customUrl, customToken);
 
   if (!entity_id || !service) {
     return res.status(400).json({ error: "Missing entity_id or service in payload." });
@@ -537,7 +545,7 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
       if (applianceType === 'oven') {
         if (service === 'stop') {
           // Trigger button.oven_stop
-          const result = await callHaApi('/api/services/button/press', 'POST', { entity_id: 'button.oven_stop' });
+          const result = await executeHa('/api/services/button/press', 'POST', { entity_id: 'button.oven_stop' });
           return res.status(200).json({ success: true, result });
         }
         if (service === 'toggle_lamp' || service === 'lamp') {
@@ -552,13 +560,13 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
             let result;
             if (lDomain === 'light') {
               const lService = (option === 'on') ? 'turn_on' : (option === 'off' ? 'turn_off' : 'toggle');
-              result = await callHaApi(`/api/services/light/${lService}`, 'POST', { entity_id: lampEntity });
+              result = await executeHa(`/api/services/light/${lService}`, 'POST', { entity_id: lampEntity });
             } else if (lDomain === 'switch') {
               const lService = (option === 'on') ? 'turn_on' : 'turn_off';
-              result = await callHaApi(`/api/services/switch/${lService}`, 'POST', { entity_id: lampEntity });
+              result = await executeHa(`/api/services/switch/${lService}`, 'POST', { entity_id: lampEntity });
             } else {
               const selectOption = (option === 'off') ? 'off' : 'high';
-              result = await callHaApi('/api/services/select/select_option', 'POST', { entity_id: lampEntity, option: selectOption });
+              result = await executeHa('/api/services/select/select_option', 'POST', { entity_id: lampEntity, option: selectOption });
             }
             return res.status(200).json({ success: true, controllable: true, result });
           } catch (lampErr) {
@@ -580,7 +588,7 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
           const resetBtnEntity = service_data?.reset_button_entity || 'button.litter_robot_reset_waste_drawer';
           const rDomain = resetBtnEntity.split('.')[0] || 'button';
           const rService = rDomain === 'button' ? 'press' : 'turn_on';
-          const result = await callHaApi(`/api/services/${rDomain}/${rService}`, 'POST', { entity_id: resetBtnEntity });
+          const result = await executeHa(`/api/services/${rDomain}/${rService}`, 'POST', { entity_id: resetBtnEntity });
           return res.status(200).json({ success: true, result });
         }
       }
@@ -592,11 +600,11 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
       if (dockEntity) {
         const dDomain = dockEntity.split('.')[0];
         const dService = dDomain === 'switch' ? 'turn_on' : 'press';
-        const result = await callHaApi(`/api/services/${dDomain}/${dService}`, 'POST', { entity_id: dockEntity });
+        const result = await executeHa(`/api/services/${dDomain}/${dService}`, 'POST', { entity_id: dockEntity });
         return res.status(200).json({ success: true, result });
       } else {
         // Fallback to vacuum.send_command
-        const result = await callHaApi('/api/services/vacuum/send_command', 'POST', {
+        const result = await executeHa('/api/services/vacuum/send_command', 'POST', {
           entity_id,
           command: 'app_start_empty'
         });
@@ -612,7 +620,7 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
       ...service_data
     };
     
-    const result = await callHaApi(`/api/services/${targetDomain}/${service}`, 'POST', payload);
+    const result = await executeHa(`/api/services/${targetDomain}/${service}`, 'POST', payload);
     
     return res.status(200).json({ success: true, result });
   } catch (error) {
@@ -621,25 +629,31 @@ exports.controlHaDevice = functions.https.onRequest(async (req, res) => {
   }
 });
 
-// 3. Firestore Anchor Persistence Endpoints
+// 3. Firestore Anchor Persistence Endpoints (Scoped per user if userId provided)
 
 // Get all saved anchors
 exports.getAnchors = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
+  res.set("Access-Control-Allow-Headers", "Content-Type, x-user-id");
   
   if (req.method === "OPTIONS") {
     return res.status(204).send("");
   }
 
+  const userId = req.query.userId || req.headers['x-user-id'];
+
   try {
-    const snapshot = await db.collection("anchors").get();
+    const collectionRef = userId 
+      ? db.collection("users").doc(userId).collection("anchors")
+      : db.collection("anchors");
+      
+    const snapshot = await collectionRef.get();
     const anchors = [];
     snapshot.forEach(doc => {
       anchors.push({ id: doc.id, ...doc.data() });
     });
-    return res.status(200).json({ anchors });
+    return res.status(200).json({ anchors, userId: userId || null });
   } catch (error) {
     console.error("getAnchors Error:", error);
     return res.status(500).json({ error: error.message || error });
@@ -650,7 +664,7 @@ exports.getAnchors = functions.https.onRequest(async (req, res) => {
 exports.saveAnchor = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
+  res.set("Access-Control-Allow-Headers", "Content-Type, x-user-id");
   
   if (req.method === "OPTIONS") {
     return res.status(204).send("");
@@ -658,18 +672,24 @@ exports.saveAnchor = functions.https.onRequest(async (req, res) => {
 
   const anchorData = req.body || {};
   const docId = anchorData.id || anchorData.entity_id;
+  const userId = anchorData.userId || req.query.userId || req.headers['x-user-id'];
 
   if (!docId) {
     return res.status(400).json({ error: "Missing anchor id or entity_id." });
   }
 
   try {
-    await db.collection("anchors").doc(docId).set({
+    const docRef = userId
+      ? db.collection("users").doc(userId).collection("anchors").doc(docId)
+      : db.collection("anchors").doc(docId);
+
+    await docRef.set({
       ...anchorData,
       id: docId,
+      userId: userId || null,
       updatedAt: new Date().toISOString()
     }, { merge: true });
-    return res.status(200).json({ success: true, id: docId });
+    return res.status(200).json({ success: true, id: docId, userId: userId || null });
   } catch (error) {
     console.error("saveAnchor Error:", error);
     return res.status(500).json({ error: error.message || error });
@@ -680,7 +700,7 @@ exports.saveAnchor = functions.https.onRequest(async (req, res) => {
 exports.deleteAnchor = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST, DELETE, OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
+  res.set("Access-Control-Allow-Headers", "Content-Type, x-user-id");
   
   if (req.method === "OPTIONS") {
     return res.status(204).send("");
@@ -688,34 +708,45 @@ exports.deleteAnchor = functions.https.onRequest(async (req, res) => {
 
   const { id, entity_id } = req.body || {};
   const docId = id || entity_id;
+  const userId = req.body?.userId || req.query.userId || req.headers['x-user-id'];
 
   if (!docId) {
     return res.status(400).json({ error: "Missing anchor id or entity_id." });
   }
 
   try {
-    await db.collection("anchors").doc(docId).delete();
-    return res.status(200).json({ success: true, deleted: docId });
+    const docRef = userId
+      ? db.collection("users").doc(userId).collection("anchors").doc(docId)
+      : db.collection("anchors").doc(docId);
+      
+    await docRef.delete();
+    return res.status(200).json({ success: true, deleted: docId, userId: userId || null });
   } catch (error) {
     console.error("deleteAnchor Error:", error);
     return res.status(500).json({ error: error.message || error });
   }
 });
 
-// Reset / wipe all saved anchors
+// Reset / wipe all saved anchors for a specific user (or global if no user provided)
 exports.resetAnchors = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
+  res.set("Access-Control-Allow-Headers", "Content-Type, x-user-id");
   
   if (req.method === "OPTIONS") {
     return res.status(204).send("");
   }
 
+  const userId = req.body?.userId || req.query?.userId || req.headers['x-user-id'];
+
   try {
-    const snapshot = await db.collection("anchors").get();
+    const collectionRef = userId
+      ? db.collection("users").doc(userId).collection("anchors")
+      : db.collection("anchors");
+
+    const snapshot = await collectionRef.get();
     if (snapshot.empty) {
-      return res.status(200).json({ success: true, count: 0 });
+      return res.status(200).json({ success: true, count: 0, userId: userId || null });
     }
 
     const batch = db.batch();
@@ -724,7 +755,7 @@ exports.resetAnchors = functions.https.onRequest(async (req, res) => {
     });
     await batch.commit();
 
-    return res.status(200).json({ success: true, count: snapshot.size });
+    return res.status(200).json({ success: true, count: snapshot.size, userId: userId || null });
   } catch (error) {
     console.error("resetAnchors Error:", error);
     return res.status(500).json({ error: error.message || error });

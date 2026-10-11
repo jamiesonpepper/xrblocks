@@ -4,6 +4,7 @@ export class FirebaseHAIntegration {
     this.devices = new Map();
     this.onDevicesChanged = null;
     this.onEntityStateChanged = null;
+    this.userId = null;
     
     // WebSocket state for real-time push updates
     this.ws = null;
@@ -18,11 +19,23 @@ export class FirebaseHAIntegration {
     this.webrtcPendingOffers = new Map();
   }
 
+  setUserId(userId) {
+    this.userId = userId;
+    console.log(`[FirebaseHAIntegration] Scoped to user ID: ${userId}`);
+  }
+
+  setUserCredentials(userId, haUrl, haToken) {
+    this.userId = userId;
+    if (haUrl) this.haUrl = haUrl;
+    if (haToken) this.haToken = haToken;
+    console.log(`[FirebaseHAIntegration] Updated user credentials for: ${userId}`);
+  }
+
   async listen(haUrl = null, haToken = null) {
-    this.haUrl = haUrl;
-    this.haToken = haToken;
+    if (haUrl) this.haUrl = haUrl;
+    if (haToken) this.haToken = haToken;
     await this.refreshDevices();
-    if (haUrl && haToken) {
+    if (this.haUrl && this.haToken) {
       this.connectWebSocket(haUrl, haToken);
     }
     return true;
@@ -683,7 +696,12 @@ export class FirebaseHAIntegration {
 
   async refreshDevices() {
     try {
-      const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/getHaDevices');
+      const headers = {};
+      if (this.haUrl) headers['x-ha-url'] = this.haUrl;
+      if (this.haToken) headers['x-ha-token'] = this.haToken;
+      if (this.userId) headers['x-user-id'] = this.userId;
+
+      const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/getHaDevices', { headers });
       if (!response.ok) throw new Error("Failed to fetch HA devices");
       
       const data = await response.json();
@@ -1164,18 +1182,26 @@ export class FirebaseHAIntegration {
 
       // HTTP Cloud Function fallback
       try {
+          const headers = {
+              'Content-Type': 'application/json'
+          };
+          if (this.haUrl) headers['x-ha-url'] = this.haUrl;
+          if (this.haToken) headers['x-ha-token'] = this.haToken;
+          if (this.userId) headers['x-user-id'] = this.userId;
+
           const payload = {
               entity_id,
               service,
-              service_data
+              service_data,
+              haUrl: this.haUrl,
+              haToken: this.haToken,
+              userId: this.userId
           };
           if (domain) payload.domain = domain;
 
           const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/controlHaDevice', {
               method: 'POST',
-              headers: {
-                  'Content-Type': 'application/json'
-              },
+              headers,
               body: JSON.stringify(payload)
           });
           
@@ -1243,10 +1269,16 @@ export class FirebaseHAIntegration {
     return true;
   }
 
-  // --- Anchor Persistence (Firestore) ---
+  // --- Anchor Persistence (Firestore & Realtime Database) ---
   async getSavedAnchors() {
     try {
-      const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/getAnchors');
+      const url = this.userId 
+        ? `https://us-central1-xrhome-009ef8.cloudfunctions.net/getAnchors?userId=${encodeURIComponent(this.userId)}`
+        : 'https://us-central1-xrhome-009ef8.cloudfunctions.net/getAnchors';
+      const headers = {};
+      if (this.userId) headers['x-user-id'] = this.userId;
+
+      const response = await fetch(url, { headers });
       if (!response.ok) throw new Error("Failed to fetch saved anchors");
       const data = await response.json();
       return data.anchors || [];
@@ -1258,10 +1290,18 @@ export class FirebaseHAIntegration {
 
   async saveDeviceAnchor(anchorData) {
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (this.userId) headers['x-user-id'] = this.userId;
+
+      const payload = {
+        ...anchorData,
+        userId: this.userId || anchorData.userId || null
+      };
+
       const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/saveAnchor', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(anchorData)
+        headers,
+        body: JSON.stringify(payload)
       });
       if (!response.ok) throw new Error("Failed to save device anchor");
       const data = await response.json();
@@ -1274,10 +1314,13 @@ export class FirebaseHAIntegration {
 
   async deleteDeviceAnchor(entityId) {
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (this.userId) headers['x-user-id'] = this.userId;
+
       const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/deleteAnchor', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entity_id: entityId })
+        headers,
+        body: JSON.stringify({ entity_id: entityId, userId: this.userId })
       });
       if (!response.ok) throw new Error("Failed to delete device anchor");
       const data = await response.json();
@@ -1290,9 +1333,13 @@ export class FirebaseHAIntegration {
 
   async resetAllAnchors() {
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (this.userId) headers['x-user-id'] = this.userId;
+
       const response = await fetch('https://us-central1-xrhome-009ef8.cloudfunctions.net/resetAnchors', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers,
+        body: JSON.stringify({ userId: this.userId })
       });
       if (!response.ok) throw new Error("Failed to reset anchors");
       const data = await response.json();
