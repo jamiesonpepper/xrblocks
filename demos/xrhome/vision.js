@@ -24,6 +24,13 @@ export class VisionManager {
     async analyzeFrame(imageBlob, cameraMatrix = null) {
         if (!this.apiKey || this.isScanning) return;
         
+        // Guard against pure black or empty frames (e.g., Quest avatar dummy camera or missing camera permissions)
+        if (!imageBlob || imageBlob.size < 3500) {
+            console.warn(`[Vision] Image frame rejected: blob size (${imageBlob ? imageBlob.size : 0} bytes) is suspiciously low. Solid black frames will not be sent to Gemini.`);
+            if (this.onStatus) this.onStatus("⚠️ Black frame detected (check camera permission)");
+            return;
+        }
+
         this.isScanning = true;
         if (this.onStatus) this.onStatus("Scanning...");
 

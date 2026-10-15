@@ -12,6 +12,10 @@ const _dummyLookObj = new THREE.Object3D();
 const _scratchCardPos = new THREE.Vector3();
 const _scratchTargetPos = new THREE.Vector3();
 const _scratchCamPos = new THREE.Vector3();
+const _scratchCamDir = new THREE.Vector3();
+const _scratchCamToCard = new THREE.Vector3();
+const _scratchPointerRaycaster = new THREE.Raycaster();
+const _scratchPointerMatrix = new THREE.Matrix4();
 const _scratchDragPos = new THREE.Vector3();
 const _scratchDragQuat = new THREE.Quaternion();
 const _scratchDragOffset = new THREE.Vector3();
@@ -84,8 +88,25 @@ class HUDInteraction extends xb.Script {
 
         if (activeCam && virtualLights && virtualLights.length > 0) {
             activeCam.getWorldPosition(_scratchCamPos);
+            activeCam.getWorldDirection(_scratchCamDir);
 
+            // 1. Evaluate Selective Occlusion & Glance-to-Summon
+            if (typeof occlusionManager !== 'undefined' && occlusionManager) {
+                const occluders = [];
+                if (typeof xb !== 'undefined' && xb.core && xb.core.depth) {
+                    if (xb.core.depth.depthMesh) occluders.push(xb.core.depth.depthMesh);
+                    if (xb.core.depth.depthMesh && xb.core.depth.depthMesh.downsampledMesh) occluders.push(xb.core.depth.depthMesh.downsampledMesh);
+                }
+                occlusionManager.update(activeCam, virtualLights, occluders, 0.016);
+            }
+
+            // 2. Card Pivoting & Adaptive Proximity Detection
             for (const vl of virtualLights) {
+                // If summoned to active FoV, keep pinned facing camera directly
+                if (vl.isSummonedToFoV) {
+                    continue;
+                }
+
                 // If actively dragging this card, skip pivoting so the drag feels natural
                 if (dragController && dragController.userData && (dragController.userData.selected === vl || dragController.userData.selected === vl.panel)) {
                     continue;
@@ -96,14 +117,153 @@ class HUDInteraction extends xb.Script {
                     continue;
                 }
 
-                // ONLY pivot after a device is paired! Initial UICards must remain stationary
-                const isPaired = !!(vl.realDevice || vl.linkedNodeId);
+                // ONLY pivot after a device is paired or grouped! Initial UICards must remain stationary
+                const isPaired = !!(vl.realDevice || vl.linkedNodeId || vl.isLightingGroup);
                 if (!isPaired) {
                     continue;
                 }
 
                 // Pivot to face camera horizontally using scratch vectors
                 vl.getWorldPosition(_scratchCardPos);
+
+                // --- Smooth scale entrance animation on panel mount ---
+                if (vl.panel && vl._scaleAnimStartTime) {
+                    const elapsed = performance.now() - vl._scaleAnimStartTime;
+                    const t = Math.min(1, elapsed / (vl._scaleAnimDuration || 150));
+                    const s = 0.9 + 0.1 * (1 - (1 - t) * (1 - t));
+                    vl.panel.scale.set(s, s, s);
+                    if (t >= 1) {
+                        vl._scaleAnimStartTime = null;
+                        vl.panel.scale.set(1, 1, 1);
+                    }
+                }
+
+                // --- Pointer Reticle Hover, 2-Second Gaze Dwell, and Direct Reach Detection ---
+                // Note: Group UICards and unpaired cards ALWAYS remain in full display mode
+                if (isPaired && !vl.isLightingGroup && vl.isCondensed && !vl.isSelectingDevice) {
+                    let isPointerHovering = false;
+
+                    // A. Check xrblocks built-in user pointing detection
+                    try {
+                        if (xb.user && typeof xb.user.isPointingAt === 'function') {
+                            if (xb.user.isPointingAt(vl) || (vl.panel && xb.user.isPointingAt(vl.panel))) {
+                                isPointerHovering = true;
+                            }
+                        }
+                    } catch (e) {}
+
+                    // B. Direct controller pointer raycast against compact card
+                    if (!isPointerHovering && xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                        for (let i = 0; i < 2; i++) {
+                            const ctrl = xb.renderer.xr.getController(i);
+                            if (ctrl) {
+                                _scratchPointerRaycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+                                _scratchPointerMatrix.identity().extractRotation(ctrl.matrixWorld);
+                                _scratchPointerRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(_scratchPointerMatrix);
+                                _scratchPointerRaycaster.near = 0.05;
+                                _scratchPointerRaycaster.far = 10.0;
+                                const targetObj = vl.panel || vl;
+                                const hits = _scratchPointerRaycaster.intersectObject(targetObj, true);
+                                if (hits && hits.length > 0) {
+                                    isPointerHovering = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // C. Sustained 2.0-second gaze in focus detection
+                    const cardCenter = _scratchCardPos.clone();
+                    cardCenter.y -= (vl.isProximityExpanded ? 0.20 : 0.06); // Center of expanded card vs compact capsule
+                    _scratchCamToCard.copy(cardCenter).sub(_scratchCamPos);
+                    const distToCam = _scratchCamToCard.length();
+                    _scratchCamToCard.normalize();
+
+                    const angleDeg = THREE.MathUtils.radToDeg(_scratchCamDir.angleTo(_scratchCamToCard));
+                    // 15-degree central visual cone is comfortable gaze focus in VR within 4.5m
+                    let isGazeInFocus = (angleDeg <= 15.0 && distToCam <= 4.5);
+                    if (!isGazeInFocus && distToCam <= 4.5) {
+                        _scratchPointerRaycaster.set(_scratchCamPos, _scratchCamDir);
+                        _scratchPointerRaycaster.near = 0.1;
+                        _scratchPointerRaycaster.far = distToCam + 0.5;
+                        const targetObj = vl.panel || vl;
+                        const gazeHits = _scratchPointerRaycaster.intersectObject(targetObj, true);
+                        if (gazeHits && gazeHits.length > 0) {
+                            isGazeInFocus = true;
+                        }
+                    }
+
+                    // Precise timestamp-based 2.0s gaze dwell
+                    const now = performance.now();
+                    if (isGazeInFocus) {
+                        if (!vl._gazeFocusStartTime) {
+                            vl._gazeFocusStartTime = now;
+                        }
+                        vl._lastGazeLostTime = null;
+                    } else {
+                        if (!vl._lastGazeLostTime) {
+                            vl._lastGazeLostTime = now;
+                        }
+                        // 300ms grace period for blinks and micro-saccades before losing dwell progress
+                        if (now - vl._lastGazeLostTime > 300) {
+                            vl._gazeFocusStartTime = null;
+                        }
+                    }
+
+                    const gazeDwellMs = vl._gazeFocusStartTime ? (now - vl._gazeFocusStartTime) : 0;
+                    const isGazeTriggered = (gazeDwellMs >= 2000);
+
+                    // D. Direct physical reach fallback (controller within 35cm of card)
+                    let isDirectReach = false;
+                    if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                        for (let i = 0; i < 2; i++) {
+                            const ctrl = xb.renderer.xr.getController(i);
+                            if (ctrl) {
+                                ctrl.getWorldPosition(_scratchDragPos);
+                                if (cardCenter.distanceTo(_scratchDragPos) < 0.35) {
+                                    isDirectReach = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    const shouldExpand = isPointerHovering || isGazeTriggered || isDirectReach;
+
+                    if (shouldExpand) {
+                        vl.lastProximityTime = now;
+                        if (!vl.isProximityExpanded) {
+                            if (isGazeTriggered) {
+                                hud.log(`Gaze activated ${vl.labelText}`, '#FFFFFF');
+                                hud.speak(`${vl.labelText} expanded`);
+                            }
+                            if (typeof vl.setExpanded === 'function') {
+                                vl.setExpanded(true);
+                            } else {
+                                vl.isProximityExpanded = true;
+                                if (vl.rebuildPanel) vl.rebuildPanel();
+                            }
+                        }
+                    } else if (vl.isProximityExpanded) {
+                        // Keep card active while user is still gazing at it, hovering pointer, directly reaching, or using controls
+                        const isStillFocused = isGazeInFocus || isPointerHovering || isDirectReach || vl.isDraggingSlider || vl.isSelectingDevice;
+                        if (isStillFocused) {
+                            vl.lastProximityTime = now;
+                        } else {
+                            // 2.5-second (2500ms) timeout after gaze, pointer, and direct reach all exit before collapsing
+                            if (now - (vl.lastProximityTime || 0) > 2500) {
+                                vl._gazeFocusStartTime = null;
+                                vl._lastGazeLostTime = null;
+                                if (typeof vl.setExpanded === 'function') {
+                                    vl.setExpanded(false);
+                                } else {
+                                    vl.isProximityExpanded = false;
+                                    if (vl.rebuildPanel) vl.rebuildPanel();
+                                }
+                            }
+                        }
+                    }
+                }
 
                 _scratchTargetPos.set(_scratchCamPos.x, _scratchCardPos.y, _scratchCamPos.z);
                 if (_scratchCardPos.distanceToSquared(_scratchTargetPos) > 0.005) {
@@ -168,14 +328,15 @@ function onXRSelectStart(event) {
         return false;
     }
 
-    // Define draggables: HUD, Keypad, and any unlinked Virtual Light panels
+    // Define draggables: HUD, Keypad, and any unlinked Virtual Light panels or Lighting Groups
     const draggables = [];
     if (hud && hud.panel) draggables.push(hud.panel);
     if (keypad && keypad.panel) draggables.push(keypad.panel);
     if (virtualLights && virtualLights.length > 0) {
         for (const vl of virtualLights) {
             const isPaired = !!(vl.realDevice || vl.linkedNodeId);
-            if (!isPaired && !vl.isSelectingDevice && vl.panel) {
+            const canDrag = (!isPaired || (vl.isLightingGroup && !vl.isPositionLocked)) && !vl.isSelectingDevice;
+            if (canDrag && vl.panel) {
                 draggables.push(vl.panel);
             }
         }
@@ -227,11 +388,12 @@ function onXRSelectStart(event) {
         }
 
         // 3. Virtual Light: Move the entire VirtualLight3D group directly so position is preserved!
-        // Only allow dragging initial unpaired cards (never paired cards or device selection tree)
+        // Allow dragging initial unpaired cards and unlocked Lighting Group cards
         if (virtualLights && virtualLights.length > 0) {
             for (const vl of virtualLights) {
                 const isPaired = !!(vl.realDevice || vl.linkedNodeId);
-                if (!isPaired && !vl.isSelectingDevice && vl.panel && (hit.object === vl.panel || isDescendant(hit.object, vl.panel))) {
+                const canDrag = (!isPaired || (vl.isLightingGroup && !vl.isPositionLocked)) && !vl.isSelectingDevice;
+                if (canDrag && vl.panel && (hit.object === vl.panel || isDescendant(hit.object, vl.panel))) {
                     if (!isInteractive(hit.object, vl.panel)) {
                         dragController = controller;
                         const objectToMove = vl; // Move group in world space
@@ -266,19 +428,30 @@ function onXRSelectEnd(event) {
                 targetVL = virtualLights.find(vl => vl.panel === selected || vl === selected);
             }
 
-            if (targetVL && targetVL.realDevice && smartHome && smartHome.saveDeviceAnchor) {
-                const dev = targetVL.realDevice;
-                smartHome.saveDeviceAnchor({
-                    id: dev.id,
-                    entity_id: dev.id,
-                    name: dev.name || dev.id,
-                    area: dev.area || 'Other',
-                    position: { x: targetVL.position.x, y: targetVL.position.y, z: targetVL.position.z },
-                    quaternion: { x: targetVL.quaternion.x, y: targetVL.quaternion.y, z: targetVL.quaternion.z, w: targetVL.quaternion.w },
-                    label: targetVL.label
-                }).then(() => {
-                    console.log(`[Persistence] Updated anchor after drag for ${dev.id}`);
-                }).catch(e => console.warn("Save anchor after drag error:", e));
+            if (targetVL) {
+                if (targetVL.isLightingGroup && targetVL.groupId) {
+                    const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(targetVL.groupId) : null;
+                    if (grp) {
+                        grp.position = { x: targetVL.position.x, y: targetVL.position.y, z: targetVL.position.z };
+                        grp.quaternion = { x: targetVL.quaternion.x, y: targetVL.quaternion.y, z: targetVL.quaternion.z, w: targetVL.quaternion.w };
+                        groupManager.saveGroups(smartHome);
+                        console.log(`[Persistence] Updated group position after drag for ${grp.id}:`, grp.position);
+                        hud.log(`Saved position for ${grp.name}`, '#FFFFFF');
+                    }
+                } else if (targetVL.realDevice && smartHome && smartHome.saveDeviceAnchor) {
+                    const dev = targetVL.realDevice;
+                    smartHome.saveDeviceAnchor({
+                        id: dev.id,
+                        entity_id: dev.id,
+                        name: dev.name || dev.id,
+                        area: dev.area || 'Other',
+                        position: { x: targetVL.position.x, y: targetVL.position.y, z: targetVL.position.z },
+                        quaternion: { x: targetVL.quaternion.x, y: targetVL.quaternion.y, z: targetVL.quaternion.z, w: targetVL.quaternion.w },
+                        label: targetVL.label
+                    }).then(() => {
+                        console.log(`[Persistence] Updated anchor after drag for ${dev.id}`);
+                    }).catch(e => console.warn("Save anchor after drag error:", e));
+                }
             }
         }
     }
@@ -311,14 +484,20 @@ import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=6
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=27';
+import { HUDManager } from './hud.js?v=29';
 import { VirtualKeypad } from './keypad.js?v=27';
+import { GroupManager } from './services/group-manager.js';
+import { OcclusionManager } from './services/occlusion-manager.js';
+import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=31';
 
 // Globals
 const auth = new AuthManager();
 const camera = new CameraManager('webrtc-video');
 const vision = new VisionManager();
 let smartHome = null;
+const groupManager = new GroupManager();
+const occlusionManager = new OcclusionManager();
+let roomMenu = null;
 
 // XR State
 let realDevices = []; 
@@ -328,6 +507,39 @@ const SCAN_INTERVAL = 30000;
 const hud = new HUDManager();
 // Wire up HUD Scan Event
 hud.onScanToggle = () => toggleScan();
+hud.onOpenRoomMenu = () => {
+    let activeCam = null;
+    try {
+        if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+            activeCam = xb.renderer.xr.getCamera();
+        } else {
+            activeCam = xb.camera || camera;
+        }
+    } catch (_) {}
+    if (!roomMenu) {
+        roomMenu = new AuxiliaryRoomMenu({
+            scene: (xb.scene || (typeof scene !== 'undefined' ? scene : null)),
+            smartHome,
+            virtualLights,
+            onLocate: (dev, targetVL) => {
+                hud.speak(`Locating ${dev.name || dev.id}`);
+                hud.log(`Tracer line pointing to ${dev.name || dev.id}`, '#FFFFFF');
+            }
+        });
+    } else {
+        roomMenu.virtualLights = virtualLights;
+    }
+    roomMenu.toggle(activeCam);
+};
+
+occlusionManager.onSummonStateChanged = (card, isSummoned) => {
+    if (isSummoned) {
+        hud.speak(`Summoned ${card.labelText || 'device'} to view.`);
+        hud.log(`Summoned ${card.labelText || 'device'}`, '#FFFFFF');
+    } else {
+        hud.log(`Returned ${card.labelText || 'device'} to anchor`, '#FFFFFF');
+    }
+};
 hud.onResetPairings = async () => {
     hud.speak("Clearing all saved pairings...");
     hud.log("Clearing pairings...", '#FFFFFF');
@@ -877,6 +1089,21 @@ class VirtualLight3D extends THREE.Group {
       this.expandedAreas = new Set();
       this.hasCollapsedRecommended = false;
       this.hasBeenMoved = false;
+
+      // Adaptive UI & Grouping properties
+      this.isLightingGroup = (geminiData && (geminiData.type === 'lighting_group' || geminiData.isLightingGroup)) || false;
+      this.groupId = (geminiData && geminiData.groupId) || null;
+      this.memberIds = (geminiData && geminiData.memberIds) || [];
+      const isPaired = !!(this.realDevice || this.linkedNodeId || this.isLightingGroup);
+      // Group UICards and unpaired cards are NEVER condensed. Only paired individual devices condense.
+      this.isCondensed = isPaired && !this.isLightingGroup;
+      this.isProximityExpanded = !isPaired || this.isLightingGroup;
+      this.isDraggingSlider = false;
+      this.lastProximityTime = 0;
+      this.isPassThrough = false;
+      this.isPassThroughOccluded = false;
+      this.isSummonedToFoV = false;
+
       const cat = (this.category || '').toLowerCase();
       const isLightOrSwitch = !cat || cat.includes('light') || cat.includes('lamp') || cat.includes('switch') || cat === 'device';
       this.deviceFilterMode = isLightOrSwitch ? 'room' : 'recommended';
@@ -885,6 +1112,7 @@ class VirtualLight3D extends THREE.Group {
       this.panelWidth = width;
       this.panelHeight = height;
       this.panel = null;
+      this._scaleAnimStartTime = null;
 
       this.rebuildPanel();
       
@@ -893,24 +1121,83 @@ class VirtualLight3D extends THREE.Group {
       this.ymin = geminiData.ymin;
       this.ymax = geminiData.ymax;
   }
+
+  getCondensedTelemetryText() {
+      const domain = (this.realDevice && this.realDevice.domain) ? this.realDevice.domain : (this.realDevice && this.realDevice.id ? this.realDevice.id.split('.')[0] : (this.category || 'light'));
+      const cat = (this.category || domain || 'light').toLowerCase();
+      
+      if (this.isLightingGroup) {
+          const count = this.memberIds ? this.memberIds.length : '';
+          return this.isOn ? `💡 ON (${this.brightness}%) • Group (${count})` : '⚫ OFF';
+      }
+      if (domain === 'light' || cat.includes('light') || cat.includes('lamp')) {
+          return this.isOn ? `💡 ON (${this.brightness}%) • ${this.colorTemp || 2700}K` : '⚫ OFF';
+      }
+      if (domain === 'switch' || cat.includes('switch') || cat.includes('plug')) {
+          return this.isOn ? '🔌 ON' : '⚫ OFF';
+      }
+      if (domain === 'lock' || cat.includes('lock')) {
+          const lState = (this.realDevice?.state || (this.isOn ? 'locked' : 'unlocked')).toUpperCase();
+          return lState === 'LOCKED' ? '🔒 LOCKED' : '🔓 UNLOCKED';
+      }
+      if (domain === 'cover' || domain === 'garage_door' || cat.includes('garage') || cat.includes('cover')) {
+          const cState = (this.realDevice?.state || 'closed').toUpperCase();
+          return `🚪 ${cState}`;
+      }
+      if (domain === 'climate' || cat.includes('climate') || cat.includes('thermostat')) {
+          const curTemp = this.realDevice?.attributes?.current_temperature || 72;
+          const targetTemp = this.realDevice?.attributes?.temperature || 70;
+          return `🌡️ ${curTemp}°F (Set: ${targetTemp}°F)`;
+      }
+      if (domain === 'vacuum') {
+          const vState = (this.realDevice?.state || 'docked').toUpperCase();
+          const batt = this.realDevice?.attributes?.battery_level ? ` • ${this.realDevice.attributes.battery_level}%` : '';
+          return `🧹 ${vState}${batt}`;
+      }
+      if (domain === 'dishwasher' || cat.includes('dishwasher')) {
+          const dState = (this.realDevice?.state || 'idle').toUpperCase();
+          return `🍽️ ${dState}`;
+      }
+      if (domain === 'oven' || cat.includes('oven')) {
+          const oState = (this.realDevice?.state || 'off').toUpperCase();
+          return `🍳 ${oState}`;
+      }
+      if (domain === 'litter_robot') {
+          const rState = (this.realDevice?.state || 'ready').toUpperCase();
+          return `🐱 ${rState}`;
+      }
+      return this.isOn ? 'ON' : 'OFF';
+  }
   
   rebuildPanel() {
-      if (this.panel) {
-          this.remove(this.panel);
-      }
-      
-      const isPaired = !!(this.realDevice || this.linkedNodeId);
-      const canDrag = !isScanning && !isPaired && !this.isSelectingDevice;
+      const isPaired = !!(this.realDevice || this.linkedNodeId || this.isLightingGroup);
+      const canDrag = !isScanning && (!isPaired || (this.isLightingGroup && !this.isPositionLocked)) && !this.isSelectingDevice;
       
       this.draggable = canDrag;
       this.draggingMode = 'TRANSLATING';
       this.dragFacingCamera = false;
       
+      // Synchronously remove any existing panel and extra UI card children without disposing shared resources
+      if (this.panel) {
+          const oldPanel = this.panel;
+          this.remove(oldPanel);
+          this.panel = null;
+      }
+      const toRemove = [];
+      this.children.forEach(c => {
+          if (c !== this.mesh && c !== this.iconHitMesh) {
+              toRemove.push(c);
+          }
+      });
+      toRemove.forEach(c => {
+          this.remove(c);
+      });
+
       if (this.isSelectingDevice) {
           this._buildDeviceListUI();
           return;
       }
-      
+
       const isOn = this.isOn;
       const stateColor = this.stateColor !== undefined ? this.stateColor : '#FFFFFF';
       
@@ -918,18 +1205,22 @@ class VirtualLight3D extends THREE.Group {
       const cat = (this.category || domain || 'light').toLowerCase();
       const catIcon = getCategoryIcon(cat, domain);
 
+      // --- OPTION C: SINGLE PERSISTENT CARD WITH DYNAMIC HEIGHT EXPANSION ---
+      // Unpaired cards and lighting groups are ALWAYS in full display mode
+      const isExpanded = !isPaired || this.isLightingGroup || !this.isCondensed || this.isProximityExpanded || this.isSummonedToFoV;
+
       // Card Header: Category Icon + Device Label (always clean white)
       const labelText = new xb.UIText({
           text: this.labelText,
           style: {
-              fontSize: 17,
+              fontSize: 16,
               fontWeight: 'bold',
               color: '#FFFFFF',
               textAlign: 'center',
           }
       });
 
-      const headerRow = new xb.UIPanel({
+      this._headerRow = new xb.UIPanel({
           style: {
               width: '100%',
               flexDirection: 'row',
@@ -946,7 +1237,55 @@ class VirtualLight3D extends THREE.Group {
           ]
       });
 
-      const cardChildren = [headerRow];
+      // Compact Telemetry / Status Row (visible ONLY for paired individual devices in compact resting state)
+      this._telemetryRow = null;
+      this._telemetryText = null;
+      if (isPaired && !this.isLightingGroup) {
+          const telemetry = this.getCondensedTelemetryText();
+          this._telemetryText = new xb.UIText({
+              text: telemetry,
+              style: {
+                  fontSize: 13,
+                  fontWeight: 'bold',
+                  color: this.isOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.75)',
+                  textAlign: 'center',
+              }
+          });
+
+          this._telemetryRow = new xb.UIPanel({
+              style: {
+                  width: '100%',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingTop: 2,
+                  display: isExpanded ? 'none' : 'flex',
+              },
+              children: [this._telemetryText]
+          });
+      }
+
+      let returnBtn = null;
+      if (this.isSummonedToFoV) {
+          returnBtn = new xb.UIButton({
+              label: 'Return to Anchor',
+              icon: 'undo',
+              style: {
+                  width: '100%',
+                  height: 32,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 255, 255, 0.16)',
+                  borderWidth: 1,
+                  borderColor: '#FFFFFF',
+                  color: '#FFFFFF',
+                  fontSize: 12
+              },
+              onClick: () => {
+                  if (typeof occlusionManager !== 'undefined') {
+                      occlusionManager.returnSummonedCard(this);
+                  }
+              }
+          });
+      }
 
       // Reusable Unpair Button
       const makeUnpairBtn = () => new xb.UIButton({
@@ -970,6 +1309,8 @@ class VirtualLight3D extends THREE.Group {
           },
           onClick: () => this.handleConfigClick()
       });
+
+      const cardChildren = [];
 
       if (!isPaired) {
           // --- UNPAIRED UI ---
@@ -2317,13 +2658,117 @@ class VirtualLight3D extends THREE.Group {
               onClick: () => this.handleConfigClick()
           });
           
-          cardChildren.push(new xb.UIPanel({
-              style: { width: '100%', flexDirection: 'row', gap: 6 },
-              children: [toggleBtn, unpairBtn]
-          }));
+          const targetEntityId = this.realDevice?.id || this.linkedNodeId;
+          const isGroupMember = !!(typeof groupManager !== 'undefined' && groupManager && targetEntityId && groupManager.isEntityInGroup(targetEntityId));
+
+          let groupActionBtn = null;
+          if (this.isLightingGroup) {
+              const lockIconName = this.isPositionLocked ? 'lock' : 'lock_open';
+              const lockBtn = new xb.UIButton({
+                  label: '',
+                  icon: lockIconName,
+                  ariaLabel: this.isPositionLocked ? 'Unlock Group Position' : 'Lock Group Position',
+                  userData: { interactive: true },
+                  style: {
+                      width: 44,
+                      height: 36,
+                      borderRadius: 8,
+                      backgroundColor: this.isPositionLocked ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.16)',
+                      borderWidth: 1,
+                      borderColor: '#FFFFFF',
+                      color: '#FFFFFF',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      ':hover': {
+                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                          color: '#000000',
+                          borderColor: '#FFFFFF',
+                      },
+                  },
+                  onClick: () => {
+                      this.isPositionLocked = !this.isPositionLocked;
+                      if (this.panel) {
+                          this.panel.manipulation = !this.isPositionLocked;
+                      }
+                      const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(this.groupId) : null;
+                      if (grp) {
+                          grp.isPositionLocked = this.isPositionLocked;
+                          grp.position = { x: this.position.x, y: this.position.y, z: this.position.z };
+                          grp.quaternion = { x: this.quaternion.x, y: this.quaternion.y, z: this.quaternion.z, w: this.quaternion.w };
+                          groupManager.saveGroups(smartHome);
+                      }
+                      hud.speak(this.isPositionLocked ? 'Group position locked' : 'Group position unlocked');
+                      hud.log(this.isPositionLocked ? 'Group position locked' : 'Group position unlocked', '#FFFFFF');
+                      this.rebuildPanel();
+                  }
+              });
+
+              groupActionBtn = new xb.UIButton({
+                  label: 'Disband',
+                  icon: 'delete',
+                  ariaLabel: 'Disband Lighting Group',
+                  userData: { interactive: true },
+                  style: {
+                      width: 78,
+                      height: 36,
+                      borderRadius: 8,
+                      backgroundColor: 'rgba(255, 255, 255, 0.16)',
+                      borderWidth: 1,
+                      borderColor: '#FFFFFF',
+                      color: '#FFFFFF',
+                      fontSize: 12,
+                      ':hover': {
+                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                          color: '#000000',
+                          borderColor: '#FFFFFF',
+                      },
+                  },
+                  onClick: () => this.handleDeleteGroup()
+              });
+
+              cardChildren.push(new xb.UIPanel({
+                  style: { width: '100%', flexDirection: 'row', gap: 6 },
+                  children: [toggleBtn, lockBtn, groupActionBtn]
+              }));
+          } else if (domain === 'light' || domain === 'switch') {
+              const groupIconName = isGroupMember ? 'person' : 'group';
+              groupActionBtn = new xb.UIButton({
+                  label: '',
+                  icon: groupIconName,
+                  ariaLabel: isGroupMember ? 'Remove from Lighting Group (Make Individual)' : 'Add to Lighting Group',
+                  userData: { interactive: true },
+                  style: {
+                      width: 44,
+                      height: 36,
+                      borderRadius: 8,
+                      backgroundColor: isGroupMember ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.16)',
+                      borderWidth: 1,
+                      borderColor: '#FFFFFF',
+                      color: '#FFFFFF',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      ':hover': {
+                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                          color: '#000000',
+                          borderColor: '#FFFFFF',
+                      },
+                  },
+                  onClick: () => this.handleGroupClick()
+              });
+
+              cardChildren.push(new xb.UIPanel({
+                  style: { width: '100%', flexDirection: 'row', gap: 6 },
+                  children: [toggleBtn, unpairBtn, groupActionBtn]
+              }));
+          } else {
+              cardChildren.push(new xb.UIPanel({
+                  style: { width: '100%', flexDirection: 'row', gap: 6 },
+                  children: [toggleBtn, unpairBtn]
+              }));
+          }
           
-          // If light, include brightness, color, and temperature controls
-          if (domain === 'light' || (this.realDevice && this.realDevice.attributes && this.realDevice.attributes.brightness !== undefined)) {
+          // If light or lighting group, include brightness, color, and temperature controls
+          if (domain === 'light' || this.isLightingGroup || (this.realDevice && this.realDevice.attributes && this.realDevice.attributes.brightness !== undefined)) {
               // 2. Brightness Slider
               const brightnessText = new xb.UIText({
                   text: `☀️ ${this.brightness}%`,
@@ -2337,10 +2782,12 @@ class VirtualLight3D extends THREE.Group {
                   value: this.brightness,
                   style: { width: '100%', height: 26, color: '#FFFFFF' },
                   onInput: (val) => {
+                      this.isDraggingSlider = true;
                       brightnessText.text = `☀️ ${Math.round(val)}%`;
                   },
                   onChange: (val) => {
                       this.setBrightness(val);
+                      setTimeout(() => { this.isDraggingSlider = false; }, 350);
                   }
               });
               cardChildren.push(brightnessText);
@@ -2478,25 +2925,126 @@ class VirtualLight3D extends THREE.Group {
           }
       }
 
+      this._controlsContainer = new xb.UIPanel({
+          style: {
+              width: '100%',
+              flexDirection: 'column',
+              gap: 8,
+              display: isExpanded ? 'flex' : 'none',
+          },
+          children: cardChildren
+      });
+
+      const panelChildren = [this._headerRow];
+      if (returnBtn) {
+          panelChildren.push(returnBtn);
+      }
+      if (this._telemetryRow) {
+          panelChildren.push(this._telemetryRow);
+      }
+      panelChildren.push(this._controlsContainer);
+
+      const isSecurity = (typeof occlusionManager !== 'undefined' && occlusionManager && occlusionManager.isSecurityPassThrough(this));
+      const isSecurityBeacon = this.isPassThroughOccluded;
+
+      this._mainContainer = new xb.UIPanel({
+          style: {
+              width: '100%',
+              flexDirection: 'column',
+              gap: 8,
+              padding: 0,
+              backgroundColor: 'transparent',
+              borderWidth: 0,
+          },
+          children: panelChildren
+      });
+
       this.panel = new xb.UICard({
           size: { width: this.panelWidth, height: 'auto' },
+          sizeX: this.panelWidth,
           anchorX: 'center',
           anchorY: 'top',
           manipulation: canDrag,
           style: {
               flexDirection: 'column',
-              gap: 8,
-              padding: 12,
+              gap: 12,
+              padding: 16,
               backgroundColor: 'rgba(0, 0, 0, 0.20)',
               borderWidth: 1.5,
               borderColor: '#FFFFFF',
-              borderRadius: 16,
+              borderRadius: 20,
           },
-          children: cardChildren
+          children: [this._mainContainer]
       });
 
       this.panel.position.set(0, 0, 0);
+      this.panel.scale.set(0.9, 0.9, 0.9);
+      this._scaleAnimStartTime = performance.now();
+      this._scaleAnimDuration = 150;
+
       this.add(this.panel);
+      this.visible = true;
+      if (this.panel) this.panel.visible = true;
+  }
+
+  setExpanded(expanded) {
+      const isPaired = !!(this.realDevice || this.linkedNodeId || this.isLightingGroup);
+      if (!isPaired || this.isLightingGroup) {
+          this.isProximityExpanded = true;
+          return;
+      }
+      if (this.isProximityExpanded === expanded) return;
+      this.isProximityExpanded = expanded;
+      this.updateExpandedState();
+  }
+
+  updateExpandedState() {
+      const isPaired = !!(this.realDevice || this.linkedNodeId || this.isLightingGroup);
+      const isExpanded = !isPaired || this.isLightingGroup || !this.isCondensed || this.isProximityExpanded || this.isSummonedToFoV;
+      
+      if (this._telemetryRow) {
+          if (this._telemetryRow.style) {
+              this._telemetryRow.style.display = (!isPaired || isExpanded) ? 'none' : 'flex';
+          }
+          if (typeof this._telemetryRow.setProperties === 'function') {
+              this._telemetryRow.setProperties({
+                  display: (!isPaired || isExpanded) ? 'none' : 'flex'
+              });
+          }
+      }
+      if (this._telemetryText && isPaired) {
+          const telemetry = this.getCondensedTelemetryText();
+          this._telemetryText.text = telemetry;
+          if (this._telemetryText.style) {
+              this._telemetryText.style.color = this.isOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.75)';
+          }
+          if (typeof this._telemetryText.setProperties === 'function') {
+              this._telemetryText.setProperties({
+                  text: telemetry,
+                  color: this.isOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.75)'
+              });
+          }
+      }
+      if (this._controlsContainer) {
+          if (this._controlsContainer.style) {
+              this._controlsContainer.style.display = isExpanded ? 'flex' : 'none';
+          }
+          if (typeof this._controlsContainer.setProperties === 'function') {
+              this._controlsContainer.setProperties({
+                  display: isExpanded ? 'flex' : 'none'
+              });
+          }
+      }
+      if (this._mainContainer) {
+          if (this._mainContainer.style) {
+              this._mainContainer.style.padding = 0;
+          }
+          if (typeof this._mainContainer.setProperties === 'function') {
+              this._mainContainer.setProperties({
+                  padding: 0
+              });
+          }
+      }
   }
 
   handleConfigClick() {
@@ -2878,25 +3426,40 @@ class VirtualLight3D extends THREE.Group {
           }
       }
 
+      const listContainer = new xb.UIPanel({
+          style: {
+              width: '100%',
+              flexDirection: 'column',
+              gap: 8,
+              padding: 0,
+              backgroundColor: 'transparent',
+              borderWidth: 0,
+          },
+          children: bodyChildren
+      });
+
       this.panel = new xb.UICard({
           size: { width: this.panelWidth, height: 'auto' },
+          sizeX: this.panelWidth,
           anchorX: 'center',
           anchorY: 'top',
           manipulation: false,
           style: {
               flexDirection: 'column',
-              gap: 8,
-              padding: 12,
+              gap: 12,
+              padding: 16,
               backgroundColor: 'rgba(0, 0, 0, 0.20)',
               borderWidth: 1.5,
               borderColor: '#FFFFFF',
-              borderRadius: 16,
+              borderRadius: 20,
           },
-          children: bodyChildren
+          children: [listContainer]
       });
 
       this.panel.position.set(0, 0, 0);
       this.add(this.panel);
+      this.visible = true;
+      if (this.panel) this.panel.visible = true;
   }
 
   async pairWithDevice(deviceId) {
@@ -2914,7 +3477,7 @@ class VirtualLight3D extends THREE.Group {
           }
       }
 
-      const device = smartHome.devices.get(deviceId);
+      const device = (smartHome && smartHome.devices && smartHome.devices.get(deviceId)) || (realDevices && realDevices.find(d => d.id === deviceId));
       console.log(`[HA-DEBUG:PAIR:DEVICE-LOADED]`, deviceId, device ? { id: device.id, domain: device.domain, state: device.state, isOn: device.isOn, attributes: device.attributes } : "NOT FOUND IN MAP!");
 
       if (device) {
@@ -2924,6 +3487,15 @@ class VirtualLight3D extends THREE.Group {
           this.labelText = device.name || deviceId;
           this.label = this.labelText;
           this.isSelectingDevice = false;
+          this.isCondensed = true;
+          this.isProximityExpanded = true;
+          this.lastProximityTime = performance.now();
+          this.visible = true;
+          if (this.panel) this.panel.visible = true;
+          if (typeof occlusionManager !== 'undefined' && occlusionManager) {
+              this.isOccluded = false;
+              this.isPassThroughOccluded = false;
+          }
           
           if (smartHome && smartHome.saveDeviceAnchor) {
               const pos = this.position;
@@ -3015,6 +3587,29 @@ class VirtualLight3D extends THREE.Group {
   }
 
   toggle() {
+      if (this.isLightingGroup) {
+          const nextOn = !this.isOn;
+          this.isOn = nextOn;
+          this.updateVisuals();
+          if (typeof groupManager !== 'undefined' && groupManager) {
+              groupManager.toggleGroupPower(this.groupId, nextOn, smartHome);
+          }
+          // Propagate immediately to member VirtualLight3Ds in the 3D scene
+          const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(this.groupId) : null;
+          const memberIds = grp ? grp.memberIds : (this.memberIds || []);
+          for (const vl of virtualLights) {
+              if (vl.realDevice && memberIds.includes(vl.realDevice.id)) {
+                  vl.isOn = nextOn;
+                  vl.realDevice.isOn = nextOn;
+                  vl.realDevice.state = nextOn ? 'on' : 'off';
+                  vl.updateVisuals();
+              }
+          }
+          hud.log(`${this.labelText} turned ${nextOn ? "ON" : "OFF"}`, '#FFFFFF');
+          hud.speak(nextOn ? "Group On" : "Group Off");
+          return;
+      }
+
       const domain = (this.realDevice && this.realDevice.domain) ? this.realDevice.domain : (this.realDevice && this.realDevice.id ? this.realDevice.id.split('.')[0] : (this.category || 'light'));
       if (domain === 'lock') {
           this.toggleLock();
@@ -3040,7 +3635,7 @@ class VirtualLight3D extends THREE.Group {
           console.log(`[Toggle] 3D Device ${this.labelText} -> ${nextOn}`);
           
           const stateStr = nextOn ? "ON" : "OFF";
-          const colorStr = nextOn ? '#FFFFFF' : 'rgba(255, 255, 255, 0.55)';
+          const colorStr = '#FFFFFF';
           hud.log(`${this.labelText} turned ${stateStr}`, colorStr);
           
           const togglePromise = (domain === 'switch') ? smartHome.toggleSwitch(this.realDevice.id, nextOn) : smartHome.toggleLight(this.realDevice.id, nextOn);
@@ -3049,19 +3644,190 @@ class VirtualLight3D extends THREE.Group {
                   hud.speak(nextOn ? "Turning On" : "Turning Off");
               } else {
                   // Revert on failure
-                  hud.log(`Failed to toggle ${this.labelText}`, '#FF0000');
+                  hud.log(`Failed to toggle ${this.labelText}`, '#FFFFFF');
                   hud.speak("Device sync failed");
                   this.isOn = !nextOn;
                   if (this.realDevice) this.realDevice.isOn = !nextOn;
                   this.updateVisuals();
               }
           }).catch(() => {
-              hud.log(`Network error syncing ${this.labelText}`, '#FF0000');
+              hud.log(`Network error syncing ${this.labelText}`, '#FFFFFF');
               this.isOn = !nextOn;
               if (this.realDevice) this.realDevice.isOn = !nextOn;
               this.updateVisuals();
           });
       } 
+  }
+
+  handleGroupClick() {
+      if (!this.realDevice && this.linkedNodeId && typeof smartHome !== 'undefined' && smartHome.devices) {
+          this.realDevice = smartHome.devices.get(this.linkedNodeId);
+      }
+      if (!this.realDevice) {
+          hud.log("Pair a device first before adding to a group", '#FFFFFF');
+          return;
+      }
+      const devId = this.realDevice.id;
+      const devArea = this.realDevice.area || 'Other';
+      const existingGroup = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.isEntityInGroup(devId) : null;
+
+      if (existingGroup) {
+          // Device is currently in a group -> REMOVE IT (- Group action)
+          groupManager.removeMember(existingGroup.id, devId);
+
+          // If group is empty, remove it; otherwise refresh its panel
+          const grpCard = virtualLights.find(vl => vl.isLightingGroup && vl.groupId === existingGroup.id);
+          if (grpCard) {
+              if (existingGroup.memberIds.length === 0) {
+                  const idx = virtualLights.indexOf(grpCard);
+                  if (idx !== -1) virtualLights.splice(idx, 1);
+                  if (grpCard.parent) grpCard.parent.remove(grpCard);
+                  else if (xb.scene) xb.scene.remove(grpCard);
+                  else if (typeof xb.remove === 'function') xb.remove(grpCard);
+                  if (smartHome && smartHome.deleteDeviceAnchor) {
+                      smartHome.deleteDeviceAnchor(existingGroup.id).catch(e => console.warn(e));
+                  }
+              } else {
+                  // Preserve live 3D position
+                  existingGroup.position = { x: grpCard.position.x, y: grpCard.position.y, z: grpCard.position.z };
+                  existingGroup.quaternion = { x: grpCard.quaternion.x, y: grpCard.quaternion.y, z: grpCard.quaternion.z, w: grpCard.quaternion.w };
+                  existingGroup.isPositionLocked = !!grpCard.isPositionLocked;
+                  grpCard.memberIds = existingGroup.memberIds;
+                  if (grpCard.rebuildPanel) grpCard.rebuildPanel();
+              }
+          }
+          groupManager.saveGroups(smartHome);
+
+          this.rebuildPanel();
+          hud.speak(`Removed from ${existingGroup.name}`);
+          hud.log(`Removed ${this.labelText} from ${existingGroup.name}`, '#FFFFFF');
+          return;
+      }
+
+      // Device is NOT in a group -> ADD IT (+ Group action)
+      let targetGroup = (typeof groupManager !== 'undefined' && groupManager)
+          ? (groupManager.getAllGroups().find(g => g.area === devArea) || groupManager.getAllGroups()[0])
+          : null;
+
+      if (targetGroup) {
+          // Add to existing room group
+          if (!targetGroup.memberIds.includes(devId)) {
+              targetGroup.memberIds.push(devId);
+          }
+
+          let grpCard = virtualLights.find(vl => vl.isLightingGroup && vl.groupId === targetGroup.id);
+          if (grpCard) {
+              // Crucial: sync current live 3D position and rotation so card NEVER snaps back to spawn!
+              targetGroup.position = { x: grpCard.position.x, y: grpCard.position.y, z: grpCard.position.z };
+              targetGroup.quaternion = { x: grpCard.quaternion.x, y: grpCard.quaternion.y, z: grpCard.quaternion.z, w: grpCard.quaternion.w };
+              targetGroup.isPositionLocked = !!grpCard.isPositionLocked;
+              grpCard.memberIds = targetGroup.memberIds;
+              grpCard.isCondensed = false; // Group UICards always in full display mode
+              grpCard.isProximityExpanded = true;
+              grpCard.lastProximityTime = performance.now();
+              if (grpCard.rebuildPanel) grpCard.rebuildPanel();
+          } else {
+              // Target group exists in manager but does not have a 3D card spawned yet -> spawn it!
+              const centroidPos = targetGroup.position 
+                  ? new THREE.Vector3(targetGroup.position.x, targetGroup.position.y, targetGroup.position.z) 
+                  : this.position.clone().add(new THREE.Vector3(0, 0.22, 0));
+              const mockGemini = { xmin: 0.4, xmax: 0.6, ymin: 0.4, ymax: 0.6, category: 'light', type: 'lighting_group', groupId: targetGroup.id, memberIds: targetGroup.memberIds };
+              grpCard = new VirtualLight3D(mockGemini, targetGroup.name, 0.36, 0.5);
+              grpCard.position.copy(centroidPos);
+              if (targetGroup.quaternion) {
+                  grpCard.quaternion.set(targetGroup.quaternion.x, targetGroup.quaternion.y, targetGroup.quaternion.z, targetGroup.quaternion.w);
+              }
+              grpCard.isLightingGroup = true;
+              grpCard.groupId = targetGroup.id;
+              grpCard.memberIds = targetGroup.memberIds;
+              grpCard.isPositionLocked = !!targetGroup.isPositionLocked;
+              grpCard.unpaired = false;
+              grpCard.isCondensed = false; // Group UICards always in full display mode
+              grpCard.isProximityExpanded = true;
+              grpCard.lastProximityTime = performance.now();
+              grpCard.hasBeenMoved = true;
+              grpCard.rebuildPanel();
+
+              virtualLights.push(grpCard);
+              if (this.parent) this.parent.add(grpCard);
+              else if (xb.scene) xb.scene.add(grpCard);
+              else if (typeof xb.add === 'function') xb.add(grpCard);
+          }
+
+          groupManager.saveGroups(smartHome);
+
+          this.rebuildPanel();
+          hud.speak(`Added to ${targetGroup.name}`);
+          hud.log(`Added ${this.labelText} to ${targetGroup.name}`, '#FFFFFF');
+      } else {
+          // Create a new lighting group
+          const grpName = `${devArea === 'Other' ? 'Room' : devArea} Lighting Group`;
+          const centroidPos = this.position.clone();
+          centroidPos.y += 0.22;
+
+          const newGroup = groupManager.createGroup({
+              name: grpName,
+              area: devArea,
+              memberIds: [devId],
+              position: centroidPos
+          });
+
+          // Spawn Group 3D card
+          const mockGemini = { xmin: 0.4, xmax: 0.6, ymin: 0.4, ymax: 0.6, category: 'light', type: 'lighting_group', groupId: newGroup.id, memberIds: newGroup.memberIds };
+          const groupCard = new VirtualLight3D(mockGemini, grpName, 0.36, 0.5);
+          groupCard.position.copy(centroidPos);
+          groupCard.isLightingGroup = true;
+          groupCard.groupId = newGroup.id;
+          groupCard.memberIds = newGroup.memberIds;
+          groupCard.unpaired = false;
+          groupCard.isCondensed = false; // Group UICards always in full display mode
+          groupCard.isProximityExpanded = true;
+          groupCard.lastProximityTime = performance.now();
+          groupCard.hasBeenMoved = true;
+          groupCard.rebuildPanel();
+          
+          virtualLights.push(groupCard);
+          if (this.parent) this.parent.add(groupCard);
+          else if (xb.scene) xb.scene.add(groupCard);
+          else if (typeof xb.add === 'function') xb.add(groupCard);
+
+          groupManager.saveGroups(smartHome);
+          this.rebuildPanel();
+          hud.speak(`Created ${grpName}`);
+          hud.log(`Created ${grpName} with ${this.labelText}`, '#FFFFFF');
+      }
+  }
+
+  handleDeleteGroup() {
+      if (!this.isLightingGroup || !this.groupId) return;
+      const grpId = this.groupId;
+      const grpName = this.labelText || 'Lighting Group';
+
+      const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(grpId) : null;
+      const affectedMemberIds = grp ? [...grp.memberIds] : (this.memberIds || []);
+
+      if (typeof groupManager !== 'undefined' && groupManager) {
+          groupManager.deleteGroup(grpId, smartHome);
+      }
+
+      const idx = virtualLights.indexOf(this);
+      if (idx !== -1) {
+          virtualLights.splice(idx, 1);
+      }
+      if (this.parent) {
+          this.parent.remove(this);
+      } else if (xb.scene) {
+          xb.scene.remove(this);
+      }
+
+      for (const vl of virtualLights) {
+          if (vl.realDevice && affectedMemberIds.includes(vl.realDevice.id)) {
+              if (vl.rebuildPanel) vl.rebuildPanel();
+          }
+      }
+
+      hud.speak(`Disbanded ${grpName}`);
+      hud.log(`Disbanded ${grpName}`, '#FFFFFF');
   }
 
   toggleLock() {
@@ -3456,13 +4222,36 @@ class VirtualLight3D extends THREE.Group {
   setBrightness(val) {
       const prevBrightness = this.brightness;
       this.brightness = Math.max(1, Math.min(100, Math.round(val)));
+      if (this.isLightingGroup) {
+          if (typeof groupManager !== 'undefined' && groupManager) {
+              groupManager.setGroupBrightness(this.groupId, this.brightness, smartHome);
+          }
+          // Propagate immediately to member VirtualLight3Ds in the 3D scene
+          const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(this.groupId) : null;
+          const memberIds = grp ? grp.memberIds : (this.memberIds || []);
+          for (const vl of virtualLights) {
+              if (vl.realDevice && memberIds.includes(vl.realDevice.id)) {
+                  vl.brightness = this.brightness;
+                  if (vl.realDevice.attributes) {
+                      vl.realDevice.attributes.brightness = Math.round((this.brightness / 100) * 255);
+                  }
+                  if (this.brightness > 0) {
+                      vl.isOn = true;
+                      vl.realDevice.isOn = true;
+                      vl.realDevice.state = 'on';
+                  }
+                  vl.updateVisuals();
+              }
+          }
+          return;
+      }
       if (this.realDevice && smartHome) {
           smartHome.setBrightness(this.realDevice.id, this.brightness).then((success) => {
               if (success !== false && this.realDevice) {
                   this.realDevice.brightness = this.brightness;
               } else if (success === false) {
                   this.brightness = prevBrightness;
-                  hud.log(`Failed to set brightness for ${this.labelText}`, '#FF0000');
+                  hud.log(`Failed to set brightness for ${this.labelText}`, '#FFFFFF');
               }
           }).catch(() => {
               this.brightness = prevBrightness;
@@ -3471,6 +4260,29 @@ class VirtualLight3D extends THREE.Group {
   }
 
   setColor(r, g, b) {
+      if (this.isLightingGroup) {
+          const toHex = (n) => Math.round(n).toString(16).padStart(2, '0');
+          this.stateColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+          this.currentHue = hexToHue(this.stateColor);
+          if (typeof groupManager !== 'undefined' && groupManager) {
+              groupManager.setGroupColor(this.groupId, r, g, b, smartHome);
+          }
+          // Propagate immediately to member VirtualLight3Ds in the 3D scene
+          const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(this.groupId) : null;
+          const memberIds = grp ? grp.memberIds : (this.memberIds || []);
+          for (const vl of virtualLights) {
+              if (vl.realDevice && memberIds.includes(vl.realDevice.id)) {
+                  vl.stateColor = this.stateColor;
+                  vl.currentHue = this.currentHue;
+                  if (vl.realDevice.attributes) {
+                      vl.realDevice.attributes.rgb_color = [r, g, b];
+                      delete vl.realDevice.attributes.color_temp_kelvin;
+                  }
+                  vl.updateVisuals();
+              }
+          }
+          return;
+      }
       if (this.realDevice && smartHome) {
           const prevColor = this.stateColor;
           const prevHue = this.currentHue;
@@ -3493,7 +4305,7 @@ class VirtualLight3D extends THREE.Group {
                   this.stateColor = prevColor;
                   this.currentHue = prevHue;
                   this.rebuildPanel();
-                  hud.log(`Failed to set color for ${this.labelText}`, '#FF0000');
+                  hud.log(`Failed to set color for ${this.labelText}`, '#FFFFFF');
               }
           }).catch(() => {
               this.stateColor = prevColor;
@@ -3507,6 +4319,28 @@ class VirtualLight3D extends THREE.Group {
       this.colorTemp = Math.round(kelvin);
       this.stateColor = hexColor || kelvinToHex(this.colorTemp);
       this.currentHue = hexToHue(this.stateColor);
+      if (this.isLightingGroup) {
+          this.rebuildPanel();
+          if (typeof groupManager !== 'undefined' && groupManager) {
+              groupManager.setGroupColorTemp(this.groupId, this.colorTemp, this.stateColor, smartHome);
+          }
+          // Propagate immediately to member VirtualLight3Ds in the 3D scene
+          const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(this.groupId) : null;
+          const memberIds = grp ? grp.memberIds : (this.memberIds || []);
+          for (const vl of virtualLights) {
+              if (vl.realDevice && memberIds.includes(vl.realDevice.id)) {
+                  vl.colorTemp = this.colorTemp;
+                  vl.stateColor = this.stateColor;
+                  vl.currentHue = this.currentHue;
+                  if (vl.realDevice.attributes) {
+                      vl.realDevice.attributes.color_temp_kelvin = this.colorTemp;
+                      delete vl.realDevice.attributes.rgb_color;
+                  }
+                  vl.updateVisuals();
+              }
+          }
+          return;
+      }
       if (this.realDevice && this.realDevice.attributes) {
           this.realDevice.attributes.color_temp_kelvin = this.colorTemp;
           delete this.realDevice.attributes.rgb_color;
@@ -4044,6 +4878,21 @@ async function initApp(preloadedConfig = null) {
                     }
                 }
             });
+
+            // Refresh Lighting Groups containing entityId
+            if (typeof groupManager !== 'undefined' && groupManager) {
+                groupManager.getAllGroups().forEach(grp => {
+                    if (grp.memberIds.includes(entityId)) {
+                        groupManager.refreshGroupState(grp.id, smartHome.devices);
+                        const groupVL = virtualLights.find(vl => vl.groupId === grp.id);
+                        if (groupVL) {
+                            groupVL.isOn = grp.isOn;
+                            if (grp.brightness !== undefined) groupVL.brightness = grp.brightness;
+                            groupVL.updateVisuals();
+                        }
+                    }
+                });
+            }
         };
     } else {
         console.warn("No Firebase API Key found, skipping Firebase initialization.");
@@ -4074,6 +4923,9 @@ async function initApp(preloadedConfig = null) {
     const o = new xb.Options();
     // Enable Ray Visualization to fix "invisible pointer" issue
     o.controllers.visualizeRays = true;
+    if (o.reticles) {
+        o.reticles.enabled = true;
+    }
 
     if (isARSupported) {
         if (typeof o.enableUI === 'function') o.enableUI();
@@ -4107,14 +4959,22 @@ async function initApp(preloadedConfig = null) {
     o.hands.enabled = true; // Use Hands
     o.simulator.defaultMode = xb.SimulatorMode.POSE; // Or generic
 
-    // Depth mesh disabled per user request
-    if (xb.xrDepthMeshVisualizationOptions) {
-        o.depth = new xb.DepthOptions(xb.xrDepthMeshVisualizationOptions);
-        o.depth.enabled = false;
+    // WebXR Depth Sensing and Hardware Occlusion (invisible depth geometry, no debug mesh/web lines)
+    if (xb.xrDepthMeshOptions) {
+        o.depth = new xb.DepthOptions(xb.xrDepthMeshOptions);
+        o.depth.enabled = true;
         if (o.depth.depthMesh) {
-            o.depth.depthMesh.enabled = false;
+            o.depth.depthMesh.enabled = true;
             o.depth.depthMesh.showDebugTexture = false;
             o.depth.depthMesh.renderShadow = false;
+            o.depth.depthMesh.useDownsampledGeometry = true;
+            o.depth.depthMesh.updateFullResolutionGeometry = false;
+        }
+        if (o.depth.depthTexture) {
+            o.depth.depthTexture.enabled = true;
+        }
+        if (o.depth.occlusion) {
+            o.depth.occlusion.enabled = true;
         }
     }
 
@@ -4302,8 +5162,50 @@ function startVisionLoop() {
                             // Draw the raw, un-3D-rendered video straight to the canvas
                             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                             
-                            // Convert directly to Blob for the Vision API
-                            blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+                            // Check for pure black frames (e.g. Quest virtual avatar camera or missing camera permissions)
+                            let isBlackFrame = false;
+                            try {
+                                const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                                const data = imgData.data;
+                                let maxBrightness = 0;
+                                // Sample every 100 pixels (approx. 2,300 sample points across 640x360)
+                                for (let i = 0; i < data.length; i += 400) {
+                                    const brightness = data[i] + data[i + 1] + data[i + 2];
+                                    if (brightness > maxBrightness) {
+                                        maxBrightness = brightness;
+                                        if (maxBrightness > 15) break; // Light detected, early exit
+                                    }
+                                }
+                                if (maxBrightness <= 5) {
+                                    isBlackFrame = true;
+                                }
+                            } catch (pixErr) {
+                                console.warn("[FastLoop] Pixel check failed:", pixErr);
+                            }
+
+                            if (isBlackFrame) {
+                                if (!window._consecutiveBlackFrames) window._consecutiveBlackFrames = 0;
+                                window._consecutiveBlackFrames++;
+
+                                if (window._consecutiveBlackFrames === 2 || window._consecutiveBlackFrames % 20 === 0) {
+                                    console.warn(`[CameraDiagnostic] Solid black frame detected (${window._consecutiveBlackFrames} consecutive frames).`);
+                                    const track = app.deviceCamera?.currentTrackSettings_;
+                                    console.warn("[CameraDiagnostic] Current track settings:", track);
+
+                                    const isUserFacing = track?.facingMode === 'user' || track?.colorTemperature === 0;
+                                    if (isUserFacing) {
+                                        hud.log("⚠️ Quest avatar camera active (black feed). Enable Camera permissions in Quest Browser & Horizon OS Privacy Settings.", '#FFCC00');
+                                        hud.speak("Camera feed is black. Please enable camera permissions in Meta Quest Browser settings.");
+                                    } else {
+                                        hud.log("⚠️ Camera feed is black. Check physical camera permissions in Quest Browser settings.", '#FFCC00');
+                                    }
+                                }
+                                blob = null;
+                            } else {
+                                window._consecutiveBlackFrames = 0;
+                                // Convert directly to Blob for the Vision API
+                                blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+                            }
                         } catch (drawErr) {
                             console.warn("[FastLoop] Native Video to Canvas draw failed:", drawErr);
                         }
@@ -4471,7 +5373,19 @@ async function loadSavedAnchors() {
 
             const label = anchor.name || anchor.label || device.name || devId;
             const cat = anchor.category || (device.domain || 'light');
-            const mockGemini = { xmin: 0.4, xmax: 0.6, ymin: 0.4, ymax: 0.6, category: cat };
+            const isGroup = (anchor.type === 'lighting_group' || anchor.id?.startsWith('group_light_'));
+            const mockGemini = {
+                xmin: 0.4,
+                xmax: 0.6,
+                ymin: 0.4,
+                ymax: 0.6,
+                category: isGroup ? 'light' : cat,
+                type: isGroup ? 'lighting_group' : undefined,
+                isLightingGroup: isGroup,
+                groupId: anchor.id,
+                memberIds: Array.isArray(anchor.memberIds) ? anchor.memberIds : [],
+                isPositionLocked: !!anchor.isPositionLocked
+            };
             const vLight = new VirtualLight3D(mockGemini, label, 0.36, 0.5);
 
             if (anchor.position) {
@@ -4479,6 +5393,16 @@ async function loadSavedAnchors() {
             }
             if (anchor.quaternion) {
                 vLight.quaternion.set(anchor.quaternion.x, anchor.quaternion.y, anchor.quaternion.z, anchor.quaternion.w);
+            }
+
+            if (isGroup) {
+                vLight.isLightingGroup = true;
+                vLight.groupId = anchor.id;
+                vLight.memberIds = Array.isArray(anchor.memberIds) ? anchor.memberIds : [];
+                vLight.category = 'light';
+                vLight.isPositionLocked = !!anchor.isPositionLocked;
+                vLight.isCondensed = false;
+                vLight.isProximityExpanded = true;
             }
 
             vLight.unpaired = false;
@@ -4496,6 +5420,16 @@ async function loadSavedAnchors() {
                 xb.add(vLight);
             }
             restoredCount++;
+        }
+
+        // Hydrate GroupManager from loaded anchors
+        if (typeof groupManager !== 'undefined' && groupManager) {
+            groupManager.loadFromAnchors(anchors);
+            if (smartHome && smartHome.devices) {
+                groupManager.getAllGroups().forEach(grp => {
+                    groupManager.refreshGroupState(grp.id, smartHome.devices);
+                });
+            }
         }
 
         if (restoredCount > 0) {
@@ -4517,145 +5451,187 @@ async function toggleScan() {
     if (isToggling) return;
     isToggling = true;
 
-    // Determine target state based on current state
+    // Determine target state and immediately flip scan state flags
     const targetState = !isScanning;
-    
-    if (targetState) {
-        // --- STARTING SCAN ---
-        hud.log("Starting Camera...", '#FFFF00');
-        
-        // 0. Cleanup Unmapped Anchors from PREVIOUS session
-        const unmappedLights = virtualLights.filter(vl => !vl.realDevice && !vl.linkedNodeId);
-        unmappedLights.forEach(vl => {
-            if (vl.parent) {
-                vl.parent.remove(vl);
-            } else if (xb.scene) {
-                xb.scene.remove(vl);
-            }
-        });
-        if (unmappedLights.length > 0) {
-            hud.log(`Cleaned up ${unmappedLights.length} unmapped anchors.`, '#FF8800');
-        }
-        
-        // Keep only mapped lights
-        virtualLights = virtualLights.filter(vl => vl.realDevice || vl.linkedNodeId);
+    isScanning = targetState;
 
-        // 1. Flush Logic (Before setting isScanning = true)
-        // This prevents the fast loop from grabbing a stale frame while we flush
-        latestFrameBlob = null;
-        latestCameraMatrix = null;
-        lastScannedCameraMatrix = null;
-        lastScanTimestamp = 0;
-        
-        // 1b. Lifecycle: Inject hidden VideoView to force WebGL to poll AR frames
-        if (hud.mode !== '2D') {
-            const app = xb.core;
-            if (app && app.deviceCamera && app.deviceCamera.loaded) {
-                const video = app.deviceCamera.video;
-                
-                if (video) {
-                    hud.log("Waking up camera hardware...", '#FFFF00');
-                    
-                    // Force the video element to try playing if it was suspended
-                    video.play().catch(e => console.warn("Video play failed:", e));
-                    
-                    // Attach to DOM invisibly to signal the browser compositor to decode frames
-                    video.style.position = 'absolute';
-                    video.style.opacity = '0.01';
-                    video.style.width = '1px';
-                    video.style.height = '1px';
-                    video.style.pointerEvents = 'none';
-                    if (!video.parentNode) {
-                        document.body.appendChild(video);
+    // Flip UI buttons immediately for instant feedback
+    if (hud && hud.setScanState) hud.setScanState(targetState);
+    const domScanBtn = document.getElementById('scan-now-btn');
+    if (domScanBtn) {
+        domScanBtn.innerText = targetState ? "Stop Scanning ⏹️" : "Start Scanning ▶️";
+        domScanBtn.style.background = targetState ? "#e53935" : "#4285f4";
+    }
+
+    try {
+        if (targetState) {
+            // --- STARTING SCAN ---
+            hud.log("Starting Camera...", '#FFFF00');
+            
+            // 0. Cleanup Unmapped Anchors from PREVIOUS session
+            const unmappedLights = virtualLights.filter(vl => !vl.realDevice && !vl.linkedNodeId);
+            unmappedLights.forEach(vl => {
+                try {
+                    if (vl.parent) {
+                        vl.parent.remove(vl);
+                    } else if (xb.scene) {
+                        xb.scene.remove(vl);
                     }
+                } catch (e) {
+                    console.warn("[toggleScan] Cleanup anchor error:", e);
+                }
+            });
+            if (unmappedLights.length > 0) {
+                hud.log(`Cleaned up ${unmappedLights.length} unmapped anchors.`, '#FF8800');
+            }
+            
+            // Keep only mapped lights
+            virtualLights = virtualLights.filter(vl => vl.realDevice || vl.linkedNodeId);
+
+            // 1. Flush Logic
+            latestFrameBlob = null;
+            latestCameraMatrix = null;
+            lastScannedCameraMatrix = null;
+            lastScanTimestamp = 0;
+            
+            // 1b. Lifecycle: Inject hidden VideoView to force WebGL to poll AR frames
+            if (hud.mode !== '2D') {
+                const app = xb.core;
+                if (app && app.deviceCamera && app.deviceCamera.loaded) {
+                    const video = app.deviceCamera.video;
                     
-                    console.log("[DEBUG-SCAN] Starting 2-frame hardware wait...");
-                    const hardwareWaitStart = performance.now();
-                    // Wait for 2 freshly decoded hardware frames to prove the pipeline is flushed
-                    await new Promise(resolve => {
+                    if (video) {
+                        hud.log("Waking up camera hardware...", '#FFFF00');
+                        
+                        // Force the video element to try playing if it was suspended
+                        video.play().catch(e => console.warn("Video play failed:", e));
+                        
+                        // Attach to DOM invisibly to signal the browser compositor to decode frames
+                        video.style.position = 'absolute';
+                        video.style.opacity = '0.01';
+                        video.style.width = '1px';
+                        video.style.height = '1px';
+                        video.style.pointerEvents = 'none';
+                        if (!video.parentNode) {
+                            document.body.appendChild(video);
+                        }
+                        
+                        console.log("[DEBUG-SCAN] Starting 2-frame hardware wait...");
+                        const hardwareWaitStart = performance.now();
                         let frames = 0;
-                        const onFrame = () => {
-                            frames++;
-                            if (frames >= 2) {
+                        let timedOut = false;
+                        await new Promise(resolve => {
+                            const onFrame = () => {
+                                frames++;
+                                if (frames >= 2) {
+                                    resolve();
+                                } else if (video.requestVideoFrameCallback) {
+                                    video.requestVideoFrameCallback(onFrame);
+                                } else {
+                                    requestAnimationFrame(onFrame);
+                                }
+                            };
+                            
+                            const timeout = setTimeout(() => {
+                                timedOut = true;
                                 resolve();
-                            } else if (video.requestVideoFrameCallback) {
+                            }, 1500);
+                            
+                            if (video.requestVideoFrameCallback) {
                                 video.requestVideoFrameCallback(onFrame);
                             } else {
-                                // Fallback
-                                requestAnimationFrame(onFrame);
+                                setTimeout(onFrame, 100);
                             }
-                        };
-                        
-                        // Timeout safety just in case
-                        const timeout = setTimeout(resolve, 1500);
-                        
-                        if (video.requestVideoFrameCallback) {
-                            video.requestVideoFrameCallback(onFrame);
-                        } else {
-                            setTimeout(onFrame, 100);
+                        });
+                        const waitDuration = performance.now() - hardwareWaitStart;
+                        console.log(`[DEBUG-SCAN] Hardware wait resolved in ${waitDuration}ms (frames received: ${frames}, timedOut: ${timedOut}).`);
+
+                        const trackSettings = app.deviceCamera.currentTrackSettings_;
+                        console.log("[CameraDiagnostic] Active track settings:", trackSettings);
+
+                        if (timedOut && frames < 2) {
+                            console.warn("[CameraDiagnostic] Camera hardware wait timed out with 0 frames. Physical camera stream may be blocked or ungranted.");
+                            if (trackSettings?.facingMode === 'user' || trackSettings?.colorTemperature === 0) {
+                                hud.log("⚠️ Virtual avatar camera active (0 frames). Please allow Camera permission in Meta Quest Browser Settings & Horizon OS Privacy Settings.", '#FFCC00');
+                                hud.speak("Virtual camera active. Please grant camera permission in Meta Quest Browser settings.");
+                            } else {
+                                hud.log("⚠️ Camera frames timed out. Please check Camera permission in Quest Browser Settings.", '#FFCC00');
+                            }
                         }
-                    });
-                    console.log(`[DEBUG-SCAN] Hardware wait resolved in ${performance.now() - hardwareWaitStart}ms.`);
-                    
-                    if (app.deviceCamera.texture) {
-                        app.deviceCamera.texture.needsUpdate = true;
+
+                        // Enumerate devices to inspect video inputs and attempt environment selection if needed
+                        if (navigator.mediaDevices && typeof navigator.mediaDevices.enumerateDevices === 'function') {
+                            navigator.mediaDevices.enumerateDevices().then(devices => {
+                                const videoInputs = devices.filter(d => d.kind === 'videoinput');
+                                console.log("[CameraDiagnostic] Available videoinput devices:", videoInputs.map(d => ({ deviceId: d.deviceId, label: d.label, groupId: d.groupId })));
+                                if (trackSettings?.facingMode === 'user') {
+                                    const envDevice = videoInputs.find(d => 
+                                        d.label.toLowerCase().includes('environment') || 
+                                        d.label.toLowerCase().includes('back') || 
+                                        d.label.toLowerCase().includes('world')
+                                    );
+                                    if (envDevice && typeof app.deviceCamera.setDeviceId === 'function' && app.deviceCamera.getCurrentDevice()?.deviceId !== envDevice.deviceId) {
+                                        console.log("[CameraDiagnostic] Attempting switch to environment camera device:", envDevice.deviceId);
+                                        app.deviceCamera.setDeviceId(envDevice.deviceId).catch(e => console.warn("[CameraDiagnostic] Failed switching camera:", e));
+                                    }
+                                }
+                            }).catch(e => console.warn("[CameraDiagnostic] enumerateDevices error:", e));
+                        }
+                        
+                        if (app.deviceCamera.texture) {
+                            app.deviceCamera.texture.needsUpdate = true;
+                        }
                     }
+
+                    // Wait for 1 more frame just to ensure video size is propagated to DOM
+                    await new Promise(r => setTimeout(r, 50)); 
+                    console.log("[DEBUG-SCAN] deviceCamera hardware is successfully streaming.");
                 }
-
-                // Wait for 1 more frame just to ensure video size is propagated to DOM
-                await new Promise(r => setTimeout(r, 50)); 
-                console.log("[DEBUG-SCAN] deviceCamera hardware is successfully streaming.");
+            } else {
+                const canvas = document.getElementById('process-canvas');
+                await camera.captureFrame(canvas, false); 
             }
+
+            if (typeof scanningWeb !== 'undefined' && scanningWeb) {
+                scanningWeb.show();
+            }
+            
+            // Update all visual lights to toggle draggability OFF
+            virtualLights.forEach(vl => {
+                try {
+                    vl.updateVisuals();
+                } catch (e) {
+                    console.warn("[toggleScan] vl.updateVisuals error:", e);
+                }
+            });
+            
+            hud.speak("Scanning started. Please pan around.");
+            hud.log("Scanning Active...", '#00FF00');
+
         } else {
-            const canvas = document.getElementById('process-canvas');
-            await camera.captureFrame(canvas, false); 
-        }
-
-        // 2. Enable Scanning (Now safe)
-        isScanning = true;
-        if (typeof scanningWeb !== 'undefined' && scanningWeb) {
-            scanningWeb.show();
-        }
-        
-        // Update all visual lights to toggle draggability OFF
-        virtualLights.forEach(vl => vl.updateVisuals());
-        
-        // Update UI
-        if (hud && hud.setScanState) hud.setScanState(true);
-        hud.speak("Scanning started. Please pan around.");
-        hud.log("Scanning Active...", '#00FF00');
-
-    } else {
-        // --- STOPPING SCAN ---
-        isScanning = false;
-        if (typeof scanningWeb !== 'undefined' && scanningWeb) {
-            scanningWeb.hide();
-        }
-        
-        // Anchor cleanup moved to STARTING SCAN so anchors persist for pairing
-        
-        // Update all visual lights to toggle draggability ON (if unpaired)
-        virtualLights.forEach(vl => vl.updateVisuals());
-        
-        // Remove video from DOM to let hardware decoder sleep and save battery
-        if (hud.mode !== '2D') {
-            const app = xb.core;
-            if (app && app.deviceCamera && app.deviceCamera.video && app.deviceCamera.video.parentNode) {
-                app.deviceCamera.video.parentNode.removeChild(app.deviceCamera.video);
-                console.log("[Scan] Removed video element from DOM to sleep decoder.");
+            // --- STOPPING SCAN ---
+            if (typeof scanningWeb !== 'undefined' && scanningWeb) {
+                scanningWeb.hide();
             }
+            
+            // Update all visual lights to toggle draggability ON (if unpaired)
+            virtualLights.forEach(vl => {
+                try {
+                    vl.updateVisuals();
+                } catch (e) {
+                    console.warn("[toggleScan] vl.updateVisuals error:", e);
+                }
+            });
+            
+            hud.speak("Scanning paused. Configure lights.");
+            hud.log("Scanning Paused", '#FFFF00');
         }
-        
-        // We leave the keep-alive active permanently to prevent video freezing
-        // Only logging scanning pause now.
-        
-        // 4. Update UI
-        if (hud && hud.setScanState) hud.setScanState(false);
-        hud.speak("Scanning paused. Configure lights.");
-        hud.log("Scanning Paused", '#FFFF00');
+    } catch (err) {
+        console.error("[toggleScan] Execution error:", err);
+        hud.log("Scan error: " + (err.message || err), '#FF4444');
+    } finally {
+        isToggling = false;
     }
-    
-    isToggling = false;
 }
 
 async function startAssignmentFlow() {

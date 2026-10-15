@@ -24,6 +24,7 @@ export class HUDManager {
         this.scanButton = null;
         this.clearPairingsButton = null;
         this.onResetPairings = null;
+        this.onOpenRoomMenu = null;
         this.logGrid = null;
     }
 
@@ -111,9 +112,11 @@ export class HUDManager {
         if (this.panel) {
             this.menuPos.copy(this.panel.position);
             this.menuRot.copy(this.panel.rotation);
-            if (this.scene) {
+            if (this.panel.parent) {
+                this.panel.parent.remove(this.panel);
+            } else if (this.scene) {
                 this.scene.remove(this.panel);
-            } else if (xb.remove) {
+            } else if (typeof xb.remove === 'function') {
                 xb.remove(this.panel);
             }
         }
@@ -215,6 +218,30 @@ export class HUDManager {
 
         const actionButtons = [this.scanButton];
         if (this.isMenuExpanded) {
+            const roomMenuBtn = new xb.UIButton({
+                label: "ROOM & DEVICE MENU",
+                icon: "meeting_room",
+                ariaLabel: "Room and Device Menu",
+                style: {
+                    width: '100%',
+                    height: 38,
+                    borderRadius: 12,
+                    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+                    borderWidth: 1,
+                    borderColor: '#FFFFFF',
+                    color: '#FFFFFF',
+                    ':hover': {
+                        backgroundColor: 'rgba(255, 255, 255, 0.75)',
+                        color: '#000000',
+                        borderColor: '#FFFFFF',
+                    },
+                },
+                onClick: () => {
+                    if (this.onOpenRoomMenu) this.onOpenRoomMenu();
+                }
+            });
+            actionButtons.push(roomMenuBtn);
+
             this.clearPairingsButton = new xb.UIButton({
                 label: "CLEAR PAIRINGS",
                 icon: "delete_sweep",
@@ -296,7 +323,13 @@ export class HUDManager {
         if (this.mode === '2D') {
             this.draw2D();
         } else {
-            this.renderMenu();
+            if (this.scanButton) {
+                this.scanButton.label = scanning ? "STOP SCAN" : "START SCAN";
+                this.scanButton.icon = scanning ? "stop" : "search";
+                this.scanButton.ariaLabel = scanning ? "Stop Scan" : "Start Scan";
+            } else {
+                this.renderMenu();
+            }
         }
     }
 

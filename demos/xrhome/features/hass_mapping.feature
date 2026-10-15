@@ -66,3 +66,18 @@ Feature: Home Assistant Cloud Device Mapping to SLAM Anchors
     And any spatial panel that has not been successfully mapped to a Home Assistant Cloud device should be discarded
     And the system should remove all unmapped anchor coordinates from the authenticated user's database records
     And only the coordinates of fully mapped devices for that user should be retained for future sessions
+
+  Scenario: Mapping a spatial anchor directly to a multi-device lighting group
+    Given the user has configured a common lighting group "Living Room Ceiling & Lamps" containing multiple bulbs and switches
+    When the user selects an unmapped spatial anchor in the "Living Room"
+    And assigns the lighting group "Living Room Ceiling & Lamps" to this anchor
+    Then the spatial panel should bind to the lighting group UUID
+    And the panel should update its friendly name to "Living Room Ceiling & Lamps"
+    And controlling the anchor should dispatch synchronized commands to all member bulbs and switches
+
+  Scenario: Newly mapped spatial panel defaults to condensed glanceable mode
+    Given a spatial panel has just been successfully mapped to a device or group
+    When the user finishes the mapping workflow and moves their pointer away
+    Then the spatial panel should transition into condensed glanceable mode
+    And display only the friendly name and current status badge until re-targeted by a pointer
+

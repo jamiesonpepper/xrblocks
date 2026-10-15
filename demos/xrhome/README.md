@@ -1,7 +1,5 @@
 # XRHome (Home Assistant & WebXR Edition)
 
-# XRHome (Home Assistant & WebXR Edition)
-
 A full-stack, room-scale WebXR spatial computing application powered by **XRBlocks**, **Google Gemini 2.5 Flash Vision**, and **Home Assistant Cloud (Nabu Casa)** with **Firebase Cloud Functions & Firestore** for persistent 3D spatial smart home control in Augmented Reality (AR) and Mixed Reality (MR).
 
 ---
@@ -49,9 +47,18 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 - **Headset Companion Pairing Page (`pairing.html`)**: Avoid typing complex long-lived tokens and API keys on headset virtual keyboards. Open `pairing.html` on a desktop or phone browser, sign in with Google, and save credentials directly to your headset user profile.
 - **Dynamic Key Synchronization & Clear Error Handling**: Gemini API credentials synchronize dynamically with `VisionManager`. HTTP 402 errors ("Payment Required" / depleted prepayment credits in Google AI Studio) are parsed with clear diagnostic messages on the HUD and UI.
 
+### 5. Adaptive UI, Gaze/Pointer Controls & Grouping (Version 2.14)
+
+- **Compact vs. Full Telemetry Modes**: Ambient device cards default to a glanceable compact mode displaying live telemetry status badges (e.g. power state, temperature, lock status). Interacting with or focusing on the card smoothly reveals full controls (sliders, color pickers, action buttons).
+- **Gaze and Controller Ray / Pointer Proximity Expansion**: Bringing an XR controller ray or gazing at a spatial card smoothly expands the card height into full interactive view with a responsive hysteresis grace period, maintaining a single unified card identity without flickering or secondary card popups.
+- **Lighting & Appliance Groups (Beta)**: Added support for grouping multiple lights and switches into unified spatial group cards featuring synchronized master power toggles, group position locking, and collective status. *(Note: Group functionality is currently in preview/beta and still requires improvements and refinements for edge-case state synchronization, position locking, and group member editing).*
+- **Auxiliary Room/Area Control Menu**: Floating 3D dashboard grouped by Home Assistant room areas with batch controls ("All Off" per room), instant device toggles, and a 3D directional tracer beacon to locate physical anchors.
+- **Glassmorphic Monochromatic Design System**: Standardized styling across all 3D device UICards, auxiliary room menu, and HUD with translucent glassmorphic backgrounds (`rgba(0, 0, 0, 0.20)`), uniform 1.5px white borders, 20px rounded corners, and interactive hover feedback.
+
 ---
 
 ## User Interaction Guide
+
 
 ### 1. Initial Launch & HUD Setup
 
@@ -186,8 +193,12 @@ demos/xrhome/
 ├── keypad.js                  # 3D spatial virtual keypad for PIN entry and numeric input
 ├── webrtc.js                  # Camera feed capturing & frame management
 ├── auth.js                    # Firebase Auth client wrapper
+├── components/
+│   └── auxiliary-room-menu.js # Unified Auxiliary Room/Area Device Selector & Control Menu
 ├── services/
-│   └── firebase-ha-integration.js  # WebSocket bus, state hydration & entity management
+│   ├── firebase-ha-integration.js  # WebSocket bus, state hydration & entity management
+│   ├── group-manager.js       # Lighting and appliance group manager
+│   └── occlusion-manager.js   # Spatial occlusion and security pass-through manager
 ├── functions/
 │   ├── index.js               # Cloud Functions (getHaDevices, controlHaDevice, anchors)
 │   ├── .env.sample            # Environment variable template
@@ -195,6 +206,7 @@ demos/xrhome/
 └── features/
     ├── hass_mapping.feature   # BDD feature spec: Home Assistant Cloud Device Mapping
     ├── house_scale_slam.feature # BDD feature spec: House-Scale SLAM & Spatial Anchoring
+    ├── lighting_groups_and_adaptive_ui.feature # BDD feature spec: Lighting Groups & Adaptive UI
     ├── multiuser_auth_and_pairings.feature # BDD feature spec: Multi-User Google Auth & Isolated Pairings
     └── implementation_plan.md # Architecture & integration design document
 ```
