@@ -108,10 +108,21 @@ export class AuxiliaryRoomMenu {
     }
 
     render(camera) {
-        if (this.panel && this.scene) {
-            this.scene.remove(this.panel);
+        let previousPos = null;
+        let previousQuat = null;
+        if (this.panel) {
+            previousPos = this.panel.position.clone();
+            previousQuat = this.panel.quaternion.clone();
+            if (this.scene) {
+                this.scene.remove(this.panel);
+            }
             this.panel = null;
         }
+
+        if (camera) {
+            this.lastCamera = camera;
+        }
+        const activeCamera = camera || this.lastCamera;
 
         const devices = Array.from((this.smartHome && this.smartHome.devices) ? this.smartHome.devices.values() : []);
         // Group by Area
@@ -177,19 +188,21 @@ export class AuxiliaryRoomMenu {
                 style: { fontSize: 14, fontWeight: 'bold', color: '#FFFFFF', flexGrow: 1 }
             });
 
-            // "All Off" button for area
+            // "All Off" / "All On" toggle button for area
+            const isAnyActive = onDevs.length > 0;
             const allOffBtn = new xb.UIButton({
-                label: "All Off",
-                ariaLabel: `All Off for ${areaName}`,
+                label: isAnyActive ? "All Off" : "All On",
+                ariaLabel: isAnyActive ? `All Off for ${areaName}` : `All On for ${areaName}`,
                 style: {
                     width: 72,
                     height: 28,
                     borderRadius: 6,
-                    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+                    backgroundColor: isAnyActive ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.28)',
                     borderColor: '#FFFFFF',
                     borderWidth: 1,
                     color: '#FFFFFF',
                     fontSize: 11,
+                    fontWeight: 'bold',
                     ':hover': {
                         backgroundColor: 'rgba(255, 255, 255, 0.75)',
                         color: '#000000',
@@ -197,17 +210,60 @@ export class AuxiliaryRoomMenu {
                     },
                 },
                 onClick: async () => {
+                    const targetState = !isAnyActive;
+                    const promises = [];
                     for (const dev of areaDevs) {
-                        if (dev.isOn || dev.state === 'on') {
-                            const domain = dev.domain || dev.id.split('.')[0];
+                        const domain = dev.domain || dev.id.split('.')[0];
+                        dev.isOn = targetState;
+                        dev.state = targetState ? 'on' : 'off';
+
+                        // Sync in-scene VirtualLight3D instances immediately
+                        if (this.virtualLights && this.virtualLights.length > 0) {
+                            const vl = this.virtualLights.find(v => v.realDevice?.id === dev.id);
+                            if (vl) {
+                                vl.isOn = targetState;
+                                if (vl.realDevice) {
+                                    vl.realDevice.isOn = targetState;
+                                    vl.realDevice.state = dev.state;
+                                }
+                                if (typeof vl.updateVisuals === 'function') {
+                                    vl.updateVisuals();
+                                }
+                            }
+                        }
+
+                        if (this.smartHome) {
                             if (domain === 'light') {
-                                await this.smartHome.toggleLight(dev.id, false);
-                            } else {
-                                await this.smartHome.controlDevice(dev.id, 'turn_off', {}, domain);
+                                if (typeof this.smartHome.toggleLight === 'function') {
+                                    promises.push(this.smartHome.toggleLight(dev.id, targetState));
+                                } else if (typeof this.smartHome.controlDevice === 'function') {
+                                    promises.push(this.smartHome.controlDevice(dev.id, targetState ? 'turn_on' : 'turn_off', {}, 'light'));
+                                }
+                            } else if (domain === 'switch') {
+                                if (typeof this.smartHome.toggleSwitch === 'function') {
+                                    promises.push(this.smartHome.toggleSwitch(dev.id, targetState));
+                                } else if (typeof this.smartHome.controlDevice === 'function') {
+                                    promises.push(this.smartHome.controlDevice(dev.id, targetState ? 'turn_on' : 'turn_off', {}, 'switch'));
+                                }
+                            } else if (domain === 'lock') {
+                                if (typeof this.smartHome.controlLock === 'function') {
+                                    promises.push(this.smartHome.controlLock(dev.id, targetState ? 'lock' : 'unlock'));
+                                }
+                            } else if (typeof this.smartHome.controlDevice === 'function') {
+                                promises.push(this.smartHome.controlDevice(dev.id, targetState ? 'turn_on' : 'turn_off', {}, domain));
                             }
                         }
                     }
-                    this.render(camera);
+
+                    // Immediately re-render so "All Off" switches to "All On" (and vice versa) with zero lag
+                    this.render();
+
+                    // Concurrently dispatch Home Assistant API calls in background
+                    try {
+                        await Promise.allSettled(promises);
+                    } catch (e) {
+                        console.warn(`[AuxiliaryRoomMenu] Error toggling area devices:`, e);
+                    }
                 }
             });
 
@@ -231,7 +287,7 @@ export class AuxiliaryRoomMenu {
                 onClick: () => {
                     if (isExpanded) this.expandedAreas.delete(areaName);
                     else this.expandedAreas.add(areaName);
-                    this.render(camera);
+                    this.render();
                 }
             });
 
@@ -284,16 +340,54 @@ export class AuxiliaryRoomMenu {
                             },
                         },
                         onClick: async () => {
-                            if (domain === 'light') {
-                                await this.smartHome.toggleLight(dev.id, !isOn);
-                            } else if (domain === 'lock') {
-                                await this.smartHome.controlLock(dev.id, isOn ? 'unlock' : 'lock');
-                            } else if (domain === 'cover') {
-                                await this.smartHome.toggleCover(dev.id);
-                            } else {
-                                await this.smartHome.controlDevice(dev.id, isOn ? 'turn_off' : 'turn_on', {}, domain);
+                            const nextOn = !isOn;
+                            dev.isOn = nextOn;
+                            dev.state = nextOn ? 'on' : 'off';
+
+                            // Sync in-scene VirtualLight3D instances immediately
+                            if (this.virtualLights && this.virtualLights.length > 0) {
+                                const vl = this.virtualLights.find(v => v.realDevice?.id === dev.id);
+                                if (vl) {
+                                    vl.isOn = nextOn;
+                                    if (vl.realDevice) {
+                                        vl.realDevice.isOn = nextOn;
+                                        vl.realDevice.state = dev.state;
+                                    }
+                                    if (typeof vl.updateVisuals === 'function') {
+                                        vl.updateVisuals();
+                                    }
+                                }
                             }
-                            this.render(camera);
+
+                            this.render();
+
+                            try {
+                                if (domain === 'light') {
+                                    if (typeof this.smartHome.toggleLight === 'function') {
+                                        await this.smartHome.toggleLight(dev.id, nextOn);
+                                    } else if (typeof this.smartHome.controlDevice === 'function') {
+                                        await this.smartHome.controlDevice(dev.id, nextOn ? 'turn_on' : 'turn_off', {}, 'light');
+                                    }
+                                } else if (domain === 'switch') {
+                                    if (typeof this.smartHome.toggleSwitch === 'function') {
+                                        await this.smartHome.toggleSwitch(dev.id, nextOn);
+                                    } else if (typeof this.smartHome.controlDevice === 'function') {
+                                        await this.smartHome.controlDevice(dev.id, nextOn ? 'turn_on' : 'turn_off', {}, 'switch');
+                                    }
+                                } else if (domain === 'lock') {
+                                    if (typeof this.smartHome.controlLock === 'function') {
+                                        await this.smartHome.controlLock(dev.id, nextOn ? 'lock' : 'unlock');
+                                    }
+                                } else if (domain === 'cover') {
+                                    if (typeof this.smartHome.toggleCover === 'function') {
+                                        await this.smartHome.toggleCover(dev.id);
+                                    }
+                                } else if (typeof this.smartHome.controlDevice === 'function') {
+                                    await this.smartHome.controlDevice(dev.id, nextOn ? 'turn_on' : 'turn_off', {}, domain);
+                                }
+                            } catch (e) {
+                                console.warn(`[AuxiliaryRoomMenu] Error toggling device ${dev.id}:`, e);
+                            }
                         }
                     });
 
@@ -358,12 +452,15 @@ export class AuxiliaryRoomMenu {
             children: contentChildren
         });
 
-        // Position menu in front of camera
-        if (camera) {
+        // Position menu in front of camera or preserve live transform
+        if (previousPos && previousQuat) {
+            this.panel.position.copy(previousPos);
+            this.panel.quaternion.copy(previousQuat);
+        } else if (activeCamera) {
             const camPos = new THREE.Vector3();
             const camDir = new THREE.Vector3();
-            camera.getWorldPosition(camPos);
-            camera.getWorldDirection(camDir);
+            activeCamera.getWorldPosition(camPos);
+            activeCamera.getWorldDirection(camDir);
 
             const menuPos = camPos.clone().add(camDir.multiplyScalar(1.2));
             menuPos.y = Math.max(1.15, camPos.y - 0.05);

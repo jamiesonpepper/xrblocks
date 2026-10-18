@@ -24,6 +24,8 @@ const _scratchDragOffset = new THREE.Vector3();
 let dragController = null;
 let dragOffset = new THREE.Vector3();
 let dragQuaternion = new THREE.Quaternion();
+let dragStartPos = new THREE.Vector3();
+let isActivelyDragging = false;
 
 // Vision Buffers (Global for access by toggleScan)
 let latestFrameBlob = null;
@@ -75,15 +77,27 @@ class HUDInteraction extends xb.Script {
             dragController.getWorldPosition(_scratchDragPos);
             dragController.getWorldQuaternion(_scratchDragQuat);
             
-            // Apply local offset stored in dragOffset (rotated)
-            _scratchDragOffset.copy(dragOffset).applyQuaternion(_scratchDragQuat);
-            objectToMove.position.copy(_scratchDragPos).add(_scratchDragOffset);
+            // Require an intentional 2.5cm drag deadzone so clicks on buttons don't shift card position
+            if (!isActivelyDragging) {
+                if (_scratchDragPos.distanceTo(dragStartPos) > 0.025) {
+                    isActivelyDragging = true;
+                    if (typeof VirtualLight3D !== 'undefined' && objectToMove instanceof VirtualLight3D) {
+                        objectToMove.hasBeenMoved = true;
+                    }
+                }
+            }
             
-            // Lock rotation to controller
-            objectToMove.quaternion.copy(_scratchDragQuat).multiply(dragQuaternion);
-            
-            // Force Panel Matrix World sync to ensure hitting raycasts align with visible location immediately
-            if (objectToMove.updateMatrixWorld) objectToMove.updateMatrixWorld(true);
+            if (isActivelyDragging || (typeof VirtualLight3D !== 'undefined' && !(objectToMove instanceof VirtualLight3D))) {
+                // Apply local offset stored in dragOffset (rotated)
+                _scratchDragOffset.copy(dragOffset).applyQuaternion(_scratchDragQuat);
+                objectToMove.position.copy(_scratchDragPos).add(_scratchDragOffset);
+                
+                // Lock rotation to controller
+                objectToMove.quaternion.copy(_scratchDragQuat).multiply(dragQuaternion);
+                
+                // Force Panel Matrix World sync to ensure hitting raycasts align with visible location immediately
+                if (objectToMove.updateMatrixWorld) objectToMove.updateMatrixWorld(true);
+            }
         }
 
         // --- Live Camera Texture Pump: drive camera video to canvas only when new frame ready ---
@@ -359,7 +373,7 @@ function onXRSelectStart(event) {
     if (keypad && keypad.panel) draggables.push(keypad.panel);
     if (virtualLights && virtualLights.length > 0) {
         for (const vl of virtualLights) {
-            const isPaired = !!(vl.realDevice || vl.linkedNodeId);
+            const isPaired = !!(vl.realDevice || vl.linkedNodeId || vl.isLightingGroup);
             const canDrag = (!isPaired || (vl.isLightingGroup && !vl.isPositionLocked)) && !vl.isSelectingDevice;
             if (canDrag && vl.panel) {
                 draggables.push(vl.panel);
@@ -416,19 +430,21 @@ function onXRSelectStart(event) {
         // Allow dragging initial unpaired cards and unlocked Lighting Group cards
         if (virtualLights && virtualLights.length > 0) {
             for (const vl of virtualLights) {
-                const isPaired = !!(vl.realDevice || vl.linkedNodeId);
+                const isPaired = !!(vl.realDevice || vl.linkedNodeId || vl.isLightingGroup);
                 const canDrag = (!isPaired || (vl.isLightingGroup && !vl.isPositionLocked)) && !vl.isSelectingDevice;
                 if (canDrag && vl.panel && (hit.object === vl.panel || isDescendant(hit.object, vl.panel))) {
                     if (!isInteractive(hit.object, vl.panel)) {
                         dragController = controller;
                         const objectToMove = vl; // Move group in world space
-                        vl.hasBeenMoved = true;
                         dragController.userData.selected = objectToMove;
                         
                         const cPos = new THREE.Vector3();
                         const cQuat = new THREE.Quaternion();
                         controller.getWorldPosition(cPos);
                         controller.getWorldQuaternion(cQuat);
+                        
+                        dragStartPos.copy(cPos);
+                        isActivelyDragging = false;
                         
                         dragOffset.copy(objectToMove.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
                         dragQuaternion.copy(cQuat.clone().invert()).multiply(objectToMove.quaternion);
@@ -443,9 +459,11 @@ function onXRSelectStart(event) {
 function onXRSelectEnd(event) {
     if (dragController === event.target) {
         const selected = dragController.userData ? dragController.userData.selected : null;
+        const wasDragging = isActivelyDragging;
         dragController = null;
+        isActivelyDragging = false;
 
-        if (selected) {
+        if (selected && wasDragging) {
             let targetVL = null;
             if (typeof VirtualLight3D !== 'undefined' && selected instanceof VirtualLight3D) {
                 targetVL = selected;
@@ -513,7 +531,7 @@ import { HUDManager } from './hud.js?v=29';
 import { VirtualKeypad } from './keypad.js?v=27';
 import { GroupManager } from './services/group-manager.js';
 import { OcclusionManager } from './services/occlusion-manager.js';
-import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=31';
+import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=32';
 
 // Globals
 const auth = new AuthManager();
@@ -1192,6 +1210,22 @@ class VirtualLight3D extends THREE.Group {
           return `🐱 ${rState}`;
       }
       return this.isOn ? 'ON' : 'OFF';
+  }
+
+  syncTransformFromPanel() {
+      if (this.panel && (this.panel.position.lengthSq() > 0.0001 || this.panel.quaternion.x !== 0 || this.panel.quaternion.y !== 0 || this.panel.quaternion.z !== 0)) {
+          const worldPos = new THREE.Vector3();
+          const worldQuat = new THREE.Quaternion();
+          this.panel.getWorldPosition(worldPos);
+          this.panel.getWorldQuaternion(worldQuat);
+          if (this.parent) {
+              this.parent.worldToLocal(worldPos);
+          }
+          this.position.copy(worldPos);
+          this.quaternion.copy(worldQuat);
+          this.panel.position.set(0, 0, 0);
+          this.panel.quaternion.identity();
+      }
   }
   
   rebuildPanel() {
@@ -2688,39 +2722,58 @@ class VirtualLight3D extends THREE.Group {
 
           let groupActionBtn = null;
           if (this.isLightingGroup) {
-              const lockIconName = this.isPositionLocked ? 'lock' : 'lock_open';
+              const isLocked = !!this.isPositionLocked;
+              const lockIconName = isLocked ? 'lock' : 'lock_open';
               const lockBtn = new xb.UIButton({
-                  label: '',
-                  icon: lockIconName,
-                  ariaLabel: this.isPositionLocked ? 'Unlock Group Position' : 'Lock Group Position',
+                  ariaLabel: isLocked ? 'Unlock Group Position' : 'Lock Group Position',
                   userData: { interactive: true },
                   style: {
                       width: 44,
                       height: 36,
                       borderRadius: 8,
-                      backgroundColor: this.isPositionLocked ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.16)',
-                      borderWidth: 1,
+                      backgroundColor: isLocked ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.16)',
+                      borderWidth: 1.5,
                       borderColor: '#FFFFFF',
                       color: '#FFFFFF',
                       alignItems: 'center',
                       justifyContent: 'center',
+                      padding: 0,
                       ':hover': {
                           backgroundColor: 'rgba(255, 255, 255, 0.75)',
                           color: '#000000',
                           borderColor: '#FFFFFF',
                       },
                   },
+                  children: [
+                      new xb.UIIcon({
+                          icon: lockIconName,
+                          style: {
+                              width: 32,
+                              height: 32,
+                              color: '#FFFFFF'
+                          }
+                      })
+                  ],
                   onClick: () => {
-                      this.isPositionLocked = !this.isPositionLocked;
+                      if (!this.isPositionLocked) {
+                          this.isPositionLocked = true;
+                          const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(this.groupId) : null;
+                          if (grp) {
+                              grp.isPositionLocked = true;
+                              grp.position = { x: this.position.x, y: this.position.y, z: this.position.z };
+                              grp.quaternion = { x: this.quaternion.x, y: this.quaternion.y, z: this.quaternion.z, w: this.quaternion.w };
+                              groupManager.saveGroups(smartHome);
+                          }
+                      } else {
+                          this.isPositionLocked = false;
+                          const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(this.groupId) : null;
+                          if (grp) {
+                              grp.isPositionLocked = false;
+                              groupManager.saveGroups(smartHome);
+                          }
+                      }
                       if (this.panel) {
                           this.panel.manipulation = !this.isPositionLocked;
-                      }
-                      const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(this.groupId) : null;
-                      if (grp) {
-                          grp.isPositionLocked = this.isPositionLocked;
-                          grp.position = { x: this.position.x, y: this.position.y, z: this.position.z };
-                          grp.quaternion = { x: this.quaternion.x, y: this.quaternion.y, z: this.quaternion.z, w: this.quaternion.w };
-                          groupManager.saveGroups(smartHome);
                       }
                       hud.speak(this.isPositionLocked ? 'Group position locked' : 'Group position unlocked');
                       hud.log(this.isPositionLocked ? 'Group position locked' : 'Group position unlocked', '#FFFFFF');
@@ -2730,18 +2783,20 @@ class VirtualLight3D extends THREE.Group {
 
               groupActionBtn = new xb.UIButton({
                   label: 'Disband',
-                  icon: 'delete',
                   ariaLabel: 'Disband Lighting Group',
                   userData: { interactive: true },
                   style: {
-                      width: 78,
+                      flexGrow: 1,
                       height: 36,
                       borderRadius: 8,
                       backgroundColor: 'rgba(255, 255, 255, 0.16)',
-                      borderWidth: 1,
+                      borderWidth: 1.5,
                       borderColor: '#FFFFFF',
                       color: '#FFFFFF',
-                      fontSize: 12,
+                      fontSize: 13,
+                      fontWeight: 'bold',
+                      alignItems: 'center',
+                      justifyContent: 'center',
                       ':hover': {
                           backgroundColor: 'rgba(255, 255, 255, 0.75)',
                           color: '#000000',
@@ -2758,8 +2813,6 @@ class VirtualLight3D extends THREE.Group {
           } else if (domain === 'light' || domain === 'switch') {
               const groupIconName = isGroupMember ? 'person' : 'group';
               groupActionBtn = new xb.UIButton({
-                  label: '',
-                  icon: groupIconName,
                   ariaLabel: isGroupMember ? 'Remove from Lighting Group (Make Individual)' : 'Add to Lighting Group',
                   userData: { interactive: true },
                   style: {
@@ -2767,17 +2820,28 @@ class VirtualLight3D extends THREE.Group {
                       height: 36,
                       borderRadius: 8,
                       backgroundColor: isGroupMember ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.16)',
-                      borderWidth: 1,
+                      borderWidth: 1.5,
                       borderColor: '#FFFFFF',
                       color: '#FFFFFF',
                       alignItems: 'center',
                       justifyContent: 'center',
+                      padding: 0,
                       ':hover': {
                           backgroundColor: 'rgba(255, 255, 255, 0.75)',
                           color: '#000000',
                           borderColor: '#FFFFFF',
                       },
                   },
+                  children: [
+                      new xb.UIIcon({
+                          icon: groupIconName,
+                          style: {
+                              width: 32,
+                              height: 32,
+                              color: '#FFFFFF'
+                          }
+                      })
+                  ],
                   onClick: () => this.handleGroupClick()
               });
 
@@ -2988,8 +3052,8 @@ class VirtualLight3D extends THREE.Group {
           size: { width: this.panelWidth, height: 'auto' },
           sizeX: this.panelWidth,
           anchorX: 'center',
-          anchorY: 'top',
-          manipulation: canDrag,
+          anchorY: this.isLightingGroup ? 'center' : 'top',
+          manipulation: this.isLightingGroup ? false : canDrag,
           style: {
               flexDirection: 'column',
               gap: 12,
@@ -3003,9 +3067,14 @@ class VirtualLight3D extends THREE.Group {
       });
 
       this.panel.position.set(0, 0, 0);
-      this.panel.scale.set(0.9, 0.9, 0.9);
-      this._scaleAnimStartTime = performance.now();
-      this._scaleAnimDuration = 150;
+      if (this.isLightingGroup) {
+          this.panel.scale.set(1, 1, 1);
+          this._scaleAnimStartTime = null;
+      } else {
+          this.panel.scale.set(0.9, 0.9, 0.9);
+          this._scaleAnimStartTime = performance.now();
+          this._scaleAnimDuration = 150;
+      }
 
       this.add(this.panel);
       this.visible = true;
@@ -3119,19 +3188,7 @@ class VirtualLight3D extends THREE.Group {
       } else {
             // ENTER SELECTION MODE
             // Tree menu takes its exact positional and rotational reference from the UICard when Pair Device is clicked
-            if (this.panel) {
-                const worldPos = new THREE.Vector3();
-                const worldQuat = new THREE.Quaternion();
-                this.panel.getWorldPosition(worldPos);
-                this.panel.getWorldQuaternion(worldQuat);
-                if (this.parent) {
-                    this.parent.worldToLocal(worldPos);
-                }
-                this.position.copy(worldPos);
-                this.quaternion.copy(worldQuat);
-                this.panel.position.set(0, 0, 0);
-                this.panel.quaternion.identity();
-            }
+            this.syncTransformFromPanel();
             this.isSelectingDevice = true;
             this.devicePage = 0;
             const cat = (this.category || '').toLowerCase();
@@ -3714,9 +3771,9 @@ class VirtualLight3D extends THREE.Group {
                   }
               } else {
                   // Preserve live 3D position
+                  existingGroup.isPositionLocked = !!grpCard.isPositionLocked;
                   existingGroup.position = { x: grpCard.position.x, y: grpCard.position.y, z: grpCard.position.z };
                   existingGroup.quaternion = { x: grpCard.quaternion.x, y: grpCard.quaternion.y, z: grpCard.quaternion.z, w: grpCard.quaternion.w };
-                  existingGroup.isPositionLocked = !!grpCard.isPositionLocked;
                   grpCard.memberIds = existingGroup.memberIds;
                   if (grpCard.rebuildPanel) grpCard.rebuildPanel();
               }
@@ -3742,10 +3799,10 @@ class VirtualLight3D extends THREE.Group {
 
           let grpCard = virtualLights.find(vl => vl.isLightingGroup && vl.groupId === targetGroup.id);
           if (grpCard) {
-              // Crucial: sync current live 3D position and rotation so card NEVER snaps back to spawn!
+              // Crucial: keep card 100% stationary and update group metadata
+              targetGroup.isPositionLocked = !!grpCard.isPositionLocked;
               targetGroup.position = { x: grpCard.position.x, y: grpCard.position.y, z: grpCard.position.z };
               targetGroup.quaternion = { x: grpCard.quaternion.x, y: grpCard.quaternion.y, z: grpCard.quaternion.z, w: grpCard.quaternion.w };
-              targetGroup.isPositionLocked = !!grpCard.isPositionLocked;
               grpCard.memberIds = targetGroup.memberIds;
               grpCard.isCondensed = false; // Group UICards always in full display mode
               grpCard.isProximityExpanded = true;
