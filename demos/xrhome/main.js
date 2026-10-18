@@ -31,6 +31,31 @@ let latestCameraMatrix = null;
 let lastScannedCameraMatrix = null;
 let lastScanTimestamp = 0;
 
+// Protect against Three.js ShapePath.toShapes crashing on SVGs with degenerate/empty subpaths (e.g. add_circle, info, help)
+if (typeof THREE !== 'undefined' && THREE.ShapePath && THREE.ShapePath.prototype) {
+    const origToShapes = THREE.ShapePath.prototype.toShapes;
+    THREE.ShapePath.prototype.toShapes = function(isCCW) {
+        if (this.subPaths && Array.isArray(this.subPaths)) {
+            this.subPaths = this.subPaths.filter(sp => {
+                const pts = sp.getPoints ? sp.getPoints() : [];
+                return pts && pts.length > 0;
+            });
+        }
+        try {
+            return origToShapes.call(this, isCCW);
+        } catch (err) {
+            console.warn('[SVG Safeguard] toShapes recovered from error:', err);
+            const fallbackShapes = [];
+            for (const sp of (this.subPaths || [])) {
+                const s = new THREE.Shape();
+                s.curves = sp.curves || [];
+                fallbackShapes.push(s);
+            }
+            return fallbackShapes;
+        }
+    };
+}
+
 // Protect against upstream XRBlocks ScriptMixin calling non-existent super.dispose() on UIKit nodes
 if (typeof xb !== 'undefined' && xb.Script && xb.Script.prototype) {
     const origDispose = xb.Script.prototype.dispose;
@@ -1316,7 +1341,7 @@ class VirtualLight3D extends THREE.Group {
           // --- UNPAIRED UI ---
           const btn = new xb.UIButton({
               label: 'Pair Device',
-              icon: 'add_circle',
+              icon: 'add',
               ariaLabel: 'Pair Device',
               userData: { interactive: true },
               style: {

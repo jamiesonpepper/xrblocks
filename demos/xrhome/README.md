@@ -55,6 +55,12 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 - **Auxiliary Room/Area Control Menu**: Floating 3D dashboard grouped by Home Assistant room areas with batch controls ("All Off" per room), instant device toggles, and a 3D directional tracer beacon to locate physical anchors.
 - **Glassmorphic Monochromatic Design System**: Standardized styling across all 3D device UICards, auxiliary room menu, and HUD with translucent glassmorphic backgrounds (`rgba(0, 0, 0, 0.20)`), uniform 1.5px white borders, 20px rounded corners, and interactive hover feedback.
 
+### 6. Stability, SDK Synchronization & Three.js Bump (Version 2.15)
+
+- **Three.js Bump to `0.186.0`**: Synchronized `index.html` import map with upstream XRBlocks SDK requirements, upgrading from `three@0.184.0` to `three@0.186.0` to leverage the robust Paper.js-based polygon containment algorithm.
+- **Defensive ShapePath Polyfill**: Added runtime protection against Three.js `ShapePath.toShapes()` point-in-polygon crashes (`Cannot read properties of undefined (reading 'y')`) on SVGs containing empty or degenerate subpaths.
+- **Icon Normalization & UI Cache Invalidation**: Normalized unpaired device card icon from `add_circle` to `add` and bumped client bundle cache busters (`main.js?v=93`) to ensure clean hydration on headset browsers.
+
 ---
 
 ## User Interaction Guide
