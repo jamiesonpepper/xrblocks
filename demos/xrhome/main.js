@@ -443,6 +443,7 @@ function onXRSelectStart(event) {
                 const canDrag = (!isPaired || (vl.isLightingGroup && !vl.isPositionLocked)) && !vl.isSelectingDevice;
                 if (canDrag && vl.panel && (hit.object === vl.panel || isDescendant(hit.object, vl.panel))) {
                     if (!isInteractive(hit.object, vl.panel)) {
+                        if (vl.syncTransformFromPanel) vl.syncTransformFromPanel();
                         dragController = controller;
                         const objectToMove = vl; // Move group in world space
                         dragController.userData.selected = objectToMove;
@@ -484,6 +485,7 @@ function onXRSelectEnd(event) {
             }
 
             if (targetVL) {
+                if (targetVL.syncTransformFromPanel) targetVL.syncTransformFromPanel();
                 if (targetVL.isLightingGroup && targetVL.groupId) {
                     const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(targetVL.groupId) : null;
                     if (grp) {
@@ -1225,22 +1227,43 @@ class VirtualLight3D extends THREE.Group {
   }
 
   syncTransformFromPanel() {
-      if (this.panel && (this.panel.position.lengthSq() > 0.0001 || this.panel.quaternion.x !== 0 || this.panel.quaternion.y !== 0 || this.panel.quaternion.z !== 0)) {
+      if (this.panel && (this.panel.position.lengthSq() > 0.0001 || Math.abs(this.panel.quaternion.x) > 0.0001 || Math.abs(this.panel.quaternion.y) > 0.0001 || Math.abs(this.panel.quaternion.z) > 0.0001 || Math.abs(this.panel.quaternion.w - 1) > 0.0001)) {
           const worldPos = new THREE.Vector3();
           const worldQuat = new THREE.Quaternion();
           this.panel.getWorldPosition(worldPos);
           this.panel.getWorldQuaternion(worldQuat);
           if (this.parent) {
               this.parent.worldToLocal(worldPos);
+              const parentWorldQuat = new THREE.Quaternion();
+              this.parent.getWorldQuaternion(parentWorldQuat);
+              worldQuat.premultiply(parentWorldQuat.invert());
           }
           this.position.copy(worldPos);
           this.quaternion.copy(worldQuat);
           this.panel.position.set(0, 0, 0);
           this.panel.quaternion.identity();
+          this.hasBeenMoved = true;
       }
   }
   
   rebuildPanel() {
+      this.syncTransformFromPanel();
+
+      if (this.isLightingGroup && this.groupId && typeof groupManager !== 'undefined' && groupManager) {
+          const grp = groupManager.getGroup(this.groupId);
+          if (grp) {
+              if (this.isPositionLocked && grp.position) {
+                  this.position.set(grp.position.x, grp.position.y, grp.position.z);
+                  if (grp.quaternion) {
+                      this.quaternion.set(grp.quaternion.x, grp.quaternion.y, grp.quaternion.z, grp.quaternion.w);
+                  }
+              } else if (this.hasBeenMoved) {
+                  grp.position = { x: this.position.x, y: this.position.y, z: this.position.z };
+                  grp.quaternion = { x: this.quaternion.x, y: this.quaternion.y, z: this.quaternion.z, w: this.quaternion.w };
+              }
+          }
+      }
+
       const isPaired = !!(this.realDevice || this.linkedNodeId || this.isLightingGroup);
       const canDrag = !isScanning && (!isPaired || (this.isLightingGroup && !this.isPositionLocked)) && !this.isSelectingDevice;
       
@@ -2767,6 +2790,8 @@ class VirtualLight3D extends THREE.Group {
                       })
                   ],
                   onClick: () => {
+                      this.syncTransformFromPanel();
+                      this.hasBeenMoved = true;
                       if (!this.isPositionLocked) {
                           this.isPositionLocked = true;
                           const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(this.groupId) : null;
@@ -2781,6 +2806,8 @@ class VirtualLight3D extends THREE.Group {
                           const grp = (typeof groupManager !== 'undefined' && groupManager) ? groupManager.getGroup(this.groupId) : null;
                           if (grp) {
                               grp.isPositionLocked = false;
+                              grp.position = { x: this.position.x, y: this.position.y, z: this.position.z };
+                              grp.quaternion = { x: this.quaternion.x, y: this.quaternion.y, z: this.quaternion.z, w: this.quaternion.w };
                               groupManager.saveGroups(smartHome);
                           }
                       }
@@ -3783,9 +3810,18 @@ class VirtualLight3D extends THREE.Group {
                   }
               } else {
                   // Preserve live 3D position
-                  existingGroup.isPositionLocked = !!grpCard.isPositionLocked;
-                  existingGroup.position = { x: grpCard.position.x, y: grpCard.position.y, z: grpCard.position.z };
-                  existingGroup.quaternion = { x: grpCard.quaternion.x, y: grpCard.quaternion.y, z: grpCard.quaternion.z, w: grpCard.quaternion.w };
+                  if (grpCard.syncTransformFromPanel) grpCard.syncTransformFromPanel();
+                  grpCard.hasBeenMoved = true;
+                  if (grpCard.isPositionLocked && existingGroup.position) {
+                      grpCard.position.set(existingGroup.position.x, existingGroup.position.y, existingGroup.position.z);
+                      if (existingGroup.quaternion) {
+                          grpCard.quaternion.set(existingGroup.quaternion.x, existingGroup.quaternion.y, existingGroup.quaternion.z, existingGroup.quaternion.w);
+                      }
+                  } else {
+                      existingGroup.isPositionLocked = !!grpCard.isPositionLocked;
+                      existingGroup.position = { x: grpCard.position.x, y: grpCard.position.y, z: grpCard.position.z };
+                      existingGroup.quaternion = { x: grpCard.quaternion.x, y: grpCard.quaternion.y, z: grpCard.quaternion.z, w: grpCard.quaternion.w };
+                  }
                   grpCard.memberIds = existingGroup.memberIds;
                   if (grpCard.rebuildPanel) grpCard.rebuildPanel();
               }
@@ -3812,9 +3848,18 @@ class VirtualLight3D extends THREE.Group {
           let grpCard = virtualLights.find(vl => vl.isLightingGroup && vl.groupId === targetGroup.id);
           if (grpCard) {
               // Crucial: keep card 100% stationary and update group metadata
-              targetGroup.isPositionLocked = !!grpCard.isPositionLocked;
-              targetGroup.position = { x: grpCard.position.x, y: grpCard.position.y, z: grpCard.position.z };
-              targetGroup.quaternion = { x: grpCard.quaternion.x, y: grpCard.quaternion.y, z: grpCard.quaternion.z, w: grpCard.quaternion.w };
+              if (grpCard.syncTransformFromPanel) grpCard.syncTransformFromPanel();
+              grpCard.hasBeenMoved = true;
+              if (grpCard.isPositionLocked && targetGroup.position) {
+                  grpCard.position.set(targetGroup.position.x, targetGroup.position.y, targetGroup.position.z);
+                  if (targetGroup.quaternion) {
+                      grpCard.quaternion.set(targetGroup.quaternion.x, targetGroup.quaternion.y, targetGroup.quaternion.z, targetGroup.quaternion.w);
+                  }
+              } else {
+                  targetGroup.isPositionLocked = !!grpCard.isPositionLocked;
+                  targetGroup.position = { x: grpCard.position.x, y: grpCard.position.y, z: grpCard.position.z };
+                  targetGroup.quaternion = { x: grpCard.quaternion.x, y: grpCard.quaternion.y, z: grpCard.quaternion.z, w: grpCard.quaternion.w };
+              }
               grpCard.memberIds = targetGroup.memberIds;
               grpCard.isCondensed = false; // Group UICards always in full display mode
               grpCard.isProximityExpanded = true;
@@ -3843,8 +3888,8 @@ class VirtualLight3D extends THREE.Group {
               grpCard.rebuildPanel();
 
               virtualLights.push(grpCard);
-              if (this.parent) this.parent.add(grpCard);
-              else if (xb.scene) xb.scene.add(grpCard);
+              if (xb.scene) xb.scene.add(grpCard);
+              else if (this.parent) this.parent.add(grpCard);
               else if (typeof xb.add === 'function') xb.add(grpCard);
           }
 
@@ -3881,8 +3926,8 @@ class VirtualLight3D extends THREE.Group {
           groupCard.rebuildPanel();
           
           virtualLights.push(groupCard);
-          if (this.parent) this.parent.add(groupCard);
-          else if (xb.scene) xb.scene.add(groupCard);
+          if (xb.scene) xb.scene.add(groupCard);
+          else if (this.parent) this.parent.add(groupCard);
           else if (typeof xb.add === 'function') xb.add(groupCard);
 
           groupManager.saveGroups(smartHome);
