@@ -25,6 +25,8 @@ let dragController = null;
 let dragOffset = new THREE.Vector3();
 let dragQuaternion = new THREE.Quaternion();
 let dragStartPos = new THREE.Vector3();
+let dragStartCardPos = new THREE.Vector3();
+let dragStartControllerPos = new THREE.Vector3();
 let isActivelyDragging = false;
 
 // Vision Buffers (Global for access by toggleScan)
@@ -70,6 +72,17 @@ if (typeof xb !== 'undefined' && xb.Script && xb.Script.prototype) {
 
 class HUDInteraction extends xb.Script {
     update(time, frame) {
+        let activeCam = null;
+        try {
+            if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                activeCam = xb.renderer.xr.getCamera();
+            } else if (xb.camera) {
+                activeCam = xb.camera;
+            } else if (typeof camera !== 'undefined' && camera) {
+                activeCam = camera;
+            }
+        } catch (e) {}
+
         if (dragController && dragController.userData.selected) {
             const objectToMove = dragController.userData.selected;
             
@@ -77,25 +90,31 @@ class HUDInteraction extends xb.Script {
             dragController.getWorldPosition(_scratchDragPos);
             dragController.getWorldQuaternion(_scratchDragQuat);
             
-            // Require an intentional 2.5cm drag deadzone so clicks on buttons don't shift card position
-            if (!isActivelyDragging) {
-                if (_scratchDragPos.distanceTo(dragStartPos) > 0.025) {
-                    isActivelyDragging = true;
-                    if (typeof VirtualLight3D !== 'undefined' && objectToMove instanceof VirtualLight3D) {
-                        objectToMove.hasBeenMoved = true;
+            const isVL = (typeof VirtualLight3D !== 'undefined' && objectToMove instanceof VirtualLight3D);
+            if (isVL) {
+                // Use controller translation delta from initial drag click
+                // This eliminates the downward lever-arm dip from trigger pull, keeps card 100% stationary on click, and moves smoothly with hand
+                _scratchDragOffset.copy(_scratchDragPos).sub(dragStartControllerPos);
+                objectToMove.position.copy(dragStartCardPos).add(_scratchDragOffset);
+                objectToMove.hasBeenMoved = true;
+                
+                // Keep the spatial card upright and smoothly facing the user horizontally (no pitching into the floor, no roll)
+                if (activeCam) {
+                    activeCam.getWorldPosition(_scratchCamPos);
+                    _scratchTargetPos.set(_scratchCamPos.x, objectToMove.position.y, _scratchCamPos.z);
+                    if (objectToMove.position.distanceToSquared(_scratchTargetPos) > 0.005) {
+                        _dummyLookObj.position.copy(objectToMove.position);
+                        _dummyLookObj.lookAt(_scratchTargetPos);
+                        objectToMove.quaternion.copy(_dummyLookObj.quaternion);
                     }
                 }
-            }
-            
-            if (isActivelyDragging || (typeof VirtualLight3D !== 'undefined' && !(objectToMove instanceof VirtualLight3D))) {
-                // Apply local offset stored in dragOffset (rotated)
+                
+                if (objectToMove.updateMatrixWorld) objectToMove.updateMatrixWorld(true);
+            } else {
+                // Standard logic for HUD and Keypad panels
                 _scratchDragOffset.copy(dragOffset).applyQuaternion(_scratchDragQuat);
                 objectToMove.position.copy(_scratchDragPos).add(_scratchDragOffset);
-                
-                // Lock rotation to controller
                 objectToMove.quaternion.copy(_scratchDragQuat).multiply(dragQuaternion);
-                
-                // Force Panel Matrix World sync to ensure hitting raycasts align with visible location immediately
                 if (objectToMove.updateMatrixWorld) objectToMove.updateMatrixWorld(true);
             }
         }
@@ -114,16 +133,6 @@ class HUDInteraction extends xb.Script {
         }
 
         // --- Card Pivoting: UICards smoothly pivot to always face the camera/user ---
-        let activeCam = null;
-        try {
-            if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
-                activeCam = xb.renderer.xr.getCamera();
-            } else if (xb.camera) {
-                activeCam = xb.camera;
-            } else if (typeof camera !== 'undefined' && camera) {
-                activeCam = camera;
-            }
-        } catch (e) {}
 
         if (activeCam && virtualLights && virtualLights.length > 0) {
             activeCam.getWorldPosition(_scratchCamPos);
@@ -443,8 +452,11 @@ function onXRSelectStart(event) {
                         controller.getWorldPosition(cPos);
                         controller.getWorldQuaternion(cQuat);
                         
+                        dragStartControllerPos.copy(cPos);
+                        dragStartCardPos.copy(objectToMove.position);
                         dragStartPos.copy(cPos);
-                        isActivelyDragging = false;
+                        isActivelyDragging = true;
+                        objectToMove.hasBeenMoved = true;
                         
                         dragOffset.copy(objectToMove.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
                         dragQuaternion.copy(cQuat.clone().invert()).multiply(objectToMove.quaternion);
@@ -3052,8 +3064,8 @@ class VirtualLight3D extends THREE.Group {
           size: { width: this.panelWidth, height: 'auto' },
           sizeX: this.panelWidth,
           anchorX: 'center',
-          anchorY: this.isLightingGroup ? 'center' : 'top',
-          manipulation: this.isLightingGroup ? false : canDrag,
+          anchorY: (!isPaired || this.isLightingGroup) ? 'center' : 'top',
+          manipulation: canDrag,
           style: {
               flexDirection: 'column',
               gap: 12,
@@ -3067,7 +3079,7 @@ class VirtualLight3D extends THREE.Group {
       });
 
       this.panel.position.set(0, 0, 0);
-      if (this.isLightingGroup) {
+      if (!isPaired || this.isLightingGroup) {
           this.panel.scale.set(1, 1, 1);
           this._scaleAnimStartTime = null;
       } else {
