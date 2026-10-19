@@ -30,6 +30,11 @@ export class OcclusionManager {
      */
     isSecurityPassThrough(device) {
         if (!device) return false;
+
+        // ONLY operate after a camera, lock, or cover is paired! Unpaired cards must remain in place for setup/pairing
+        const isPaired = !!(device.realDevice || device.linkedNodeId) && !device.unpaired;
+        if (!isPaired) return false;
+
         const domain = (device.realDevice?.domain || device.category || device.geminiData?.category || '').toLowerCase();
         const id = (device.realDevice?.id || device.realDevice?.entity_id || device.linkedNodeId || '').toLowerCase();
         const cat = (device.category || device.geminiData?.category || '').toLowerCase();
@@ -310,7 +315,7 @@ export class OcclusionManager {
      * Summons a distant security card (Lock, Cover, Camera) into active FoV directly in front of the user (0.65m chest height).
      */
     summonCardToFoV(card, camera) {
-        if (!card || card.isSummonedToFoV) return;
+        if (!card || card.isSummonedToFoV || !this.isSecurityPassThrough(card)) return;
 
         // If another card was summoned, return it first
         if (this.summonedCard && this.summonedCard !== card) {
