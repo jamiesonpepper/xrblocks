@@ -195,7 +195,12 @@ class HUDInteraction extends xb.Script {
 
                 // --- Pointer Reticle Hover, 2-Second Gaze Dwell, and Direct Reach Detection ---
                 // Note: Group UICards and unpaired cards ALWAYS remain in full display mode
-                if (isPaired && !vl.isLightingGroup && vl.isCondensed && !vl.isSelectingDevice) {
+                if (vl._summonCooldownUntil && performance.now() < vl._summonCooldownUntil) {
+                    vl._gazeFocusStartTime = null;
+                    vl._lastGazeLostTime = null;
+                    vl._gazeDwellTime = 0;
+                    vl._pointerDwellTime = 0;
+                } else if (isPaired && !vl.isLightingGroup && vl.isCondensed && !vl.isSelectingDevice) {
                     let isPointerHovering = false;
 
                     // A. Check xrblocks built-in user pointing detection
@@ -289,6 +294,9 @@ class HUDInteraction extends xb.Script {
                         vl.lastProximityTime = now;
                         // For Lock, Cover, and Camera cards: gaze or pointer raycast redraws them closer in physical space!
                         if (typeof occlusionManager !== 'undefined' && occlusionManager && occlusionManager.isSecurityPassThrough(vl)) {
+                            if (vl._summonCooldownUntil && performance.now() < vl._summonCooldownUntil) {
+                                continue;
+                            }
                             if (!vl.isSummonedToFoV) {
                                 vl.getWorldPosition(_scratchCardPos);
                                 if (activeCam && activeCam.getWorldPosition) {
@@ -434,6 +442,7 @@ function onXRSelectStart(event) {
 
             for (const vl of virtualLights) {
                 if (!vl || vl.isSummonedToFoV) continue;
+                if (vl._summonCooldownUntil && performance.now() < vl._summonCooldownUntil) continue;
                 if (occlusionManager.isSecurityPassThrough(vl)) {
                     const cardPos = new THREE.Vector3();
                     vl.getWorldPosition(cardPos);
@@ -600,6 +609,7 @@ function onXRSelect(event) {
 
             for (const vl of virtualLights) {
                 if (!vl || vl.isSummonedToFoV) continue;
+                if (vl._summonCooldownUntil && performance.now() < vl._summonCooldownUntil) continue;
                 if (occlusionManager.isSecurityPassThrough(vl)) {
                     const cardPos = new THREE.Vector3();
                     vl.getWorldPosition(cardPos);
@@ -638,7 +648,7 @@ import RAPIER from '@dimforge/rapier3d-simd-compat';
 import { HUDManager } from './hud.js?v=29';
 import { VirtualKeypad } from './keypad.js?v=27';
 import { GroupManager } from './services/group-manager.js';
-import { OcclusionManager } from './services/occlusion-manager.js?v=5';
+import { OcclusionManager } from './services/occlusion-manager.js?v=6';
 import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=32';
 
 // Globals
@@ -1468,6 +1478,11 @@ class VirtualLight3D extends THREE.Group {
                   fontSize: 12
               },
               onClick: () => {
+                  this._summonCooldownUntil = performance.now() + 2000;
+                  this._gazeFocusStartTime = null;
+                  this._lastGazeLostTime = null;
+                  this._gazeDwellTime = 0;
+                  this._pointerDwellTime = 0;
                   if (typeof occlusionManager !== 'undefined') {
                       occlusionManager.returnSummonedCard(this);
                   }
@@ -6429,6 +6444,7 @@ window.addEventListener('pointerdown', (event) => {
 
             for (const vl of virtualLights) {
                 if (!vl || vl.isSummonedToFoV) continue;
+                if (vl._summonCooldownUntil && performance.now() < vl._summonCooldownUntil) continue;
                 if (occlusionManager.isSecurityPassThrough(vl)) {
                     const cardPos = new THREE.Vector3();
                     vl.getWorldPosition(cardPos);
@@ -6449,6 +6465,9 @@ window.addEventListener('pointerdown', (event) => {
     for (const vl of virtualLights) {
         if (vl.checkClick(normX, normY)) {
             if (typeof occlusionManager !== 'undefined' && occlusionManager && occlusionManager.isSecurityPassThrough(vl) && !vl.isSummonedToFoV) {
+                if (vl._summonCooldownUntil && performance.now() < vl._summonCooldownUntil) {
+                    return;
+                }
                 let activeCam = null;
                 try {
                     if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {

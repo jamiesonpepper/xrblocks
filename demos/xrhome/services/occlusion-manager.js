@@ -214,6 +214,13 @@ export class OcclusionManager {
             if (!card || card.isSummonedToFoV || !card.visible) continue;
             if (!this.isSecurityPassThrough(card)) continue;
 
+            // Block gaze dwell during post-return cooldown (1-2s)
+            const now = performance.now();
+            if (card._summonCooldownUntil && now < card._summonCooldownUntil) {
+                card._gazeDwellTime = 0;
+                continue;
+            }
+
             // Clean up any old dwell indicator ring if present
             if (card._dwellIndicator) {
                 card.remove(card._dwellIndicator);
@@ -259,6 +266,13 @@ export class OcclusionManager {
         for (const card of cards) {
             if (!card || card.isSummonedToFoV || !card.visible || !card.panel) continue;
             if (!this.isSecurityPassThrough(card)) continue;
+
+            // Block pointer dwell during post-return cooldown (1-2s)
+            const now = performance.now();
+            if (card._summonCooldownUntil && now < card._summonCooldownUntil) {
+                card._pointerDwellTime = 0;
+                continue;
+            }
 
             card.getWorldPosition(_scratchCardPos);
             const dist = _scratchCamPos.distanceTo(_scratchCardPos);
@@ -317,6 +331,12 @@ export class OcclusionManager {
     summonCardToFoV(card, camera) {
         if (!card || card.isSummonedToFoV || !this.isSecurityPassThrough(card)) return;
 
+        // Block summon if within cooldown period after Return to Anchor (1-2 seconds)
+        const now = performance.now();
+        if (card._summonCooldownUntil && now < card._summonCooldownUntil) {
+            return;
+        }
+
         // If another card was summoned, return it first
         if (this.summonedCard && this.summonedCard !== card) {
             this.returnSummonedCard(this.summonedCard);
@@ -369,6 +389,13 @@ export class OcclusionManager {
      */
     returnSummonedCard(card) {
         if (!card || !card.isSummonedToFoV) return;
+
+        // Enact a 2-second cooldown so gaze or pointer doesn't re-trigger summon immediately
+        card._summonCooldownUntil = performance.now() + 2000;
+        card._gazeDwellTime = 0;
+        card._pointerDwellTime = 0;
+        card._gazeFocusStartTime = null;
+        card._lastGazeLostTime = null;
 
         if (card._originalAnchorPos) {
             card.position.copy(card._originalAnchorPos);
