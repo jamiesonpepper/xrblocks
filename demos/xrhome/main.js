@@ -145,7 +145,14 @@ class HUDInteraction extends xb.Script {
                     if (xb.core.depth.depthMesh) occluders.push(xb.core.depth.depthMesh);
                     if (xb.core.depth.depthMesh && xb.core.depth.depthMesh.downsampledMesh) occluders.push(xb.core.depth.depthMesh.downsampledMesh);
                 }
-                occlusionManager.update(activeCam, virtualLights, occluders, 0.016);
+                const controllers = [];
+                if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                    for (let i = 0; i < 2; i++) {
+                        const ctrl = xb.renderer.xr.getController(i);
+                        if (ctrl) controllers.push(ctrl);
+                    }
+                }
+                occlusionManager.update(activeCam, virtualLights, occluders, 0.016, controllers);
             }
 
             // 2. Card Pivoting & Adaptive Proximity Detection
@@ -394,6 +401,38 @@ function onXRSelectStart(event) {
     raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
     raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
 
+    // Distant security pass-through card summon (Lock, Cover, Camera) on pointer activation
+    if (typeof occlusionManager !== 'undefined' && occlusionManager && virtualLights && virtualLights.length > 0) {
+        let activeCam = null;
+        try {
+            if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                activeCam = xb.renderer.xr.getCamera();
+            } else {
+                activeCam = xb.camera || camera;
+            }
+        } catch (_) {}
+
+        if (activeCam) {
+            const ctrlPos = new THREE.Vector3();
+            controller.getWorldPosition(ctrlPos);
+
+            for (const vl of virtualLights) {
+                if (!vl || vl.isSummonedToFoV || !vl.panel) continue;
+                if (occlusionManager.isSecurityPassThrough(vl)) {
+                    const cardPos = new THREE.Vector3();
+                    vl.getWorldPosition(cardPos);
+                    if (ctrlPos.distanceTo(cardPos) > 1.2) {
+                        const hits = raycaster.intersectObject(vl.panel, true);
+                        if (hits && hits.length > 0) {
+                            occlusionManager.summonCardToFoV(vl, activeCam);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     const intersects = raycaster.intersectObjects(draggables, true);
 
     if (intersects.length > 0) {
@@ -521,6 +560,41 @@ function onXRSelect(event) {
     // If we were dragging, ignore the click
     if (dragController === controller) return;
 
+    // Distant security pass-through card summon (Lock, Cover, Camera) on pointer activation
+    if (typeof occlusionManager !== 'undefined' && occlusionManager && virtualLights && virtualLights.length > 0) {
+        let activeCam = null;
+        try {
+            if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                activeCam = xb.renderer.xr.getCamera();
+            } else {
+                activeCam = xb.camera || camera;
+            }
+        } catch (_) {}
+
+        if (activeCam) {
+            tempMatrix.identity().extractRotation(controller.matrixWorld);
+            raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+            raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+            const ctrlPos = new THREE.Vector3();
+            controller.getWorldPosition(ctrlPos);
+
+            for (const vl of virtualLights) {
+                if (!vl || vl.isSummonedToFoV || !vl.panel) continue;
+                if (occlusionManager.isSecurityPassThrough(vl)) {
+                    const cardPos = new THREE.Vector3();
+                    vl.getWorldPosition(cardPos);
+                    if (ctrlPos.distanceTo(cardPos) > 1.2) {
+                        const hits = raycaster.intersectObject(vl.panel, true);
+                        if (hits && hits.length > 0) {
+                            occlusionManager.summonCardToFoV(vl, activeCam);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 import * as xb from 'xrblocks';
@@ -544,7 +618,7 @@ import RAPIER from '@dimforge/rapier3d-simd-compat';
 import { HUDManager } from './hud.js?v=29';
 import { VirtualKeypad } from './keypad.js?v=27';
 import { GroupManager } from './services/group-manager.js';
-import { OcclusionManager } from './services/occlusion-manager.js';
+import { OcclusionManager } from './services/occlusion-manager.js?v=2';
 import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=32';
 
 // Globals
@@ -6312,9 +6386,58 @@ window.addEventListener('pointerdown', (event) => {
         return;
     }
     
+    // Check distant security pass-through cards (Lock, Cover, Camera) for pointer activation summon
+    if (typeof occlusionManager !== 'undefined' && occlusionManager && virtualLights && virtualLights.length > 0) {
+        let activeCam = null;
+        try {
+            if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                activeCam = xb.renderer.xr.getCamera();
+            } else {
+                activeCam = xb.camera || camera;
+            }
+        } catch (_) {}
+
+        if (activeCam && typeof activeCam.getWorldPosition === 'function') {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, activeCam);
+
+            const camPos = new THREE.Vector3();
+            activeCam.getWorldPosition(camPos);
+
+            for (const vl of virtualLights) {
+                if (!vl || vl.isSummonedToFoV || !vl.panel) continue;
+                if (occlusionManager.isSecurityPassThrough(vl)) {
+                    const cardPos = new THREE.Vector3();
+                    vl.getWorldPosition(cardPos);
+                    if (camPos.distanceTo(cardPos) > 1.2) {
+                        const hits = raycaster.intersectObject(vl.panel, true);
+                        if (hits && hits.length > 0) {
+                            occlusionManager.summonCardToFoV(vl, activeCam);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Check Virtual Lights
     for (const vl of virtualLights) {
         if (vl.checkClick(normX, normY)) {
+            if (typeof occlusionManager !== 'undefined' && occlusionManager && occlusionManager.isSecurityPassThrough(vl) && !vl.isSummonedToFoV) {
+                let activeCam = (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) 
+                    ? xb.renderer.xr.getCamera() 
+                    : (xb.camera || camera);
+                const camPos = new THREE.Vector3();
+                const cardPos = new THREE.Vector3();
+                activeCam.getWorldPosition(camPos);
+                vl.getWorldPosition(cardPos);
+                if (camPos.distanceTo(cardPos) > 1.2) {
+                    occlusionManager.summonCardToFoV(vl, activeCam);
+                    return;
+                }
+            }
             console.log("Clicked Light:", vl.labelText);
             vl.toggle();
             hud.speak(vl.isOn ? "On" : "Off");

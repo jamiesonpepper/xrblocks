@@ -11,6 +11,8 @@ const _scratchCamPos = new THREE.Vector3();
 const _scratchCamDir = new THREE.Vector3();
 const _scratchCardPos = new THREE.Vector3();
 const _scratchDir = new THREE.Vector3();
+const _scratchPointerRaycaster = new THREE.Raycaster();
+const _scratchPointerMatrix = new THREE.Matrix4();
 
 export class OcclusionManager {
     constructor() {
@@ -24,14 +26,18 @@ export class OcclusionManager {
 
     /**
      * Determines whether a device domain or category is exempt from line-of-sight occlusion
-     * (critical perimeter security fixtures: locks and garage doors/covers).
+     * (critical perimeter and security fixtures: locks, covers/garage doors, and cameras).
      */
     isSecurityPassThrough(device) {
         if (!device) return false;
         const domain = (device.realDevice?.domain || device.category || '').toLowerCase();
         const id = (device.realDevice?.id || '').toLowerCase();
-        return domain === 'lock' || domain === 'cover' || domain === 'garage_door' ||
-               id.startsWith('lock.') || id.startsWith('cover.') || domain.includes('garage');
+        const cat = (device.category || '').toLowerCase();
+        return domain === 'lock' || domain === 'cover' || domain === 'garage_door' || domain === 'camera' ||
+               cat === 'lock' || cat === 'cover' || cat === 'garage_door' || cat === 'camera' ||
+               id.startsWith('lock.') || id.startsWith('cover.') || id.startsWith('camera.') ||
+               domain.includes('garage') || domain.includes('camera') || domain.includes('doorbell') ||
+               cat.includes('garage') || cat.includes('camera') || cat.includes('doorbell');
     }
 
     /**
@@ -40,17 +46,21 @@ export class OcclusionManager {
      * @param {Array} cards - Array of VirtualLight3D instances
      * @param {THREE.Object3D|Array} occludingMesh - WebXR depth mesh, planes, or room meshes
      * @param {number} delta - Frame delta time in seconds
+     * @param {Array} controllers - WebXR controllers for pointer interaction
      */
-    update(camera, cards = [], occludingMesh = null, delta = 0.016) {
+    update(camera, cards = [], occludingMesh = null, delta = 0.016, controllers = []) {
         if (!this.enabled || !camera || !cards || cards.length === 0) return;
 
         camera.getWorldPosition(_scratchCamPos);
         camera.getWorldDirection(_scratchCamDir);
 
-        // 1. Check gaze dwell on distant pass-through cards (Locks & Covers)
+        // 1. Check gaze dwell on distant pass-through cards (Locks, Covers, Cameras)
         this._updateGazeSummon(camera, cards, delta);
 
-        // 2. Check summoned card look-away auto-dismissal
+        // 2. Check controller pointer aim on distant pass-through cards (Locks, Covers, Cameras)
+        this._updatePointerSummon(camera, cards, controllers, delta);
+
+        // 3. Check summoned card look-away auto-dismissal
         if (this.summonedCard) {
             this.summonedCard.getWorldPosition(_scratchCardPos);
             _scratchDir.copy(_scratchCardPos).sub(_scratchCamPos).normalize();
@@ -159,7 +169,8 @@ export class OcclusionManager {
     }
 
     /**
-     * Checks if the user is gazing at a distant security pass-through card for > 2 seconds.
+     * Checks if the user is gazing at a distant security pass-through card (Lock, Cover, Camera).
+     * When gazed at for ~0.5s, redraws the card closer in physical space without any pulsing circle.
      */
     _updateGazeSummon(camera, cards, delta) {
         let activeGazedCard = null;
@@ -167,6 +178,14 @@ export class OcclusionManager {
         for (const card of cards) {
             if (!card || card.isSummonedToFoV || !card.visible) continue;
             if (!this.isSecurityPassThrough(card)) continue;
+
+            // Clean up any old dwell indicator ring if present
+            if (card._dwellIndicator) {
+                card.remove(card._dwellIndicator);
+                card._dwellIndicator.geometry?.dispose();
+                card._dwellIndicator.material?.dispose();
+                card._dwellIndicator = null;
+            }
 
             card.getWorldPosition(_scratchCardPos);
             const dist = _scratchCamPos.distanceTo(_scratchCardPos);
@@ -179,31 +198,75 @@ export class OcclusionManager {
             _scratchDir.copy(_scratchCardPos).sub(_scratchCamPos).normalize();
             const angleDeg = THREE.MathUtils.radToDeg(_scratchCamDir.angleTo(_scratchDir));
 
-            // Dwell cone: within 7 degrees of gaze center
-            if (angleDeg < 7.0 && !activeGazedCard) {
+            // Central gaze cone
+            if (angleDeg < 8.0 && !activeGazedCard) {
                 activeGazedCard = card;
                 card._gazeDwellTime = (card._gazeDwellTime || 0) + delta;
 
-                // Visual progress feedback
-                const progress = Math.min(1.0, card._gazeDwellTime / 2.0);
-                this._updateDwellIndicator(card, progress);
-
-                if (card._gazeDwellTime >= 2.0) {
+                // Redraw closer to user position after ~0.5s sustained gaze (no pulsing circle)
+                if (card._gazeDwellTime >= 0.5) {
                     card._gazeDwellTime = 0;
-                    this._updateDwellIndicator(card, 0);
                     this.summonCardToFoV(card, camera);
                 }
             } else {
                 if (card._gazeDwellTime > 0) {
                     card._gazeDwellTime = Math.max(0, card._gazeDwellTime - delta * 2);
-                    this._updateDwellIndicator(card, 0);
                 }
             }
         }
     }
 
     /**
-     * Summons a distant security card into active FoV.
+     * Checks if a controller pointer is aimed at a distant security pass-through card (Lock, Cover, Camera).
+     * When pointed at for ~0.4s, redraws the card closer in physical space without any pulsing circle.
+     */
+    _updatePointerSummon(camera, cards, controllers, delta) {
+        if (!controllers || controllers.length === 0) return;
+
+        for (const card of cards) {
+            if (!card || card.isSummonedToFoV || !card.visible || !card.panel) continue;
+            if (!this.isSecurityPassThrough(card)) continue;
+
+            card.getWorldPosition(_scratchCardPos);
+            const dist = _scratchCamPos.distanceTo(_scratchCardPos);
+            // Only summon if distant (> 1.2m away)
+            if (dist < 1.2) {
+                card._pointerDwellTime = 0;
+                continue;
+            }
+
+            let isPointedAt = false;
+            for (const ctrl of controllers) {
+                if (!ctrl) continue;
+                _scratchPointerRaycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+                _scratchPointerMatrix.identity().extractRotation(ctrl.matrixWorld);
+                _scratchPointerRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(_scratchPointerMatrix);
+                _scratchPointerRaycaster.near = 0.05;
+                _scratchPointerRaycaster.far = 15.0;
+
+                const hits = _scratchPointerRaycaster.intersectObject(card.panel, true);
+                if (hits && hits.length > 0) {
+                    isPointedAt = true;
+                    break;
+                }
+            }
+
+            if (isPointedAt) {
+                card._pointerDwellTime = (card._pointerDwellTime || 0) + delta;
+                if (card._pointerDwellTime >= 0.4) {
+                    card._pointerDwellTime = 0;
+                    this.summonCardToFoV(card, camera);
+                }
+            } else {
+                if (card._pointerDwellTime > 0) {
+                    card._pointerDwellTime = Math.max(0, card._pointerDwellTime - delta * 2);
+                }
+            }
+        }
+    }
+
+    /**
+     * Summons a distant security card (Lock, Cover, Camera) into active FoV directly in front of the user.
      */
     summonCardToFoV(card, camera) {
         if (!card || card.isSummonedToFoV) return;
@@ -213,18 +276,26 @@ export class OcclusionManager {
             this.returnSummonedCard(this.summonedCard);
         }
 
+        // Clean up any lingering ring or indicator
+        if (card._dwellIndicator) {
+            card.remove(card._dwellIndicator);
+            card._dwellIndicator.geometry?.dispose();
+            card._dwellIndicator.material?.dispose();
+            card._dwellIndicator = null;
+        }
+
         // Store original anchor pose
         card._originalAnchorPos = card.position.clone();
         card._originalAnchorQuat = card.quaternion.clone();
 
         // 1. Dissolve fade out at physical anchor
-        this._fadeCard(card, false, 200, () => {
-            // 2. Position 1.1m in front of camera at chest/eye level
+        this._fadeCard(card, false, 150, () => {
+            // 2. Position 1.05m in front of camera at comfortable physical chest level
             camera.getWorldPosition(_scratchCamPos);
             camera.getWorldDirection(_scratchCamDir);
 
-            const targetPos = _scratchCamPos.clone().add(_scratchCamDir.clone().multiplyScalar(1.1));
-            targetPos.y = Math.max(1.1, _scratchCamPos.y - 0.08); // Comfortable chest height
+            const targetPos = _scratchCamPos.clone().add(_scratchCamDir.clone().multiplyScalar(1.05));
+            targetPos.y = Math.max(0.9, _scratchCamPos.y - 0.08); // Comfortable chest height
 
             card.position.copy(targetPos);
             card.lookAt(_scratchCamPos);
@@ -238,7 +309,7 @@ export class OcclusionManager {
             if (card.rebuildPanel) card.rebuildPanel();
 
             // 3. Dissolve fade back in at active FoV
-            this._fadeCard(card, true, 200);
+            this._fadeCard(card, true, 150);
 
             if (this.onSummonStateChanged) this.onSummonStateChanged(card, true);
         });
@@ -325,35 +396,5 @@ export class OcclusionManager {
             }
         }
     }
-
-    /**
-     * Shows visual progress indicator when gazing at a distant security card.
-     */
-    _updateDwellIndicator(card, progress) {
-        if (!card._dwellIndicator && progress > 0) {
-            // Create a small glowing ring sprite or badge
-            const geom = new THREE.RingGeometry(0.18, 0.20, 32);
-            const mat = new THREE.MeshBasicMaterial({
-                color: 0xffffff,
-                side: THREE.DoubleSide,
-                transparent: true,
-                opacity: 0.85,
-                depthTest: false
-            });
-            const ring = new THREE.Mesh(geom, mat);
-            ring.position.set(0, 0, 0.02);
-            card.add(ring);
-            card._dwellIndicator = ring;
-        }
-
-        if (card._dwellIndicator) {
-            if (progress <= 0) {
-                card.remove(card._dwellIndicator);
-                card._dwellIndicator = null;
-            } else {
-                card._dwellIndicator.scale.set(1 + progress * 0.2, 1 + progress * 0.2, 1);
-                card._dwellIndicator.material.opacity = 0.4 + progress * 0.6;
-            }
-        }
-    }
 }
+
