@@ -287,6 +287,20 @@ class HUDInteraction extends xb.Script {
 
                     if (shouldExpand) {
                         vl.lastProximityTime = now;
+                        // For Lock, Cover, and Camera cards: gaze or pointer raycast redraws them closer in physical space!
+                        if (typeof occlusionManager !== 'undefined' && occlusionManager && occlusionManager.isSecurityPassThrough(vl)) {
+                            if (!vl.isSummonedToFoV) {
+                                vl.getWorldPosition(_scratchCardPos);
+                                if (activeCam && activeCam.getWorldPosition) {
+                                    activeCam.getWorldPosition(_scratchCamPos);
+                                    if (_scratchCamPos.distanceTo(_scratchCardPos) > 0.60) {
+                                        occlusionManager.summonCardToFoV(vl, activeCam);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+
                         if (!vl.isProximityExpanded) {
                             if (isGazeTriggered) {
                                 hud.log(`Gaze activated ${vl.labelText}`, '#FFFFFF');
@@ -407,22 +421,25 @@ function onXRSelectStart(event) {
         try {
             if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
                 activeCam = xb.renderer.xr.getCamera();
-            } else {
-                activeCam = xb.camera || camera;
+            } else if (xb.camera && xb.camera.isCamera) {
+                activeCam = xb.camera;
+            } else if (typeof xb !== 'undefined' && xb.core && xb.core.camera) {
+                activeCam = xb.core.camera;
             }
         } catch (_) {}
 
-        if (activeCam) {
+        if (activeCam && typeof activeCam.getWorldPosition === 'function') {
             const ctrlPos = new THREE.Vector3();
             controller.getWorldPosition(ctrlPos);
 
             for (const vl of virtualLights) {
-                if (!vl || vl.isSummonedToFoV || !vl.panel) continue;
+                if (!vl || vl.isSummonedToFoV) continue;
                 if (occlusionManager.isSecurityPassThrough(vl)) {
                     const cardPos = new THREE.Vector3();
                     vl.getWorldPosition(cardPos);
-                    if (ctrlPos.distanceTo(cardPos) > 1.2) {
-                        const hits = raycaster.intersectObject(vl.panel, true);
+                    if (ctrlPos.distanceTo(cardPos) > 0.50) {
+                        const targetObj = vl.panel || vl;
+                        const hits = raycaster.intersectObject(targetObj, true);
                         if (hits && hits.length > 0) {
                             occlusionManager.summonCardToFoV(vl, activeCam);
                             return;
@@ -566,12 +583,14 @@ function onXRSelect(event) {
         try {
             if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
                 activeCam = xb.renderer.xr.getCamera();
-            } else {
-                activeCam = xb.camera || camera;
+            } else if (xb.camera && xb.camera.isCamera) {
+                activeCam = xb.camera;
+            } else if (typeof xb !== 'undefined' && xb.core && xb.core.camera) {
+                activeCam = xb.core.camera;
             }
         } catch (_) {}
 
-        if (activeCam) {
+        if (activeCam && typeof activeCam.getWorldPosition === 'function') {
             tempMatrix.identity().extractRotation(controller.matrixWorld);
             raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
             raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
@@ -580,12 +599,13 @@ function onXRSelect(event) {
             controller.getWorldPosition(ctrlPos);
 
             for (const vl of virtualLights) {
-                if (!vl || vl.isSummonedToFoV || !vl.panel) continue;
+                if (!vl || vl.isSummonedToFoV) continue;
                 if (occlusionManager.isSecurityPassThrough(vl)) {
                     const cardPos = new THREE.Vector3();
                     vl.getWorldPosition(cardPos);
-                    if (ctrlPos.distanceTo(cardPos) > 1.2) {
-                        const hits = raycaster.intersectObject(vl.panel, true);
+                    if (ctrlPos.distanceTo(cardPos) > 0.50) {
+                        const targetObj = vl.panel || vl;
+                        const hits = raycaster.intersectObject(targetObj, true);
                         if (hits && hits.length > 0) {
                             occlusionManager.summonCardToFoV(vl, activeCam);
                             return;
@@ -618,7 +638,7 @@ import RAPIER from '@dimforge/rapier3d-simd-compat';
 import { HUDManager } from './hud.js?v=29';
 import { VirtualKeypad } from './keypad.js?v=27';
 import { GroupManager } from './services/group-manager.js';
-import { OcclusionManager } from './services/occlusion-manager.js?v=2';
+import { OcclusionManager } from './services/occlusion-manager.js?v=3';
 import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=32';
 
 // Globals
@@ -6392,8 +6412,10 @@ window.addEventListener('pointerdown', (event) => {
         try {
             if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
                 activeCam = xb.renderer.xr.getCamera();
-            } else {
-                activeCam = xb.camera || camera;
+            } else if (xb.camera && xb.camera.isCamera) {
+                activeCam = xb.camera;
+            } else if (typeof xb !== 'undefined' && xb.core && xb.core.camera) {
+                activeCam = xb.core.camera;
             }
         } catch (_) {}
 
@@ -6406,12 +6428,13 @@ window.addEventListener('pointerdown', (event) => {
             activeCam.getWorldPosition(camPos);
 
             for (const vl of virtualLights) {
-                if (!vl || vl.isSummonedToFoV || !vl.panel) continue;
+                if (!vl || vl.isSummonedToFoV) continue;
                 if (occlusionManager.isSecurityPassThrough(vl)) {
                     const cardPos = new THREE.Vector3();
                     vl.getWorldPosition(cardPos);
-                    if (camPos.distanceTo(cardPos) > 1.2) {
-                        const hits = raycaster.intersectObject(vl.panel, true);
+                    if (camPos.distanceTo(cardPos) > 0.50) {
+                        const targetObj = vl.panel || vl;
+                        const hits = raycaster.intersectObject(targetObj, true);
                         if (hits && hits.length > 0) {
                             occlusionManager.summonCardToFoV(vl, activeCam);
                             return;
@@ -6426,16 +6449,25 @@ window.addEventListener('pointerdown', (event) => {
     for (const vl of virtualLights) {
         if (vl.checkClick(normX, normY)) {
             if (typeof occlusionManager !== 'undefined' && occlusionManager && occlusionManager.isSecurityPassThrough(vl) && !vl.isSummonedToFoV) {
-                let activeCam = (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) 
-                    ? xb.renderer.xr.getCamera() 
-                    : (xb.camera || camera);
-                const camPos = new THREE.Vector3();
-                const cardPos = new THREE.Vector3();
-                activeCam.getWorldPosition(camPos);
-                vl.getWorldPosition(cardPos);
-                if (camPos.distanceTo(cardPos) > 1.2) {
-                    occlusionManager.summonCardToFoV(vl, activeCam);
-                    return;
+                let activeCam = null;
+                try {
+                    if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                        activeCam = xb.renderer.xr.getCamera();
+                    } else if (xb.camera && xb.camera.isCamera) {
+                        activeCam = xb.camera;
+                    } else if (typeof xb !== 'undefined' && xb.core && xb.core.camera) {
+                        activeCam = xb.core.camera;
+                    }
+                } catch (_) {}
+                if (activeCam && activeCam.getWorldPosition) {
+                    const camPos = new THREE.Vector3();
+                    const cardPos = new THREE.Vector3();
+                    activeCam.getWorldPosition(camPos);
+                    vl.getWorldPosition(cardPos);
+                    if (camPos.distanceTo(cardPos) > 0.50) {
+                        occlusionManager.summonCardToFoV(vl, activeCam);
+                        return;
+                    }
                 }
             }
             console.log("Clicked Light:", vl.labelText);

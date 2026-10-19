@@ -30,14 +30,44 @@ export class OcclusionManager {
      */
     isSecurityPassThrough(device) {
         if (!device) return false;
-        const domain = (device.realDevice?.domain || device.category || '').toLowerCase();
-        const id = (device.realDevice?.id || '').toLowerCase();
-        const cat = (device.category || '').toLowerCase();
-        return domain === 'lock' || domain === 'cover' || domain === 'garage_door' || domain === 'camera' ||
-               cat === 'lock' || cat === 'cover' || cat === 'garage_door' || cat === 'camera' ||
-               id.startsWith('lock.') || id.startsWith('cover.') || id.startsWith('camera.') ||
-               domain.includes('garage') || domain.includes('camera') || domain.includes('doorbell') ||
-               cat.includes('garage') || cat.includes('camera') || cat.includes('doorbell');
+        const domain = (device.realDevice?.domain || device.category || device.geminiData?.category || '').toLowerCase();
+        const id = (device.realDevice?.id || device.realDevice?.entity_id || device.linkedNodeId || '').toLowerCase();
+        const cat = (device.category || device.geminiData?.category || '').toLowerCase();
+        const label = (device.labelText || device.label || device.originalLabel || device.realDevice?.name || '').toLowerCase();
+        const deviceClass = (device.realDevice?.attributes?.device_class || '').toLowerCase();
+
+        // 1. Domain / Category exact checks
+        if (domain === 'lock' || domain === 'cover' || domain === 'garage_door' || domain === 'camera' ||
+            cat === 'lock' || cat === 'cover' || cat === 'garage_door' || cat === 'camera') {
+            return true;
+        }
+
+        // 2. Entity ID prefix checks
+        if (id.startsWith('lock.') || id.startsWith('cover.') || id.startsWith('camera.') || id.startsWith('doorbell.')) {
+            return true;
+        }
+
+        // 3. Substring checks for domains, categories, labels, and device classes
+        if (domain.includes('camera') || domain.includes('doorbell') || domain.includes('garage') || domain.includes('cover') || domain.includes('lock')) {
+            return true;
+        }
+        if (cat.includes('camera') || cat.includes('doorbell') || cat.includes('garage') || cat.includes('cover') || cat.includes('lock')) {
+            return true;
+        }
+        if (label.includes('camera') || label.includes('doorbell') || label.includes('cam') ||
+            label.includes('garage') || label.includes('cover') || label.includes('lock')) {
+            return true;
+        }
+        if (deviceClass.includes('garage') || deviceClass.includes('door') || deviceClass.includes('lock')) {
+            return true;
+        }
+
+        // 4. Runtime feature indicators on VirtualLight3D
+        if (device.isViewingCamera || device._cameraVideo || device._cameraCanvas) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -170,7 +200,7 @@ export class OcclusionManager {
 
     /**
      * Checks if the user is gazing at a distant security pass-through card (Lock, Cover, Camera).
-     * When gazed at for ~0.5s, redraws the card closer in physical space without any pulsing circle.
+     * When gazed at for ~0.35s, redraws the card closer in physical space without any pulsing circle.
      */
     _updateGazeSummon(camera, cards, delta) {
         let activeGazedCard = null;
@@ -189,8 +219,8 @@ export class OcclusionManager {
 
             card.getWorldPosition(_scratchCardPos);
             const dist = _scratchCamPos.distanceTo(_scratchCardPos);
-            // Only summon if distant (> 1.2m away)
-            if (dist < 1.2) {
+            // If already at near touch distance (< 0.60m), no need to summon closer
+            if (dist <= 0.60) {
                 card._gazeDwellTime = 0;
                 continue;
             }
@@ -198,13 +228,13 @@ export class OcclusionManager {
             _scratchDir.copy(_scratchCardPos).sub(_scratchCamPos).normalize();
             const angleDeg = THREE.MathUtils.radToDeg(_scratchCamDir.angleTo(_scratchDir));
 
-            // Central gaze cone
-            if (angleDeg < 8.0 && !activeGazedCard) {
+            // Central gaze cone (within 10 degrees)
+            if (angleDeg < 10.0 && !activeGazedCard) {
                 activeGazedCard = card;
                 card._gazeDwellTime = (card._gazeDwellTime || 0) + delta;
 
-                // Redraw closer to user position after ~0.5s sustained gaze (no pulsing circle)
-                if (card._gazeDwellTime >= 0.5) {
+                // Redraw closer to user position after ~0.35s sustained gaze (no pulsing circle)
+                if (card._gazeDwellTime >= 0.35) {
                     card._gazeDwellTime = 0;
                     this.summonCardToFoV(card, camera);
                 }
@@ -217,43 +247,54 @@ export class OcclusionManager {
     }
 
     /**
-     * Checks if a controller pointer is aimed at a distant security pass-through card (Lock, Cover, Camera).
-     * When pointed at for ~0.4s, redraws the card closer in physical space without any pulsing circle.
+     * Checks if a controller pointer or mouse ray is aimed at a distant security pass-through card (Lock, Cover, Camera).
+     * When pointed at for ~0.25s, redraws the card closer in physical space without any pulsing circle.
      */
     _updatePointerSummon(camera, cards, controllers, delta) {
-        if (!controllers || controllers.length === 0) return;
-
         for (const card of cards) {
             if (!card || card.isSummonedToFoV || !card.visible || !card.panel) continue;
             if (!this.isSecurityPassThrough(card)) continue;
 
             card.getWorldPosition(_scratchCardPos);
             const dist = _scratchCamPos.distanceTo(_scratchCardPos);
-            // Only summon if distant (> 1.2m away)
-            if (dist < 1.2) {
+            // If already at near touch distance (< 0.60m), no need to summon closer
+            if (dist <= 0.60) {
                 card._pointerDwellTime = 0;
                 continue;
             }
 
             let isPointedAt = false;
-            for (const ctrl of controllers) {
-                if (!ctrl) continue;
-                _scratchPointerRaycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
-                _scratchPointerMatrix.identity().extractRotation(ctrl.matrixWorld);
-                _scratchPointerRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(_scratchPointerMatrix);
-                _scratchPointerRaycaster.near = 0.05;
-                _scratchPointerRaycaster.far = 15.0;
 
-                const hits = _scratchPointerRaycaster.intersectObject(card.panel, true);
-                if (hits && hits.length > 0) {
-                    isPointedAt = true;
-                    break;
+            // 1. Check WebXR controllers
+            if (controllers && controllers.length > 0) {
+                for (const ctrl of controllers) {
+                    if (!ctrl) continue;
+                    _scratchPointerRaycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+                    _scratchPointerMatrix.identity().extractRotation(ctrl.matrixWorld);
+                    _scratchPointerRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(_scratchPointerMatrix);
+                    _scratchPointerRaycaster.near = 0.05;
+                    _scratchPointerRaycaster.far = 15.0;
+
+                    const hits = _scratchPointerRaycaster.intersectObject(card.panel, true);
+                    if (hits && hits.length > 0) {
+                        isPointedAt = true;
+                        break;
+                    }
                 }
+            }
+
+            // 2. Check desktop / mouse user pointing
+            if (!isPointedAt && typeof xb !== 'undefined' && xb.user && typeof xb.user.isPointingAt === 'function') {
+                try {
+                    if (xb.user.isPointingAt(card) || xb.user.isPointingAt(card.panel)) {
+                        isPointedAt = true;
+                    }
+                } catch (_) {}
             }
 
             if (isPointedAt) {
                 card._pointerDwellTime = (card._pointerDwellTime || 0) + delta;
-                if (card._pointerDwellTime >= 0.4) {
+                if (card._pointerDwellTime >= 0.25) { // 250ms intentional aim
                     card._pointerDwellTime = 0;
                     this.summonCardToFoV(card, camera);
                 }
@@ -266,7 +307,7 @@ export class OcclusionManager {
     }
 
     /**
-     * Summons a distant security card (Lock, Cover, Camera) into active FoV directly in front of the user.
+     * Summons a distant security card (Lock, Cover, Camera) into active FoV directly in front of the user (0.65m chest height).
      */
     summonCardToFoV(card, camera) {
         if (!card || card.isSummonedToFoV) return;
@@ -284,35 +325,38 @@ export class OcclusionManager {
             card._dwellIndicator = null;
         }
 
-        // Store original anchor pose
-        card._originalAnchorPos = card.position.clone();
-        card._originalAnchorQuat = card.quaternion.clone();
+        // Store original anchor pose if not already saved
+        if (!card._originalAnchorPos) {
+            card._originalAnchorPos = card.position.clone();
+            card._originalAnchorQuat = card.quaternion.clone();
+        }
 
-        // 1. Dissolve fade out at physical anchor
-        this._fadeCard(card, false, 150, () => {
-            // 2. Position 1.05m in front of camera at comfortable physical chest level
+        // Ensure active camera pose
+        if (camera && camera.getWorldPosition) {
             camera.getWorldPosition(_scratchCamPos);
             camera.getWorldDirection(_scratchCamDir);
+        }
 
-            const targetPos = _scratchCamPos.clone().add(_scratchCamDir.clone().multiplyScalar(1.05));
-            targetPos.y = Math.max(0.9, _scratchCamPos.y - 0.08); // Comfortable chest height
+        // Position 0.65m directly in front of camera at comfortable physical chest level
+        const targetPos = _scratchCamPos.clone().add(_scratchCamDir.clone().multiplyScalar(0.65));
+        targetPos.y = Math.max(0.85, _scratchCamPos.y - 0.12); // Natural chest level
 
-            card.position.copy(targetPos);
-            card.lookAt(_scratchCamPos);
+        card.position.copy(targetPos);
+        card.lookAt(_scratchCamPos);
+        card.updateMatrixWorld(true);
 
-            card.isSummonedToFoV = true;
-            card.isCondensed = false;
-            card.isProximityExpanded = true;
-            this.summonedCard = card;
-            this.summonLookAwayTime = 0;
+        card.isSummonedToFoV = true;
+        card.isCondensed = false;
+        card.isProximityExpanded = true;
+        this.summonedCard = card;
+        this.summonLookAwayTime = 0;
 
-            if (card.rebuildPanel) card.rebuildPanel();
+        if (card.rebuildPanel) card.rebuildPanel();
 
-            // 3. Dissolve fade back in at active FoV
-            this._fadeCard(card, true, 150);
+        // Smooth subtle entrance fade
+        this._fadeCard(card, true, 120);
 
-            if (this.onSummonStateChanged) this.onSummonStateChanged(card, true);
-        });
+        if (this.onSummonStateChanged) this.onSummonStateChanged(card, true);
     }
 
     /**
@@ -321,23 +365,23 @@ export class OcclusionManager {
     returnSummonedCard(card) {
         if (!card || !card.isSummonedToFoV) return;
 
-        this._fadeCard(card, false, 200, () => {
-            if (card._originalAnchorPos) {
-                card.position.copy(card._originalAnchorPos);
-                card.quaternion.copy(card._originalAnchorQuat);
-            }
+        if (card._originalAnchorPos) {
+            card.position.copy(card._originalAnchorPos);
+            card.quaternion.copy(card._originalAnchorQuat);
+            card.updateMatrixWorld(true);
+        }
 
-            card.isSummonedToFoV = false;
-            card.isProximityExpanded = false;
-            card.isCondensed = true;
-            if (this.summonedCard === card) this.summonedCard = null;
-            this.summonLookAwayTime = 0;
+        card.isSummonedToFoV = false;
+        card.isProximityExpanded = false;
+        card.isCondensed = true;
+        if (this.summonedCard === card) this.summonedCard = null;
+        this.summonLookAwayTime = 0;
 
-            if (card.rebuildPanel) card.rebuildPanel();
-            this._fadeCard(card, true, 200);
+        if (card.rebuildPanel) card.rebuildPanel();
+        this._fadeCard(card, true, 120);
 
-            if (this.onSummonStateChanged) this.onSummonStateChanged(card, false);
-        });
+        if (this.onSummonStateChanged) this.onSummonStateChanged(card, false);
+    }
     }
 
     /**
