@@ -2763,29 +2763,38 @@ class VirtualLight3D extends THREE.Group {
                   ariaLabel: isLocked ? 'Unlock Group Position' : 'Lock Group Position',
                   userData: { interactive: true },
                   style: {
-                      width: 44,
+                      width: 48,
                       height: 36,
                       borderRadius: 8,
-                      backgroundColor: isLocked ? 'rgba(255, 255, 255, 0.32)' : 'rgba(255, 255, 255, 0.16)',
+                      backgroundColor: isLocked ? "rgba(255, 255, 255, 0.32)" : "rgba(255, 255, 255, 0.16)",
                       borderWidth: 1.5,
-                      borderColor: '#FFFFFF',
-                      color: '#FFFFFF',
-                      alignItems: 'center',
-                      justifyContent: 'center',
+                      borderColor: "#FFFFFF",
+                      color: "#FFFFFF",
+                      alignItems: "center",
+                      justifyContent: "center",
                       padding: 0,
-                      ':hover': {
-                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
-                          color: '#000000',
-                          borderColor: '#FFFFFF',
+                      paddingLeft: 0,
+                      paddingRight: 0,
+                      paddingTop: 0,
+                      paddingBottom: 0,
+                      ":hover": {
+                          backgroundColor: "rgba(255, 255, 255, 0.75)",
+                          color: "#000000",
+                          borderColor: "#FFFFFF",
                       },
                   },
                   children: [
                       new xb.UIIcon({
                           icon: lockIconName,
+                          variant: "rounded",
+                          weight: 700,
+                          filled: isLocked,
+                          width: 28,
+                          height: 28,
                           style: {
-                              width: 32,
-                              height: 32,
-                              color: '#FFFFFF'
+                              width: 28,
+                              height: 28,
+                              color: "#FFFFFF"
                           }
                       })
                   ],
@@ -2855,29 +2864,38 @@ class VirtualLight3D extends THREE.Group {
                   ariaLabel: isGroupMember ? 'Remove from Lighting Group (Make Individual)' : 'Add to Lighting Group',
                   userData: { interactive: true },
                   style: {
-                      width: 44,
+                      width: 48,
                       height: 36,
                       borderRadius: 8,
-                      backgroundColor: isGroupMember ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.16)',
+                      backgroundColor: isGroupMember ? "rgba(255, 255, 255, 0.28)" : "rgba(255, 255, 255, 0.16)",
                       borderWidth: 1.5,
-                      borderColor: '#FFFFFF',
-                      color: '#FFFFFF',
-                      alignItems: 'center',
-                      justifyContent: 'center',
+                      borderColor: "#FFFFFF",
+                      color: "#FFFFFF",
+                      alignItems: "center",
+                      justifyContent: "center",
                       padding: 0,
-                      ':hover': {
-                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
-                          color: '#000000',
-                          borderColor: '#FFFFFF',
+                      paddingLeft: 0,
+                      paddingRight: 0,
+                      paddingTop: 0,
+                      paddingBottom: 0,
+                      ":hover": {
+                          backgroundColor: "rgba(255, 255, 255, 0.75)",
+                          color: "#000000",
+                          borderColor: "#FFFFFF",
                       },
                   },
                   children: [
                       new xb.UIIcon({
                           icon: groupIconName,
+                          variant: "rounded",
+                          weight: 700,
+                          filled: true,
+                          width: 28,
+                          height: 28,
                           style: {
-                              width: 32,
-                              height: 32,
-                              color: '#FFFFFF'
+                              width: 28,
+                              height: 28,
+                              color: "#FFFFFF"
                           }
                       })
                   ],
