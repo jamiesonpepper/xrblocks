@@ -2789,11 +2789,11 @@ class VirtualLight3D extends THREE.Group {
                           variant: "rounded",
                           weight: 700,
                           filled: isLocked,
-                          width: 28,
-                          height: 28,
+                          width: 22,
+                          height: 22,
                           style: {
-                              width: 28,
-                              height: 28,
+                              width: 22,
+                              height: 22,
                               color: "#FFFFFF"
                           }
                       })
@@ -2829,30 +2829,47 @@ class VirtualLight3D extends THREE.Group {
                   }
               });
 
-              groupActionBtn = new xb.UIButton({
-                  label: 'Disband',
-                  ariaLabel: 'Disband Lighting Group',
-                  userData: { interactive: true },
-                  style: {
-                      flexGrow: 1,
-                      height: 36,
-                      borderRadius: 8,
-                      backgroundColor: 'rgba(255, 255, 255, 0.16)',
-                      borderWidth: 1.5,
-                      borderColor: '#FFFFFF',
-                      color: '#FFFFFF',
-                      fontSize: 13,
-                      fontWeight: 'bold',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      ':hover': {
-                          backgroundColor: 'rgba(255, 255, 255, 0.75)',
-                          color: '#000000',
-                          borderColor: '#FFFFFF',
-                      },
-                  },
-                  onClick: () => this.handleDeleteGroup()
-              });
+               groupActionBtn = new xb.UIButton({
+                   ariaLabel: "Disband Lighting Group",
+                   userData: { interactive: true },
+                   style: {
+                       width: 48,
+                       height: 36,
+                       borderRadius: 8,
+                       backgroundColor: "rgba(255, 255, 255, 0.16)",
+                       borderWidth: 1.5,
+                       borderColor: "#FFFFFF",
+                       color: "#FFFFFF",
+                       alignItems: "center",
+                       justifyContent: "center",
+                       padding: 0,
+                       paddingLeft: 0,
+                       paddingRight: 0,
+                       paddingTop: 0,
+                       paddingBottom: 0,
+                       ":hover": {
+                           backgroundColor: "rgba(255, 255, 255, 0.75)",
+                           color: "#000000",
+                           borderColor: "#FFFFFF",
+                       },
+                   },
+                   children: [
+                       new xb.UIIcon({
+                           icon: "delete",
+                           variant: "rounded",
+                           weight: 700,
+                           filled: true,
+                           width: 22,
+                           height: 22,
+                           style: {
+                               width: 22,
+                               height: 22,
+                               color: "#FFFFFF"
+                           }
+                       })
+                   ],
+                   onClick: () => this.handleDeleteGroup()
+               });
 
               cardChildren.push(new xb.UIPanel({
                   style: { width: '100%', flexDirection: 'row', gap: 6 },
@@ -2890,11 +2907,11 @@ class VirtualLight3D extends THREE.Group {
                           variant: "rounded",
                           weight: 700,
                           filled: true,
-                          width: 28,
-                          height: 28,
+                          width: 22,
+                          height: 22,
                           style: {
-                              width: 28,
-                              height: 28,
+                              width: 22,
+                              height: 22,
                               color: "#FFFFFF"
                           }
                       })
