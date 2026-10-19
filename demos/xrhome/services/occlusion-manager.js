@@ -22,6 +22,7 @@ export class OcclusionManager {
         this.summonedCard = null;
         this.summonLookAwayTime = 0;
         this.onSummonStateChanged = null;
+        this.blockAllCards = false; // When true, even security pass-through cards (locks, covers, cameras) will be hidden by physical obstacles
     }
 
     /**
@@ -140,7 +141,8 @@ export class OcclusionManager {
         if (!card.panel) return;
 
         // Never occlude cards that are unpaired, in device selection, expanded by proximity/gaze, or summoned
-        if (card.unpaired || !card.realDevice || card.isSelectingDevice || card.isProximityExpanded || card.isSummonedToFoV) {
+        const isPaired = !!(card.realDevice || card.linkedNodeId || card.isLightingGroup) && !card.unpaired;
+        if (!isPaired || card.isSelectingDevice || card.isProximityExpanded || card.isSummonedToFoV) {
             card.isOccluded = false;
             card.isPassThroughOccluded = false;
             if (!card.visible) this._fadeCard(card, true);
@@ -150,8 +152,8 @@ export class OcclusionManager {
         card.getWorldPosition(_scratchCardPos);
         const distToCard = _scratchCamPos.distanceTo(_scratchCardPos);
 
-        // Skip LOS raycast if within near touch distance (< 2.0m) or no occluding meshes
-        if (distToCard < 2.0 || occludingMeshes.length === 0) {
+        // Skip LOS raycast if within immediate personal touch reach (< 0.45m) or no occluding meshes
+        if (distToCard < 0.45 || occludingMeshes.length === 0) {
             card.isOccluded = false;
             card.isPassThroughOccluded = false;
             if (!card.visible) this._fadeCard(card, true);
@@ -177,17 +179,17 @@ export class OcclusionManager {
         if (hits.length > 1) {
             hits.sort((a, b) => a.distance - b.distance);
         }
-        // Wall blockage test: must be blocked significantly before the card (> 45cm in front) to avoid false positives with fixture depth meshes
-        const isBlocked = hits.length > 0 && hits[0].distance < (distToCard - 0.45);
+        // Obstacle blockage test: must be blocked at least 10cm before card to avoid self-intersection with mounting surface
+        const isBlocked = hits.length > 0 && hits[0].distance < (distToCard - 0.10);
 
-        if (isSecurity) {
-            // SECURITY PASS-THROUGH: NEVER HIDE LOCKS OR COVERS!
+        if (isSecurity && !this.blockAllCards) {
+            // SECURITY PASS-THROUGH: Keep locks, covers, and cameras visible as beacons through walls
             card.isOccluded = false;
             card.isPassThroughOccluded = isBlocked;
             if (!card.visible) this._fadeCard(card, true);
             this._applySecurityBeaconVisual(card, isBlocked);
         } else {
-            // STANDARD DEVICE: Hide when occluded by walls
+            // STANDARD DEVICE (or blockAllCards mode): Hide when occluded by walls / real-world objects
             card.isPassThroughOccluded = false;
             if (isBlocked) {
                 if (!card.isOccluded) {
