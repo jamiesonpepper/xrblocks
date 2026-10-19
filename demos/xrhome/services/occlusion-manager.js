@@ -382,7 +382,6 @@ export class OcclusionManager {
 
         if (this.onSummonStateChanged) this.onSummonStateChanged(card, false);
     }
-    }
 
     /**
      * Smoothly fades a card in or out using panel material opacity.

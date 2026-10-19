@@ -638,7 +638,7 @@ import RAPIER from '@dimforge/rapier3d-simd-compat';
 import { HUDManager } from './hud.js?v=29';
 import { VirtualKeypad } from './keypad.js?v=27';
 import { GroupManager } from './services/group-manager.js';
-import { OcclusionManager } from './services/occlusion-manager.js?v=3';
+import { OcclusionManager } from './services/occlusion-manager.js?v=4';
 import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=32';
 
 // Globals
