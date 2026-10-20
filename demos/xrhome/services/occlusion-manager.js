@@ -23,6 +23,31 @@ export class OcclusionManager {
         this.summonLookAwayTime = 0;
         this.onSummonStateChanged = null;
         this.blockAllCards = false; // When true, even security pass-through cards (locks, covers, cameras) will be hidden by physical obstacles
+        this.isScanning = false; // When true, camera is actively scanning; occlusion is bypassed so all new cards on walls are 100% visible
+    }
+
+    /**
+     * Sets scanning mode. When scanning is active, pauses line-of-sight occlusion
+     * and ensures all cards are fully visible for easy placement and setup.
+     * When scanning stops, normal depth-mesh occlusion resumes.
+     */
+    setScanningMode(isScanning, cards = []) {
+        this.isScanning = !!isScanning;
+        if (this.isScanning && cards && cards.length > 0) {
+            for (const card of cards) {
+                if (!card) continue;
+                card.isOccluded = false;
+                card.isPassThroughOccluded = false;
+                card.visible = true;
+                if (card.panel) {
+                    card.panel.traverse(child => {
+                        if (child.material) {
+                            child.material.opacity = 1.0;
+                        }
+                    });
+                }
+            }
+        }
     }
 
     /**
@@ -111,23 +136,30 @@ export class OcclusionManager {
             }
         }
 
-        // 3. Staggered line-of-sight occlusion evaluation
-        const count = cards.length;
-        const meshes = [];
-        if (occludingMesh) {
-            if (Array.isArray(occludingMesh)) meshes.push(...occludingMesh);
-            else meshes.push(occludingMesh);
+        // 4. Staggered line-of-sight occlusion evaluation (bypassed during active scanning)
+        if (!this.isScanning) {
+            const count = cards.length;
+            const meshes = [];
+            if (occludingMesh) {
+                if (Array.isArray(occludingMesh)) meshes.push(...occludingMesh);
+                else meshes.push(occludingMesh);
+            }
+            for (const mesh of meshes) {
+                if (mesh && mesh.geometry) {
+                    mesh.geometry.computeBoundingSphere();
+                }
+            }
+
+            for (let i = 0; i < this.batchSize; i++) {
+                const idx = (this.evaluatedIndex + i) % count;
+                const card = cards[idx];
+                if (!card || card.isSummonedToFoV) continue;
+
+                this._evaluateCardOcclusion(camera, card, meshes);
+            }
+
+            this.evaluatedIndex = (this.evaluatedIndex + this.batchSize) % count;
         }
-
-        for (let i = 0; i < this.batchSize; i++) {
-            const idx = (this.evaluatedIndex + i) % count;
-            const card = cards[idx];
-            if (!card || card.isSummonedToFoV) continue;
-
-            this._evaluateCardOcclusion(camera, card, meshes);
-        }
-
-        this.evaluatedIndex = (this.evaluatedIndex + this.batchSize) % count;
     }
 
     /**

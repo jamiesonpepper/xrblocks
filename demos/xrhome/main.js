@@ -649,7 +649,7 @@ import RAPIER from '@dimforge/rapier3d-simd-compat';
 import { HUDManager } from './hud.js?v=29';
 import { VirtualKeypad } from './keypad.js?v=27';
 import { GroupManager } from './services/group-manager.js';
-import { OcclusionManager } from './services/occlusion-manager.js?v=8';
+import { OcclusionManager } from './services/occlusion-manager.js?v=9';
 import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=32';
 
 // Globals
@@ -5752,6 +5752,11 @@ async function toggleScan() {
             // --- STARTING SCAN ---
             hud.log("Starting Camera...", '#FFFF00');
             
+            // Inform OcclusionManager: Bypass line-of-sight occlusion so newly detected devices on walls are fully visible
+            if (typeof occlusionManager !== 'undefined' && occlusionManager) {
+                occlusionManager.setScanningMode(true, virtualLights);
+            }
+            
             // 0. Cleanup Unmapped Anchors from PREVIOUS session
             const unmappedLights = virtualLights.filter(vl => !vl.realDevice && !vl.linkedNodeId);
             unmappedLights.forEach(vl => {
@@ -5896,6 +5901,24 @@ async function toggleScan() {
             // --- STOPPING SCAN ---
             if (typeof scanningWeb !== 'undefined' && scanningWeb) {
                 scanningWeb.hide();
+            }
+            
+            // Pause camera video element decoding to release CPU/GPU memory & bandwidth
+            if (hud.mode !== '2D') {
+                const app = xb.core;
+                if (app && app.deviceCamera && app.deviceCamera.video) {
+                    try {
+                        app.deviceCamera.video.pause();
+                        console.log("[toggleScan] Camera hardware video paused for resting mode.");
+                    } catch (e) {
+                        console.warn("[toggleScan] Video pause error:", e);
+                    }
+                }
+            }
+
+            // Inform OcclusionManager: Resume line-of-sight occlusion using depth mesh
+            if (typeof occlusionManager !== 'undefined' && occlusionManager) {
+                occlusionManager.setScanningMode(false, virtualLights);
             }
             
             // Update all visual lights to toggle draggability ON (if unpaired)
