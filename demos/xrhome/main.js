@@ -146,48 +146,6 @@ class HUDInteraction extends xb.Script {
                     if (xb.core.depth.depthMesh) occluders.push(xb.core.depth.depthMesh);
                     if (xb.core.depth.depthMesh && xb.core.depth.depthMesh.downsampledMesh) occluders.push(xb.core.depth.depthMesh.downsampledMesh);
                 }
-                // WebXR Detected Room Meshes (Walls, Ceilings, Floors, Furniture from Space Setup)
-                if (typeof xb !== 'undefined' && xb.core && xb.core.world && xb.core.world.meshes) {
-                    const roomMeshes = xb.core.world.meshes.children;
-                    if (roomMeshes && roomMeshes.length > 0) {
-                        for (const m of roomMeshes) {
-                            if (m && m.isMesh) {
-                                occluders.push(m);
-                                if (!m.userData._isOccluderConfigured) {
-                                    m.material = new THREE.MeshBasicMaterial({
-                                        colorWrite: false,
-                                        depthWrite: true,
-                                        side: THREE.DoubleSide
-                                    });
-                                    m.visible = true;
-                                    m.renderOrder = -1;
-                                    m.userData._isOccluderConfigured = true;
-                                }
-                            }
-                        }
-                    }
-                }
-                // WebXR Detected Planes (Planes from Space Setup)
-                if (typeof xb !== 'undefined' && xb.core && xb.core.world && xb.core.world.planes) {
-                    const planes = xb.core.world.planes.get();
-                    if (planes && planes.length > 0) {
-                        for (const p of planes) {
-                            if (p && p.isMesh) {
-                                occluders.push(p);
-                                if (!p.userData._isOccluderConfigured) {
-                                    p.material = new THREE.MeshBasicMaterial({
-                                        colorWrite: false,
-                                        depthWrite: true,
-                                        side: THREE.DoubleSide
-                                    });
-                                    p.visible = true;
-                                    p.renderOrder = -1;
-                                    p.userData._isOccluderConfigured = true;
-                                }
-                            }
-                        }
-                    }
-                }
                 const controllers = [];
                 if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
                     for (let i = 0; i < 2; i++) {
@@ -691,7 +649,7 @@ import RAPIER from '@dimforge/rapier3d-simd-compat';
 import { HUDManager } from './hud.js?v=29';
 import { VirtualKeypad } from './keypad.js?v=27';
 import { GroupManager } from './services/group-manager.js';
-import { OcclusionManager } from './services/occlusion-manager.js?v=7';
+import { OcclusionManager } from './services/occlusion-manager.js?v=8';
 import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=32';
 
 // Globals
@@ -5301,20 +5259,6 @@ async function initApp(preloadedConfig = null) {
         }
         if (o.depth.occlusion) {
             o.depth.occlusion.enabled = true;
-        }
-    }
-
-    // WebXR Room Mesh & Plane Detection (from Meta Quest Space Setup / Room Scan)
-    if (o.world && typeof o.world.enableMeshDetection === 'function') {
-        o.world.enableMeshDetection();
-        if (o.world.meshes) {
-            o.world.meshes.showDebugVisualizations = false;
-        }
-    }
-    if (o.world && typeof o.world.enablePlaneDetection === 'function') {
-        o.world.enablePlaneDetection();
-        if (o.world.planes) {
-            o.world.planes.showDebugVisualizations = false;
         }
     }
 

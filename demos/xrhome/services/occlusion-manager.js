@@ -145,18 +145,25 @@ export class OcclusionManager {
         if (!isPaired || card.isSelectingDevice || card.isProximityExpanded || card.isSummonedToFoV) {
             card.isOccluded = false;
             card.isPassThroughOccluded = false;
-            if (!card.visible) this._fadeCard(card, true);
+            card.visible = true;
+            if (card.panel) {
+                card.panel.traverse(child => {
+                    if (child.material) {
+                        child.material.opacity = 1.0;
+                    }
+                });
+            }
             return;
         }
 
         card.getWorldPosition(_scratchCardPos);
         const distToCard = _scratchCamPos.distanceTo(_scratchCardPos);
 
-        // Skip LOS raycast if within immediate personal touch reach (< 0.45m) or no occluding meshes
-        if (distToCard < 0.45 || occludingMeshes.length === 0) {
+        // Skip LOS raycast if within arm's reach (< 0.80m) or no occluding meshes
+        if (distToCard < 0.80 || occludingMeshes.length === 0) {
             card.isOccluded = false;
             card.isPassThroughOccluded = false;
-            if (!card.visible) this._fadeCard(card, true);
+            card.visible = true;
             return;
         }
 
@@ -179,8 +186,8 @@ export class OcclusionManager {
         if (hits.length > 1) {
             hits.sort((a, b) => a.distance - b.distance);
         }
-        // Obstacle blockage test: must be blocked at least 10cm before card to avoid self-intersection with mounting surface
-        const isBlocked = hits.length > 0 && hits[0].distance < (distToCard - 0.10);
+        // Obstacle blockage test: must be blocked significantly before card (> 20cm) to avoid self-intersection with mounting surface
+        const isBlocked = hits.length > 0 && hits[0].distance < (distToCard - 0.20);
 
         if (isSecurity && !this.blockAllCards) {
             // SECURITY PASS-THROUGH: Keep locks, covers, and cameras visible as beacons through walls
