@@ -61,6 +61,13 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 - **Defensive ShapePath Polyfill**: Added runtime protection against Three.js `ShapePath.toShapes()` point-in-polygon crashes (`Cannot read properties of undefined (reading 'y')`) on SVGs containing empty or degenerate subpaths.
 - **Icon Normalization & UI Cache Invalidation**: Normalized unpaired device card icon from `add_circle` to `add` and bumped client bundle cache busters (`main.js?v=93`) to ensure clean hydration on headset browsers.
 
+### 7. WebXR Hardware Occlusion, Active Plane Sensing & Security Pass-Through (Version 2.16)
+
+- **Hardware Z-Buffer Occlusion**: Configured dynamic WebXR depth mesh (`xb.core.depth.depthMesh`) as an invisible hardware depth occluder (`colorWrite: false, depthWrite: true, renderOrder: -1`) with positive polygon offset to seamlessly occlude virtual devices behind real-world physical walls, columns, and furniture.
+- **Active Plane Sensing & Unpaired Card Protection**: Integrated WebXR depth sensor probing and raycasting into fixture spawning (`spawnVirtualLights`), ensuring unpaired cards float 8 cm in front of detected walls or ceilings. On scan pause, all unpaired cards are automatically relocated in front of the active plane so they are never clipped by room geometry.
+- **Scan-Gated Hardware Coordination**: Pauses camera decoding in resting mode to conserve GPU/CPU bandwidth and automatically toggles the hardware depth occluder between active scanning and resting configuration modes.
+- **Security Pass-Through & Rapid FoV Summon**: Critical perimeter and security devices (locks, covers/garage doors, and cameras) shine through physical walls with luminous beacon outlines when occluded, and can be summoned instantly to chest level (0.65m) via gaze dwell (0.35s) or controller raycast (0.25s) with a return-to-anchor cooldown.
+
 ---
 
 ## User Interaction Guide

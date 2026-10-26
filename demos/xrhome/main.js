@@ -141,10 +141,26 @@ class HUDInteraction extends xb.Script {
             // 1. Evaluate Selective Occlusion & Glance-to-Summon
             if (typeof occlusionManager !== 'undefined' && occlusionManager) {
                 const occluders = [];
-                // Dynamic WebXR Depth Sensing Mesh
-                if (typeof xb !== 'undefined' && xb.core && xb.core.depth) {
-                    if (xb.core.depth.depthMesh) occluders.push(xb.core.depth.depthMesh);
-                    if (xb.core.depth.depthMesh && xb.core.depth.depthMesh.downsampledMesh) occluders.push(xb.core.depth.depthMesh.downsampledMesh);
+                // Dynamic WebXR Depth Sensing Mesh (Option 1: Hardware Z-Buffer Occlusion)
+                if (typeof xb !== 'undefined' && xb.core && xb.core.depth && xb.core.depth.depthMesh) {
+                    const dm = xb.core.depth.depthMesh;
+                    if (!dm.userData._isOccluderConfigured) {
+                        dm.material = new THREE.MeshBasicMaterial({
+                            colorWrite: false, // Invisible to eyes / passthrough camera
+                            depthWrite: true,  // Writes real-world physical depth into WebGL Z-buffer
+                            side: THREE.DoubleSide
+                        });
+                        dm.material.polygonOffset = true;
+                        dm.material.polygonOffsetFactor = 1.0;
+                        dm.material.polygonOffsetUnits = 1.0;
+                        dm.renderOrder = -1;  // Render BEFORE all virtual objects
+                        dm.userData._isOccluderConfigured = true;
+                    }
+                    dm.visible = !isScanning;
+                    if (dm.material) {
+                        dm.material.depthWrite = !isScanning;
+                    }
+                    occluders.push(dm);
                 }
                 const controllers = [];
                 if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
@@ -649,7 +665,7 @@ import RAPIER from '@dimforge/rapier3d-simd-compat';
 import { HUDManager } from './hud.js?v=29';
 import { VirtualKeypad } from './keypad.js?v=27';
 import { GroupManager } from './services/group-manager.js';
-import { OcclusionManager } from './services/occlusion-manager.js?v=9';
+import { OcclusionManager } from './services/occlusion-manager.js?v=15';
 import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=32';
 
 // Globals
@@ -3232,6 +3248,8 @@ class VirtualLight3D extends THREE.Group {
           children: panelChildren
       });
 
+      const isLocked = isPaired && (!this.isLightingGroup || this.isPositionLocked);
+
       this.panel = new xb.UICard({
           size: { width: this.panelWidth, height: 'auto' },
           sizeX: this.panelWidth,
@@ -3262,7 +3280,9 @@ class VirtualLight3D extends THREE.Group {
 
       this.add(this.panel);
       this.visible = true;
-      if (this.panel) this.panel.visible = true;
+      if (this.panel) {
+          this.panel.visible = true;
+      }
   }
 
   setExpanded(expanded) {
@@ -3725,7 +3745,9 @@ class VirtualLight3D extends THREE.Group {
       this.panel.position.set(0, 0, 0);
       this.add(this.panel);
       this.visible = true;
-      if (this.panel) this.panel.visible = true;
+      if (this.panel) {
+          this.panel.visible = true;
+      }
   }
 
   async pairWithDevice(deviceId) {
@@ -5252,7 +5274,7 @@ async function initApp(preloadedConfig = null) {
             o.depth.depthMesh.showDebugTexture = false;
             o.depth.depthMesh.renderShadow = false;
             o.depth.depthMesh.useDownsampledGeometry = true;
-            o.depth.depthMesh.updateFullResolutionGeometry = false;
+            o.depth.depthMesh.updateFullResolutionGeometry = true;
         }
         if (o.depth.depthTexture) {
             o.depth.depthTexture.enabled = true;
@@ -5263,6 +5285,22 @@ async function initApp(preloadedConfig = null) {
     }
 
     xb.init(o);
+
+    // Option 1: Configure WebXR Hardware Z-Buffer Depth Occluder
+    if (xb.core && xb.core.depth && xb.core.depth.depthMesh) {
+        const dm = xb.core.depth.depthMesh;
+        dm.material = new THREE.MeshBasicMaterial({
+            colorWrite: false, // Invisible: does not draw any color so camera passthrough is unaffected
+            depthWrite: true,  // Writes real-world physical depth into WebGL Z-buffer
+            side: THREE.DoubleSide
+        });
+        dm.material.polygonOffset = true;
+        dm.material.polygonOffsetFactor = 1.0;
+        dm.material.polygonOffsetUnits = 1.0;
+        dm.renderOrder = -1;  // Render BEFORE all virtual UICards
+        dm.visible = true;    // Active in resting mode
+        dm.userData._isOccluderConfigured = true;
+    }
 
     if (xb.ui && xb.ui.setTheme) {
         xb.ui.setTheme({
@@ -5757,6 +5795,14 @@ async function toggleScan() {
                 occlusionManager.setScanningMode(true, virtualLights);
             }
             
+            // Disable depth mesh Z-buffer occluder during active scanning
+            if (typeof xb !== 'undefined' && xb.core && xb.core.depth && xb.core.depth.depthMesh) {
+                xb.core.depth.depthMesh.visible = false;
+                if (xb.core.depth.depthMesh.material) {
+                    xb.core.depth.depthMesh.material.depthWrite = false;
+                }
+            }
+            
             // 0. Cleanup Unmapped Anchors from PREVIOUS session
             const unmappedLights = virtualLights.filter(vl => !vl.realDevice && !vl.linkedNodeId);
             unmappedLights.forEach(vl => {
@@ -5916,9 +5962,54 @@ async function toggleScan() {
                 }
             }
 
-            // Inform OcclusionManager: Resume line-of-sight occlusion using depth mesh
-            if (typeof occlusionManager !== 'undefined' && occlusionManager) {
-                occlusionManager.setScanningMode(false, virtualLights);
+            // Re-enable depth mesh Z-buffer occluder for resting mode with polygon offset
+            if (typeof xb !== 'undefined' && xb.core && xb.core.depth && xb.core.depth.depthMesh) {
+                const dm = xb.core.depth.depthMesh;
+                dm.visible = true;
+                if (dm.material) {
+                    dm.material.depthWrite = true;
+                    dm.material.polygonOffset = true;
+                    dm.material.polygonOffsetFactor = 1.0;
+                    dm.material.polygonOffsetUnits = 1.0;
+                }
+            }
+
+            // Ensure all unpaired cards sit safely in front of the active plane (walls / ceilings)
+            let activeCam = null;
+            try {
+                if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
+                    activeCam = xb.renderer.xr.getCamera();
+                } else if (xb.camera) {
+                    activeCam = xb.camera;
+                }
+            } catch (_) {}
+
+            if (activeCam && typeof xb !== 'undefined' && xb.core && xb.core.depth && xb.core.depth.depthMesh) {
+                const dm = xb.core.depth.depthMesh;
+                const camPos = new THREE.Vector3();
+                activeCam.getWorldPosition(camPos);
+
+                virtualLights.forEach(vl => {
+                    const isPaired = !!(vl.realDevice || vl.linkedNodeId || vl.isLightingGroup);
+                    if (!isPaired) {
+                        const cardPos = new THREE.Vector3();
+                        vl.getWorldPosition(cardPos);
+                        const distToCard = camPos.distanceTo(cardPos);
+                        if (distToCard > 0.1) {
+                            const dir = new THREE.Vector3().subVectors(cardPos, camPos).normalize();
+                            const ray = new THREE.Raycaster(camPos, dir, 0.1, distToCard + 0.5);
+                            const hits = ray.intersectObject(dm, true);
+                            if (hits && hits.length > 0 && hits[0].distance <= (distToCard + 0.05)) {
+                                const safeDist = Math.max(0.55, hits[0].distance - 0.08);
+                                const targetPos = camPos.clone().add(dir.multiplyScalar(safeDist));
+                                vl.position.copy(targetPos);
+                                vl.lookAt(camPos);
+                                vl.updateMatrixWorld(true);
+                                console.log(`[toggleScan] Adjusted unpaired card '${vl.labelText}' in front of active plane at ${safeDist.toFixed(2)}m (surface at ${hits[0].distance.toFixed(2)}m)`);
+                            }
+                        }
+                    }
+                });
             }
             
             // Update all visual lights to toggle draggability ON (if unpaired)
@@ -5929,6 +6020,11 @@ async function toggleScan() {
                     console.warn("[toggleScan] vl.updateVisuals error:", e);
                 }
             });
+
+            // Inform OcclusionManager: Resume line-of-sight occlusion on fresh panels
+            if (typeof occlusionManager !== 'undefined' && occlusionManager) {
+                occlusionManager.setScanningMode(false, virtualLights);
+            }
             
             hud.speak("Scanning paused. Configure lights.");
             hud.log("Scanning Paused", '#FFFF00');
@@ -6118,20 +6214,46 @@ async function spawnVirtualLights(lights, cameraMatrix) {
         let lookTarget = null;
 
         if (cameraMatrix) {
-            candidatePos.set(x, y, z).applyMatrix4(cameraMatrix);
+            const camPos = new THREE.Vector3().setFromMatrixPosition(cameraMatrix);
+            const rayDir = new THREE.Vector3(x, y, z).normalize().transformDirection(cameraMatrix);
+
+            // Probe real physical wall/ceiling depth
+            let surfaceDist = null;
+            if (typeof xb !== 'undefined' && xb.core && xb.core.depth && typeof xb.core.depth.getDepth === 'function') {
+                try {
+                    const d = xb.core.depth.getDepth(cx, cy);
+                    if (d > 0.35 && d < 6.0) surfaceDist = d;
+                } catch (_) {}
+            }
+            if (!surfaceDist && typeof xb !== 'undefined' && xb.core && xb.core.depth && xb.core.depth.depthMesh) {
+                try {
+                    const dm = xb.core.depth.depthMesh;
+                    const testRay = new THREE.Raycaster(camPos, rayDir, 0.2, 6.0);
+                    const hits = testRay.intersectObject(dm, true);
+                    if (hits && hits.length > 0 && hits[0].distance > 0.35) {
+                        surfaceDist = hits[0].distance;
+                    }
+                } catch (_) {}
+            }
+
+            // If surface detected, place 8cm in front of wall/ceiling plane; otherwise clamp to comfortable arm's reach (0.85m - 1.05m)
+            const finalDist = surfaceDist !== null ? Math.max(0.55, surfaceDist - 0.08) : Math.max(0.75, Math.min(1.05, Math.abs(z)));
+            candidatePos.copy(camPos).add(rayDir.clone().multiplyScalar(finalDist));
+
             let currentCam = xb.camera;
             try {
                 if (xb.renderer && xb.renderer.xr && xb.renderer.xr.isPresenting) {
                     currentCam = xb.renderer.xr.getCamera();
                 }
             } catch (_) {}
-            if (currentCam) lookTarget = currentCam.position;
+            lookTarget = currentCam ? currentCam.position : camPos;
         } else if (cam) {
             const camPos = new THREE.Vector3();
             const camDir = new THREE.Vector3();
             cam.getWorldPosition(camPos);
             cam.getWorldDirection(camDir);
-            candidatePos.copy(camPos).add(camDir.multiplyScalar(Math.abs(z)));
+            const finalDist = Math.max(0.75, Math.min(1.05, Math.abs(z)));
+            candidatePos.copy(camPos).add(camDir.multiplyScalar(finalDist));
             candidatePos.y = Math.max(0.8, camPos.y + y);
             lookTarget = camPos;
         } else {

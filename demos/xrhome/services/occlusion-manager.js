@@ -27,24 +27,42 @@ export class OcclusionManager {
     }
 
     /**
+     * Helper to configure depth testing, polygon offsets, and draw order on a card's meshes.
+     * When bypassDepth is true, the card completely ignores the Z-buffer (so ceilings and walls never clip it).
+     */
+    setCardDepthOcclusion(card, bypassDepth) {
+        if (!card) return;
+        card.renderOrder = bypassDepth ? 999 : 0;
+        if (card.panel) card.panel.renderOrder = bypassDepth ? 999 : 0;
+    }
+
+    /**
      * Sets scanning mode. When scanning is active, pauses line-of-sight occlusion
      * and ensures all cards are fully visible for easy placement and setup.
      * When scanning stops, normal depth-mesh occlusion resumes.
      */
     setScanningMode(isScanning, cards = []) {
         this.isScanning = !!isScanning;
-        if (this.isScanning && cards && cards.length > 0) {
+        if (cards && cards.length > 0) {
             for (const card of cards) {
                 if (!card) continue;
-                card.isOccluded = false;
-                card.isPassThroughOccluded = false;
-                card.visible = true;
-                if (card.panel) {
-                    card.panel.traverse(child => {
-                        if (child.material) {
-                            child.material.opacity = 1.0;
-                        }
-                    });
+                const isPaired = !!(card.realDevice || card.linkedNodeId || card.isLightingGroup);
+                const isLocked = isPaired && (!card.isLightingGroup || card.isPositionLocked);
+                const shouldBypass = this.isScanning || !isLocked || card.isSelectingDevice;
+
+                if (shouldBypass) {
+                    card.isOccluded = false;
+                    card.isPassThroughOccluded = false;
+                    card.visible = true;
+                    if (card.panel) {
+                        card.panel.visible = true;
+                        card.panel.traverse(child => {
+                            if (child.material) {
+                                child.material.opacity = 1.0;
+                            }
+                        });
+                    }
+                    this.setCardDepthOcclusion(card, true);
                 }
             }
         }
@@ -58,7 +76,7 @@ export class OcclusionManager {
         if (!device) return false;
 
         // ONLY operate after a camera, lock, or cover is paired! Unpaired cards must remain in place for setup/pairing
-        const isPaired = !!(device.realDevice || device.linkedNodeId) && !device.unpaired;
+        const isPaired = !!(device.realDevice || device.linkedNodeId);
         if (!isPaired) return false;
 
         const domain = (device.realDevice?.domain || device.category || device.geminiData?.category || '').toLowerCase();
@@ -102,12 +120,9 @@ export class OcclusionManager {
     }
 
     /**
-     * Staggered per-frame evaluation of occlusion and gaze dwell.
-     * @param {THREE.Camera} camera 
-     * @param {Array} cards - Array of VirtualLight3D instances
-     * @param {THREE.Object3D|Array} occludingMesh - WebXR depth mesh, planes, or room meshes
-     * @param {number} delta - Frame delta time in seconds
-     * @param {Array} controllers - WebXR controllers for pointer interaction
+     * Per-frame evaluation of occlusion, gaze dwell, and depth testing.
+     * Unpaired and unlocked cards bypass depth testing EVERY frame so they are never occluded.
+     * Paired, locked cards are evaluated for line-of-sight occlusion.
      */
     update(camera, cards = [], occludingMesh = null, delta = 0.016, controllers = []) {
         if (!this.enabled || !camera || !cards || cards.length === 0) return;
@@ -115,13 +130,34 @@ export class OcclusionManager {
         camera.getWorldPosition(_scratchCamPos);
         camera.getWorldDirection(_scratchCamDir);
 
-        // 1. Check gaze dwell on distant pass-through cards (Locks, Covers, Cameras)
-        this._updateGazeSummon(camera, cards, delta);
+        // 1. Every frame: separate cards into Unpaired/Unlocked (bypass depth test every frame) and Paired (evaluate occlusion)
+        const pairedCardsToTest = [];
 
-        // 2. Check controller pointer aim on distant pass-through cards (Locks, Covers, Cameras)
-        this._updatePointerSummon(camera, cards, controllers, delta);
+        for (const card of cards) {
+            if (!card) continue;
+            const isPaired = !!(card.realDevice || card.linkedNodeId || card.isLightingGroup);
+            const isLocked = isPaired && (!card.isLightingGroup || card.isPositionLocked);
+            const isBypassed = this.isScanning || !isLocked || card.isSelectingDevice || card.isSummonedToFoV || card.isDragging;
 
-        // 3. Check summoned card look-away auto-dismissal
+            if (isBypassed) {
+                // UNPAIRED / UNLOCKED: NEVER occluded by depth mesh, ceilings, or walls
+                card.isOccluded = false;
+                card.isPassThroughOccluded = false;
+                card.visible = true;
+                if (card.panel) card.panel.visible = true;
+                this.setCardDepthOcclusion(card, true);
+            } else {
+                pairedCardsToTest.push(card);
+            }
+        }
+
+        // 2. Check gaze dwell on distant pass-through cards (Locks, Covers, Cameras)
+        this._updateGazeSummon(camera, pairedCardsToTest, delta);
+
+        // 3. Check controller pointer aim on distant pass-through cards (Locks, Covers, Cameras)
+        this._updatePointerSummon(camera, pairedCardsToTest, controllers, delta);
+
+        // 4. Check summoned card look-away auto-dismissal
         if (this.summonedCard) {
             this.summonedCard.getWorldPosition(_scratchCardPos);
             _scratchDir.copy(_scratchCardPos).sub(_scratchCamPos).normalize();
@@ -136,9 +172,9 @@ export class OcclusionManager {
             }
         }
 
-        // 4. Staggered line-of-sight occlusion evaluation (bypassed during active scanning)
-        if (!this.isScanning) {
-            const count = cards.length;
+        // 5. Staggered line-of-sight occlusion evaluation for PAIRED devices (bypassed during active scanning)
+        if (!this.isScanning && pairedCardsToTest.length > 0) {
+            const count = pairedCardsToTest.length;
             const meshes = [];
             if (occludingMesh) {
                 if (Array.isArray(occludingMesh)) meshes.push(...occludingMesh);
@@ -150,43 +186,28 @@ export class OcclusionManager {
                 }
             }
 
-            for (let i = 0; i < this.batchSize; i++) {
+            const batch = Math.min(this.batchSize, count);
+            for (let i = 0; i < batch; i++) {
                 const idx = (this.evaluatedIndex + i) % count;
-                const card = cards[idx];
+                const card = pairedCardsToTest[idx];
                 if (!card || card.isSummonedToFoV) continue;
 
                 this._evaluateCardOcclusion(camera, card, meshes);
             }
 
-            this.evaluatedIndex = (this.evaluatedIndex + this.batchSize) % count;
+            this.evaluatedIndex = (this.evaluatedIndex + batch) % count;
         }
     }
 
     /**
-     * Evaluates line of sight between camera and card.
+     * Evaluates line of sight between camera and a paired, locked card.
      */
     _evaluateCardOcclusion(camera, card, occludingMeshes) {
         const isSecurity = this.isSecurityPassThrough(card);
         card.isPassThrough = isSecurity;
 
-        // If card has no panel or is currently being dragged, preserve visibility
+        // If card has no panel, skip
         if (!card.panel) return;
-
-        // Never occlude cards that are unpaired, in device selection, expanded by proximity/gaze, or summoned
-        const isPaired = !!(card.realDevice || card.linkedNodeId || card.isLightingGroup) && !card.unpaired;
-        if (!isPaired || card.isSelectingDevice || card.isProximityExpanded || card.isSummonedToFoV) {
-            card.isOccluded = false;
-            card.isPassThroughOccluded = false;
-            card.visible = true;
-            if (card.panel) {
-                card.panel.traverse(child => {
-                    if (child.material) {
-                        child.material.opacity = 1.0;
-                    }
-                });
-            }
-            return;
-        }
 
         card.getWorldPosition(_scratchCardPos);
         const distToCard = _scratchCamPos.distanceTo(_scratchCardPos);
@@ -196,6 +217,8 @@ export class OcclusionManager {
             card.isOccluded = false;
             card.isPassThroughOccluded = false;
             card.visible = true;
+            if (card.panel) card.panel.visible = true;
+            this.setCardDepthOcclusion(card, false);
             return;
         }
 
@@ -207,8 +230,15 @@ export class OcclusionManager {
         let hits = [];
         for (const mesh of occludingMeshes) {
             if (!mesh) continue;
+            mesh.updateMatrixWorld(true);
             const wasVis = mesh.visible;
             mesh.visible = true; // Ensure raycaster tests geometry even when debug material is invisible
+            if (mesh.material) {
+                mesh.material.side = THREE.DoubleSide;
+            }
+            if (mesh.geometry) {
+                mesh.geometry.computeBoundingSphere();
+            }
             const mHits = _raycaster.intersectObject(mesh, true);
             mesh.visible = wasVis;
             if (mHits && mHits.length > 0) {
@@ -218,29 +248,23 @@ export class OcclusionManager {
         if (hits.length > 1) {
             hits.sort((a, b) => a.distance - b.distance);
         }
-        // Obstacle blockage test: must be blocked significantly before card (> 20cm) to avoid self-intersection with mounting surface
-        const isBlocked = hits.length > 0 && hits[0].distance < (distToCard - 0.20);
+        // Obstacle blockage test: must be blocked significantly before card (> 15cm) to avoid self-intersection with mounting surface
+        const isBlocked = hits.length > 0 && hits[0].distance < (distToCard - 0.15);
 
         if (isSecurity && !this.blockAllCards) {
             // SECURITY PASS-THROUGH: Keep locks, covers, and cameras visible as beacons through walls
             card.isOccluded = false;
             card.isPassThroughOccluded = isBlocked;
-            if (!card.visible) this._fadeCard(card, true);
+            card.visible = true;
+            if (card.panel) card.panel.visible = true;
             this._applySecurityBeaconVisual(card, isBlocked);
         } else {
-            // STANDARD DEVICE (or blockAllCards mode): Hide when occluded by walls / real-world objects
+            // STANDARD DEVICE (or blockAllCards mode): Hardware Z-buffer handles physical occlusion
             card.isPassThroughOccluded = false;
-            if (isBlocked) {
-                if (!card.isOccluded) {
-                    card.isOccluded = true;
-                    this._fadeCard(card, false);
-                }
-            } else {
-                if (card.isOccluded) {
-                    card.isOccluded = false;
-                    this._fadeCard(card, true);
-                }
-            }
+            card.isOccluded = isBlocked;
+            card.visible = true; // Kept in scene graph so WebGL Z-buffer physically clips pixels behind real objects
+            if (card.panel) card.panel.visible = true;
+            this.setCardDepthOcclusion(card, false);
         }
     }
 
@@ -482,6 +506,9 @@ export class OcclusionManager {
                 requestAnimationFrame(step);
             } else {
                 card.visible = show;
+                if (card.panel) {
+                    card.panel.visible = show;
+                }
                 if (onComplete) onComplete();
             }
         };
@@ -502,6 +529,8 @@ export class OcclusionManager {
                     borderWidth: 2.5
                 });
             }
+            // Allow security beacons to shine through physical walls in the Z-buffer
+            this.setCardDepthOcclusion(card, true);
         } else {
             // Standard clean white border when in direct sight
             if (card.panel.setStyle && !card.isSummonedToFoV) {
@@ -510,6 +539,8 @@ export class OcclusionManager {
                     borderWidth: 1.5
                 });
             }
+            // Normal depth testing when in direct line of sight
+            this.setCardDepthOcclusion(card, false);
         }
     }
 }
