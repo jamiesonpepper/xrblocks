@@ -657,7 +657,7 @@ if (xb.ui && xb.ui.setTheme) {
 }
 import { AuthManager } from './auth.js';
 import { CameraManager } from './webrtc.js';
-import { VisionManager } from './vision.js?v=28';
+import { VisionManager } from './vision.js?v=29';
 import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=61';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';

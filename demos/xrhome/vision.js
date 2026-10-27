@@ -1,6 +1,6 @@
 /**
  * vision.js
- * Handles interaction with Gemini 2.5 Flash REST API.
+ * Handles interaction with Gemini 3.8 Flash REST API.
  * Uses strict JSON mode for reliable object detection.
  */
 
@@ -17,7 +17,7 @@ export class VisionManager {
     }
 
     /**
-     * Captures a frame and sends it to Gemini 1.5 Flash.
+     * Captures a frame and sends it to Gemini 3.8 Flash.
      * @param {Blob} imageBlob - JPEG output from CameraManager
      * @param {THREE.Matrix4} [cameraMatrix] - Optional camera pose at time of capture
      */
@@ -42,8 +42,8 @@ export class VisionManager {
             console.log(base64Data);
             console.log('[Vision] RAW_BASE64_IMAGE_END');
 
-            // Switching to Gemini 2.5 Flash (Stable)
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.apiKey}`;
+            // Switching to Gemini 3.8 Flash (Stable)
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${this.apiKey}`;
             
             console.log(`[Vision] Sending Request to Gemini...`);
             

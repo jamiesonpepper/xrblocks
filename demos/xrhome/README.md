@@ -1,6 +1,6 @@
 # XRHome (Home Assistant & WebXR Edition)
 
-A full-stack, room-scale WebXR spatial computing application powered by **XRBlocks**, **Google Gemini 2.5 Flash Vision**, and **Home Assistant Cloud (Nabu Casa)** with **Firebase Cloud Functions & Firestore** for persistent 3D spatial smart home control in Augmented Reality (AR) and Mixed Reality (MR).
+A full-stack, room-scale WebXR spatial computing application powered by **XRBlocks**, **Google Gemini 3.8 Flash Vision**, and **Home Assistant Cloud (Nabu Casa)** with **Firebase Cloud Functions & Firestore** for persistent 3D spatial smart home control in Augmented Reality (AR) and Mixed Reality (MR).
 
 ---
 
@@ -8,7 +8,7 @@ A full-stack, room-scale WebXR spatial computing application powered by **XRBloc
 
 ### 1. House-Scale AI Room Scanning
 
-- **Continuous Frame Buffering & Decoupled Analysis**: The headset/device camera feeds real-time video frames into a decoupled pipeline. Every 5 seconds, the latest captured frame is analyzed by **Google Gemini 2.5 Flash** using strict JSON schema output.
+- **Continuous Frame Buffering & Decoupled Analysis**: The headset/device camera feeds real-time video frames into a decoupled pipeline. Every 5 seconds, the latest captured frame is analyzed by **Google Gemini 3.8 Flash** using strict JSON schema output.
 - **Multimodal Smart Device Detection**: Recognizes physical fixtures and appliances even when turned off:
   - 💡 **Lights & Lamps** (`light`)
   - 🔌 **Wall Switches & Smart Plugs** (`switch`)
@@ -116,7 +116,7 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 │   2. Calls Cloud Function `getConfig` for secure credentials           │
 │   3. Loads saved 3D device anchors from Firestore                      │
 │   4. Opens direct WebSocket to Nabu Casa for push state updates        │
-│   5. Runs Camera Frame Buffering -> Gemini 2.5 Flash Vision            │
+│   5. Runs Camera Frame Buffering -> Gemini 3.8 Flash Vision            │
 │   6. Manages reactive 3D Spatial Panels (VirtualLight3D)               │
 └──────────────┬──────────────────────────────────────────▲──────────────┘
                │                                          │
@@ -202,7 +202,7 @@ demos/xrhome/
 ├── index.html                 # Main WebXR entry HTML & passthrough canvas
 ├── main.js                    # Core XR application, 3D UICards, drag & ray interaction
 ├── hud.js                     # 2D/3D Heads-Up Display and audio manager
-├── vision.js                  # Gemini 2.5 Flash Vision integration & schema parser
+├── vision.js                  # Gemini 3.8 Flash Vision integration & schema parser
 ├── keypad.js                  # 3D spatial virtual keypad for PIN entry and numeric input
 ├── webrtc.js                  # Camera feed capturing & frame management
 ├── auth.js                    # Firebase Auth client wrapper
