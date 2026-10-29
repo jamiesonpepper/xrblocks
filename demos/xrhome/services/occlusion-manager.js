@@ -5,6 +5,7 @@
  */
 
 import * as THREE from 'three';
+import * as xb from 'xrblocks';
 
 const _raycaster = new THREE.Raycaster();
 const _scratchCamPos = new THREE.Vector3();
@@ -13,6 +14,113 @@ const _scratchCardPos = new THREE.Vector3();
 const _scratchDir = new THREE.Vector3();
 const _scratchPointerRaycaster = new THREE.Raycaster();
 const _scratchPointerMatrix = new THREE.Matrix4();
+
+/**
+ * Resolves the physical Three.js mount object created by @pmndrs/uikit for a given semantic UI root.
+ * In XRBlocks, UICard and UIElement nodes are virtual descriptors; the actual rendered meshes and
+ * materials reside inside xb.core.uiRenderer.mounts or xb.core.uiRenderer.privateRoot ("XR Blocks private UI").
+ */
+export function getUIMountObject(target) {
+    if (!target) return null;
+    const uiRenderer = (typeof xb !== 'undefined' && xb.core) ? xb.core.uiRenderer : (typeof window !== 'undefined' ? window.xb?.core?.uiRenderer : null);
+    if (!uiRenderer || !uiRenderer.mounts) return null;
+
+    // 1. Direct lookup by target or target.panel
+    let record = uiRenderer.mounts.get(target);
+    if (!record && target.panel) {
+        record = uiRenderer.mounts.get(target.panel);
+    }
+    if (record && record.mount && record.mount.object) {
+        return record.mount.object;
+    }
+
+    // 2. Iterative search by reference, panel, or parent relationship
+    for (const [root, rec] of uiRenderer.mounts.entries()) {
+        if (root === target || root === target.panel || (target.panel && target.panel === root) || root.parent === target || (target.parent && root === target.parent)) {
+            if (rec && rec.mount && rec.mount.object) {
+                return rec.mount.object;
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Traverses an Object3D subtree and ensures all meshes and materials have depth testing disabled
+ * and high renderOrder, so they are never clipped by the WebXR hardware depthMesh or room geometry.
+ */
+export function applyDepthBypassToUIRoot(root, bypassDepth = true) {
+    if (!root) return { meshCount: 0, materialCount: 0, mountFound: false };
+    const targetRenderOrder = bypassDepth ? 9999 : 0;
+    let meshCount = 0;
+    let materialCount = 0;
+
+    const applyToObj = (obj) => {
+        if (!obj) return;
+        if (obj.renderOrder !== targetRenderOrder) obj.renderOrder = targetRenderOrder;
+        obj.traverse((child) => {
+            if (child.renderOrder !== targetRenderOrder) {
+                child.renderOrder = targetRenderOrder;
+            }
+            if (child.isMesh) {
+                meshCount++;
+                if (bypassDepth && !child.userData._depthBypassHooked) {
+                    child.userData._depthBypassHooked = true;
+                    const origOnBeforeRender = child.onBeforeRender;
+                    child.onBeforeRender = function(renderer, scene, camera, geometry, material, group) {
+                        if (origOnBeforeRender) origOnBeforeRender.call(this, renderer, scene, camera, geometry, material, group);
+                        this.renderOrder = 9999;
+                        if (this.material) {
+                            const mats = Array.isArray(this.material) ? this.material : [this.material];
+                            for (const m of mats) {
+                                if (m && (m.depthTest !== false || m.depthWrite !== false)) {
+                                    m.depthTest = false;
+                                    m.depthWrite = false;
+                                }
+                            }
+                        }
+                    };
+                }
+            }
+            if (child.material) {
+                const materials = Array.isArray(child.material) ? child.material : [child.material];
+                for (const mat of materials) {
+                    if (!mat) continue;
+                    materialCount++;
+                    if (bypassDepth) {
+                        if (mat.depthTest !== false || mat.depthWrite !== false) {
+                            if (mat._origDepthWrite === undefined) mat._origDepthWrite = mat.depthWrite;
+                            mat.depthTest = false;
+                            mat.depthWrite = false;
+                            mat.needsUpdate = true;
+                        }
+                    } else {
+                        if (mat.depthTest !== true) {
+                            mat.depthTest = true;
+                            if (mat._origDepthWrite !== undefined) mat.depthWrite = mat._origDepthWrite;
+                            mat.needsUpdate = true;
+                        }
+                    }
+                }
+            }
+        });
+    };
+
+    // Apply to semantic root and its panel
+    applyToObj(root);
+    if (root.panel && root.panel !== root) {
+        applyToObj(root.panel);
+    }
+
+    // Apply to the ACTUAL rendered Three.js mount object from @pmndrs/uikit
+    const mountObj = getUIMountObject(root);
+    if (mountObj) {
+        applyToObj(mountObj);
+    }
+
+    return { meshCount, materialCount, mountFound: !!mountObj };
+}
 
 export class OcclusionManager {
     constructor() {
@@ -32,36 +140,11 @@ export class OcclusionManager {
      */
     setCardDepthOcclusion(card, bypassDepth) {
         if (!card) return;
-        const targetRenderOrder = bypassDepth ? 999 : 0;
-        card.renderOrder = targetRenderOrder;
-        if (card.panel) card.panel.renderOrder = targetRenderOrder;
-
-        card.traverse((child) => {
-            if (child.isMesh) {
-                child.renderOrder = targetRenderOrder;
-            }
-            if (child.material) {
-                const materials = Array.isArray(child.material) ? child.material : [child.material];
-                for (const mat of materials) {
-                    if (!mat) continue;
-                    const wantDepthTest = !bypassDepth;
-                    if (mat.depthTest !== wantDepthTest || (bypassDepth && mat.depthWrite !== false)) {
-                        mat.depthTest = wantDepthTest;
-                        if (bypassDepth) {
-                            if (mat._origDepthWrite === undefined) {
-                                mat._origDepthWrite = mat.depthWrite;
-                            }
-                            mat.depthWrite = false;
-                        } else {
-                            if (mat._origDepthWrite !== undefined) {
-                                mat.depthWrite = mat._origDepthWrite;
-                            }
-                        }
-                        mat.needsUpdate = true;
-                    }
-                }
-            }
-        });
+        if (typeof card.enforceDepth === 'function') {
+            card.enforceDepth(bypassDepth);
+            return;
+        }
+        applyDepthBypassToUIRoot(card, bypassDepth);
     }
 
     /**
@@ -157,6 +240,17 @@ export class OcclusionManager {
 
         camera.getWorldPosition(_scratchCamPos);
         camera.getWorldDirection(_scratchCamDir);
+
+        // Periodic DevConsole Diagnostic Heartbeat (every 5 seconds)
+        this._lastDiagLog = (this._lastDiagLog || 0) + delta;
+        if (this._lastDiagLog >= 5.0) {
+            this._lastDiagLog = 0;
+            const dm = (typeof xb !== 'undefined' && xb.core?.depth?.depthMesh) ? xb.core.depth.depthMesh : null;
+            const dmActive = dm ? (dm.visible && dm.material?.depthWrite) : false;
+            const mounts = (typeof xb !== 'undefined' && xb.core?.uiRenderer?.mounts) ? xb.core.uiRenderer.mounts.size : 0;
+            const unpairedCards = cards.filter(c => !c.realDevice && !c.linkedNodeId && !c.isLightingGroup).length;
+            console.log(`[OcclusionDiag:Heartbeat] DepthMesh: ${dmActive ? 'ACTIVE (Hardware Z-buffer occluding)' : 'BYPASSED'} | UI Mounts: ${mounts} | Cards: ${cards.length} (${unpairedCards} unpaired) | Type window.dumpOcclusionState() in DevTools to inspect.`);
+        }
 
         // 1. Every frame: separate cards into Unpaired/Unlocked (bypass depth test every frame) and Paired (evaluate occlusion)
         const pairedCardsToTest = [];
@@ -571,5 +665,187 @@ export class OcclusionManager {
             this.setCardDepthOcclusion(card, false);
         }
     }
+}
+
+// --- DevConsole Occlusion Diagnostic & Debug Tools ---
+if (typeof window !== 'undefined') {
+    window.dumpOcclusionState = function() {
+        const report = {
+            timestamp: new Date().toISOString(),
+            xrPresenting: !!(typeof xb !== 'undefined' && xb.renderer?.xr?.isPresenting),
+            depthMesh: null,
+            uiRenderer: {
+                mountsCount: 0,
+                mounts: []
+            },
+            hud: null,
+            virtualLights: []
+        };
+
+        if (typeof xb !== 'undefined' && xb.core?.depth?.depthMesh) {
+            const dm = xb.core.depth.depthMesh;
+            report.depthMesh = {
+                exists: true,
+                visible: dm.visible,
+                depthWrite: dm.material?.depthWrite,
+                depthTest: dm.material?.depthTest,
+                renderOrder: dm.renderOrder,
+                polygonOffset: dm.material?.polygonOffset,
+                polygonOffsetFactor: dm.material?.polygonOffsetFactor
+            };
+        } else {
+            report.depthMesh = { exists: false };
+        }
+
+        const uiRenderer = (typeof xb !== 'undefined' && xb.core) ? xb.core.uiRenderer : null;
+        if (uiRenderer && uiRenderer.mounts) {
+            report.uiRenderer.mountsCount = uiRenderer.mounts.size;
+            for (const [root, rec] of uiRenderer.mounts.entries()) {
+                const meshes = [];
+                rec.mount?.object?.traverse(c => {
+                    if (c.isMesh && c.material) {
+                        const mats = Array.isArray(c.material) ? c.material : [c.material];
+                        meshes.push({
+                            name: c.name || c.constructor.name,
+                            renderOrder: c.renderOrder,
+                            materials: mats.map(m => ({
+                                type: m.type,
+                                depthTest: m.depthTest,
+                                depthWrite: m.depthWrite,
+                                opacity: m.opacity
+                            }))
+                        });
+                    }
+                });
+                report.uiRenderer.mounts.push({
+                    rootName: root.name || root.labelText || 'unnamed',
+                    rootClass: root.constructor.name,
+                    connected: rec.connected,
+                    visible: rec.visible,
+                    mountOrder: rec.order,
+                    meshCount: meshes.length,
+                    meshes
+                });
+            }
+        }
+
+        const hudInstance = (typeof window !== 'undefined' && window.hud) ? window.hud : (typeof hud !== 'undefined' ? hud : null);
+        if (hudInstance) {
+            const mount = getUIMountObject(hudInstance.panel);
+            let hudMeshes = 0;
+            let hudDepthTest = null;
+            if (mount) {
+                mount.traverse(c => {
+                    if (c.isMesh && c.material) {
+                        hudMeshes++;
+                        const mats = Array.isArray(c.material) ? c.material : [c.material];
+                        if (hudDepthTest === null) hudDepthTest = mats[0]?.depthTest;
+                    }
+                });
+            }
+            report.hud = {
+                hasPanel: !!hudInstance.panel,
+                position: hudInstance.panel?.position ? { x: +hudInstance.panel.position.x.toFixed(2), y: +hudInstance.panel.position.y.toFixed(2), z: +hudInstance.panel.position.z.toFixed(2) } : null,
+                visible: hudInstance.panel?.visible,
+                mountFound: !!mount,
+                renderedMeshCount: hudMeshes,
+                depthTest: hudDepthTest
+            };
+        }
+
+        const vLights = (typeof window !== 'undefined' && window.virtualLights) ? window.virtualLights : (typeof virtualLights !== 'undefined' ? virtualLights : []);
+        const occMgr = (typeof window !== 'undefined' && window.occlusionManager) ? window.occlusionManager : (typeof occlusionManager !== 'undefined' ? occlusionManager : null);
+        if (vLights && vLights.length >= 0) {
+            report.virtualLights = vLights.map(vl => {
+                const mount = getUIMountObject(vl.panel || vl);
+                let meshCount = 0;
+                let cardDepthTest = null;
+                if (mount) {
+                    mount.traverse(c => {
+                        if (c.isMesh && c.material) {
+                            meshCount++;
+                            const mats = Array.isArray(c.material) ? c.material : [c.material];
+                            if (cardDepthTest === null) cardDepthTest = mats[0]?.depthTest;
+                        }
+                    });
+                }
+                const isPaired = !!(vl.realDevice || vl.linkedNodeId || vl.isLightingGroup);
+                const isLocked = isPaired && (!vl.isLightingGroup || vl.isPositionLocked);
+                const isBypassed = (occMgr && occMgr.isScanning) || !isLocked || vl.isSelectingDevice || vl.isSummonedToFoV || vl.isDragging;
+                return {
+                    label: vl.labelText || vl.originalLabel,
+                    isPaired,
+                    isLocked,
+                    isBypassed,
+                    position: { x: +vl.position.x.toFixed(2), y: +vl.position.y.toFixed(2), z: +vl.position.z.toFixed(2) },
+                    visible: vl.visible,
+                    panelVisible: vl.panel?.visible,
+                    mountFound: !!mount,
+                    renderedMeshCount: meshCount,
+                    depthTest: cardDepthTest
+                };
+            });
+        }
+
+        console.group('%c=== [XRHome Occlusion Diagnostic Report] ===', 'color: #00ffff; font-weight: bold;');
+        console.log('%cXR Presenting:', 'color: #fff;', report.xrPresenting);
+        console.log('%cDepthMesh Occluder:', 'color: #fff;', report.depthMesh);
+        console.log('%cHUD Status:', 'color: #fff;', report.hud);
+        console.log(`%cUI Mounts (${report.uiRenderer.mountsCount}):`, 'color: #fff;', report.uiRenderer.mounts);
+        console.log(`%cVirtual Lights (${report.virtualLights.length}):`, 'color: #fff;', report.virtualLights);
+        console.groupEnd();
+
+        return report;
+    };
+
+    window.toggleDepthMesh = function(enabled) {
+        if (typeof xb !== 'undefined' && xb.core?.depth?.depthMesh) {
+            const dm = xb.core.depth.depthMesh;
+            const state = (enabled !== undefined) ? !!enabled : !dm.visible;
+            dm.visible = state;
+            if (dm.material) {
+                dm.material.depthWrite = state;
+            }
+            console.log(`%c[Diagnostic] WebXR DepthMesh toggled -> ${state ? 'ENABLED' : 'DISABLED'} (visible=${dm.visible}, depthWrite=${dm.material?.depthWrite})`, 'color: #ffff00;');
+            return state;
+        } else {
+            console.warn('[Diagnostic] WebXR DepthMesh not available.');
+            return false;
+        }
+    };
+
+    window.forceBypassDepthAll = function() {
+        console.log('%c[Diagnostic] Force-bypassing depth testing across all UI roots and mounts...', 'color: #ff00ff;');
+        let totalMeshes = 0;
+        const hudInstance = (typeof window !== 'undefined' && window.hud) ? window.hud : (typeof hud !== 'undefined' ? hud : null);
+        if (hudInstance?.panel) {
+            const r = applyDepthBypassToUIRoot(hudInstance.panel, true);
+            totalMeshes += r.meshCount;
+        }
+        const vLights = (typeof window !== 'undefined' && window.virtualLights) ? window.virtualLights : (typeof virtualLights !== 'undefined' ? virtualLights : []);
+        if (vLights) {
+            for (const vl of vLights) {
+                const r = applyDepthBypassToUIRoot(vl, true);
+                totalMeshes += r.meshCount;
+            }
+        }
+        const uiRenderer = (typeof xb !== 'undefined' && xb.core) ? xb.core.uiRenderer : null;
+        if (uiRenderer?.privateRoot) {
+            uiRenderer.privateRoot.traverse(c => {
+                if (c.renderOrder !== undefined) c.renderOrder = 9999;
+                if (c.material) {
+                    const mats = Array.isArray(c.material) ? c.material : [c.material];
+                    for (const m of mats) {
+                        if (m) {
+                            m.depthTest = false;
+                            m.depthWrite = false;
+                            m.needsUpdate = true;
+                        }
+                    }
+                }
+            });
+        }
+        console.log(`%c[Diagnostic] Force bypass complete! Updated ${totalMeshes} meshes across UI mounts.`, 'color: #00ff00;');
+    };
 }
 

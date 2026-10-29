@@ -176,6 +176,14 @@ class HUDInteraction extends xb.Script {
                 if (roomMenu && typeof roomMenu.enforceDepth === 'function') {
                     roomMenu.enforceDepth();
                 }
+                for (const vl of virtualLights) {
+                    const isPaired = !!(vl.realDevice || vl.linkedNodeId || vl.isLightingGroup);
+                    const isLocked = isPaired && (!vl.isLightingGroup || vl.isPositionLocked);
+                    const isBypassed = isScanning || !isLocked || vl.isSelectingDevice || vl.isSummonedToFoV || vl.isDragging;
+                    if (isBypassed && typeof vl.enforceDepth === 'function') {
+                        vl.enforceDepth(true);
+                    }
+                }
             }
 
             // 2. Card Pivoting & Adaptive Proximity Detection
@@ -668,11 +676,11 @@ import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=6
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=30';
-import { VirtualKeypad } from './keypad.js?v=28';
+import { HUDManager } from './hud.js?v=32';
+import { VirtualKeypad } from './keypad.js?v=30';
 import { GroupManager } from './services/group-manager.js';
-import { OcclusionManager } from './services/occlusion-manager.js?v=16';
-import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=33';
+import { OcclusionManager, applyDepthBypassToUIRoot } from './services/occlusion-manager.js?v=20';
+import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=36';
 
 // Globals
 const auth = new AuthManager();
@@ -689,6 +697,18 @@ let virtualLights = [];
 let lastScanTime = 0;
 const SCAN_INTERVAL = 30000; 
 const hud = new HUDManager();
+
+// Expose diagnostic instances to window for DevConsole access
+if (typeof window !== 'undefined') {
+    window.xb = xb;
+    window.hud = hud;
+    window.occlusionManager = occlusionManager;
+    Object.defineProperty(window, 'virtualLights', {
+        get: () => virtualLights,
+        configurable: true
+    });
+}
+
 // Wire up HUD Scan Event
 hud.onScanToggle = () => toggleScan();
 hud.onOpenRoomMenu = () => {
@@ -3255,6 +3275,7 @@ class VirtualLight3D extends THREE.Group {
       });
 
       const isLocked = isPaired && (!this.isLightingGroup || this.isPositionLocked);
+      const isBypassed = (typeof isScanning !== 'undefined' && isScanning) || !isLocked || this.isSelectingDevice || this.isSummonedToFoV || this.isDragging;
 
       this.panel = new xb.UICard({
           size: { width: this.panelWidth, height: 'auto' },
@@ -3269,7 +3290,7 @@ class VirtualLight3D extends THREE.Group {
               backgroundColor: 'rgba(0, 0, 0, 0.20)',
               borderWidth: 1.5,
               borderColor: '#FFFFFF',
-              borderRadius: 20,
+              borderRadius: 20
           },
           children: [this._mainContainer]
       });
@@ -3288,6 +3309,9 @@ class VirtualLight3D extends THREE.Group {
       this.visible = true;
       if (this.panel) {
           this.panel.visible = true;
+      }
+      if (isBypassed) {
+          this.enforceDepth(true);
       }
   }
 
@@ -3743,7 +3767,7 @@ class VirtualLight3D extends THREE.Group {
               backgroundColor: 'rgba(0, 0, 0, 0.20)',
               borderWidth: 1.5,
               borderColor: '#FFFFFF',
-              borderRadius: 20,
+              borderRadius: 20
           },
           children: [listContainer]
       });
@@ -3754,6 +3778,7 @@ class VirtualLight3D extends THREE.Group {
       if (this.panel) {
           this.panel.visible = true;
       }
+      this.enforceDepth(true);
   }
 
   async pairWithDevice(deviceId) {
@@ -4862,6 +4887,13 @@ class VirtualLight3D extends THREE.Group {
       hud.speak("Camera Stream Stopped");
       hud.log(`Camera feed stopped`, '#FFFFFF');
       this.rebuildPanel();
+  }
+  
+  enforceDepth(bypassDepth = true) {
+      applyDepthBypassToUIRoot(this, bypassDepth);
+      if (this.panel && this.panel !== this) {
+          applyDepthBypassToUIRoot(this.panel, bypassDepth);
+      }
   }
   
   checkClick() { return false; }
@@ -6555,8 +6587,23 @@ class GlobalManager extends xb.Script {
     
     onUpdate(dt) {
         this.gestureSystem.update(dt);
+        if (hud && typeof hud.enforceDepth === 'function') {
+            hud.enforceDepth();
+        }
         if (hud && hud.panel && hud.panel.update) {
             hud.panel.update();
+        }
+        if (typeof virtualLights !== 'undefined' && virtualLights && virtualLights.length > 0) {
+            const scanningActive = typeof isScanning !== 'undefined' && isScanning;
+            for (const vl of virtualLights) {
+                if (!vl) continue;
+                const isPaired = !!(vl.realDevice || vl.linkedNodeId || vl.isLightingGroup);
+                const isLocked = isPaired && (!vl.isLightingGroup || vl.isPositionLocked);
+                const isBypassed = scanningActive || !isLocked || vl.isSelectingDevice || vl.isSummonedToFoV || vl.isDragging;
+                if (isBypassed && typeof vl.enforceDepth === 'function') {
+                    vl.enforceDepth(true);
+                }
+            }
         }
     }
 }

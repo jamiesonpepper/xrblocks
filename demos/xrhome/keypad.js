@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
+import { applyDepthBypassToUIRoot } from './services/occlusion-manager.js?v=20';
 
 /**
  * VirtualKeypad
@@ -121,7 +122,7 @@ export class VirtualKeypad {
         backgroundColor: 'rgba(0, 0, 0, 0.20)',
         borderWidth: 1.5,
         borderColor: '#FFFFFF',
-        borderRadius: 16,
+        borderRadius: 16
       },
       children: cardChildren,
     });
@@ -216,22 +217,6 @@ export class VirtualKeypad {
 
   enforceDepth() {
     if (!this.panel) return;
-    this.panel.renderOrder = 9999;
-    this.panel.traverse((child) => {
-      if (child.isMesh) {
-        child.renderOrder = 9999;
-      }
-      if (child.material) {
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
-        for (const mat of materials) {
-          if (!mat) continue;
-          if (mat.depthTest !== false || mat.depthWrite !== false) {
-            mat.depthTest = false;
-            mat.depthWrite = false;
-            mat.needsUpdate = true;
-          }
-        }
-      }
-    });
+    applyDepthBypassToUIRoot(this.panel, true);
   }
 }

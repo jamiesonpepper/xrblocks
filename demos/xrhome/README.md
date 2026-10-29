@@ -80,6 +80,16 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 - **HUD & Modal Menu Depth Enforcement**: Configured `enforceDepth()` across HUD (`HUDManager`), Virtual Keypad (`VirtualKeypad`), and Auxiliary Room Menu (`AuxiliaryRoomMenu`) with `renderOrder: 9999` and `depthTest: false`, eliminating unintended depth clipping when menus spawn near physical walls or furniture.
 - **Ergonomic XR Near-Touch Positioning**: Recalibrated default HUD and Auxiliary Room Menu spawn distance from 1.2m to 0.95m directly in front of the active camera pose.
 
+### 10. End-to-End UIKit Mount Depth Bypass & DevConsole Diagnostics (Version 2.20)
+
+- **UIKit Mount Object Resolution**: Resolves the true physical Three.js meshes rendered by `@pmndrs/uikit` (`xb.core.uiRenderer.mounts.get(card).mount.object` inside `"XR Blocks private UI"`), overcoming XRBlocks semantic nodes (`UICard`, `UIElement`) containing no direct mesh children.
+- **Direct GPU `onBeforeRender` Depth Testing Hook**: Hooks `child.onBeforeRender` directly on every rendered mesh child across HUD, Virtual Keypad, Auxiliary Room Menu, and unpaired `VirtualLight3D` cards to continuously enforce `depthTest: false`, `depthWrite: false`, and `renderOrder: 9999` immediately prior to GPU draw calls.
+- **Strict Style Property Whitelist Protection**: Removed unsupported `depthTest` entries from `xb.UICard` style configuration objects that previously triggered `validateStyle` runtime exceptions.
+- **DevConsole Occlusion Diagnostic & Debug Tools**:
+  - `window.dumpOcclusionState()`: Comprehensive report of WebXR `depthMesh`, `@pmndrs/uikit` mount hierarchies, rendered mesh counts, and per-card depth bypass states.
+  - `window.toggleDepthMesh(enabled)`: Live interactive toggle for the hardware depth occluder in headset DevConsole.
+  - `window.forceBypassDepthAll()`: One-shot manual depth bypass override across all active mounts.
+
 ---
 
 ## User Interaction Guide

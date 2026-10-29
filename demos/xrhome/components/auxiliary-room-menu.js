@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
+import { applyDepthBypassToUIRoot } from '../services/occlusion-manager.js?v=20';
 
 export class AuxiliaryRoomMenu {
     constructor({ scene, smartHome, virtualLights = [], onLocate = null }) {
@@ -477,22 +478,6 @@ export class AuxiliaryRoomMenu {
 
     enforceDepth() {
         if (!this.panel) return;
-        this.panel.renderOrder = 9999;
-        this.panel.traverse((child) => {
-            if (child.isMesh) {
-                child.renderOrder = 9999;
-            }
-            if (child.material) {
-                const materials = Array.isArray(child.material) ? child.material : [child.material];
-                for (const mat of materials) {
-                    if (!mat) continue;
-                    if (mat.depthTest !== false || mat.depthWrite !== false) {
-                        mat.depthTest = false;
-                        mat.depthWrite = false;
-                        mat.needsUpdate = true;
-                    }
-                }
-            }
-        });
+        applyDepthBypassToUIRoot(this.panel, true);
     }
 }
