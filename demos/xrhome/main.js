@@ -5514,12 +5514,13 @@ function startVisionLoop() {
                                     const track = app.deviceCamera?.currentTrackSettings_;
                                     console.warn("[CameraDiagnostic] Current track settings:", track);
 
+                                    const isQuest = /Quest|Oculus/i.test(navigator.userAgent);
                                     const isUserFacing = track?.facingMode === 'user' || track?.colorTemperature === 0;
-                                    if (isUserFacing) {
+                                    if (isQuest && isUserFacing) {
                                         hud.log("⚠️ Quest avatar camera active (black feed). Enable Camera permissions in Quest Browser & Horizon OS Privacy Settings.", '#FFCC00');
                                         hud.speak("Camera feed is black. Please enable camera permissions in Meta Quest Browser settings.");
                                     } else {
-                                        hud.log("⚠️ Camera feed is black. Check physical camera permissions in Quest Browser settings.", '#FFCC00');
+                                        hud.log("⚠️ Camera feed is dark or warming up. Check physical camera permissions in browser settings.", '#FFCC00');
                                     }
                                 }
                                 blob = null;
@@ -5766,6 +5767,61 @@ async function loadSavedAnchors() {
 // Keep-alive reference for AR Video frames
 let hiddenCameraKeepalive = null;
 
+/**
+ * Intelligently selects the best physical world-facing camera device
+ * across Meta Quest 3/3s, XREAL Aura / Android XR glasses, and mobile/desktop.
+ *
+ * @param {MediaDeviceInfo[]} videoInputs
+ * @returns {MediaDeviceInfo|null}
+ */
+function pickOptimalXRCamera(videoInputs) {
+    if (!videoInputs || videoInputs.length === 0) return null;
+    if (videoInputs.length === 1) return videoInputs[0];
+
+    const isQuest = /Quest|Oculus/i.test(navigator.userAgent);
+    const isAndroid = /Android/i.test(navigator.userAgent);
+
+    let bestDevice = null;
+    let highestScore = -Infinity;
+
+    for (const dev of videoInputs) {
+        const label = (dev.label || '').toLowerCase();
+        let score = 0;
+
+        // Severe penalty for synthetic / virtual / avatar cameras (e.g. Quest virtual avatar camera)
+        if (label.includes('avatar') || label.includes('virtual') || label.includes('synthetic') || label.includes('dummy')) {
+            score -= 100;
+        }
+
+        // Environment / world / passthrough cameras (Primary choice on Quest and mobile)
+        if (label.includes('environment') || label.includes('back') || label.includes('rear') || label.includes('world') || label.includes('passthrough')) {
+            score += isQuest ? 60 : 30;
+        }
+
+        // Smart glasses / RGB front camera keywords (e.g. XREAL Aura, Project Aura, external UVC)
+        if (label.includes('rgb') || label.includes('xreal') || label.includes('aura') || label.includes('glasses') || label.includes('external')) {
+            score += 50;
+        }
+
+        // If on Android XR / AR glasses and labeled "front" or "camera 0", it may be the forward-facing glasses camera
+        if (isAndroid && !isQuest && (label.includes('front') || label.includes('camera 0') || label.includes('primary'))) {
+            score += 25;
+        }
+
+        // Prefer non-empty labels over blank labels
+        if (dev.label) {
+            score += 5;
+        }
+
+        if (score > highestScore) {
+            highestScore = score;
+            bestDevice = dev;
+        }
+    }
+
+    return bestDevice || videoInputs[0];
+}
+
 // Re-entry Guard
 let isToggling = false;
 
@@ -5884,31 +5940,42 @@ async function toggleScan() {
                         const trackSettings = app.deviceCamera.currentTrackSettings_;
                         console.log("[CameraDiagnostic] Active track settings:", trackSettings);
 
+                        const isQuest = /Quest|Oculus/i.test(navigator.userAgent);
+
                         if (timedOut && frames < 2) {
                             console.warn("[CameraDiagnostic] Camera hardware wait timed out with 0 frames. Physical camera stream may be blocked or ungranted.");
-                            if (trackSettings?.facingMode === 'user' || trackSettings?.colorTemperature === 0) {
+                            if (isQuest && (trackSettings?.facingMode === 'user' || trackSettings?.colorTemperature === 0)) {
                                 hud.log("⚠️ Virtual avatar camera active (0 frames). Please allow Camera permission in Meta Quest Browser Settings & Horizon OS Privacy Settings.", '#FFCC00');
                                 hud.speak("Virtual camera active. Please grant camera permission in Meta Quest Browser settings.");
                             } else {
-                                hud.log("⚠️ Camera frames timed out. Please check Camera permission in Quest Browser Settings.", '#FFCC00');
+                                hud.log("⚠️ Camera frames timed out. Please check Camera permission in browser settings.", '#FFCC00');
                             }
                         }
 
-                        // Enumerate devices to inspect video inputs and attempt environment selection if needed
+                        // Enumerate devices to inspect video inputs and ensure optimal camera selection
                         if (navigator.mediaDevices && typeof navigator.mediaDevices.enumerateDevices === 'function') {
                             navigator.mediaDevices.enumerateDevices().then(devices => {
                                 const videoInputs = devices.filter(d => d.kind === 'videoinput');
                                 console.log("[CameraDiagnostic] Available videoinput devices:", videoInputs.map(d => ({ deviceId: d.deviceId, label: d.label, groupId: d.groupId })));
-                                if (trackSettings?.facingMode === 'user') {
-                                    const envDevice = videoInputs.find(d => 
-                                        d.label.toLowerCase().includes('environment') || 
-                                        d.label.toLowerCase().includes('back') || 
-                                        d.label.toLowerCase().includes('world')
-                                    );
-                                    if (envDevice && typeof app.deviceCamera.setDeviceId === 'function' && app.deviceCamera.getCurrentDevice()?.deviceId !== envDevice.deviceId) {
-                                        console.log("[CameraDiagnostic] Attempting switch to environment camera device:", envDevice.deviceId);
-                                        app.deviceCamera.setDeviceId(envDevice.deviceId).catch(e => console.warn("[CameraDiagnostic] Failed switching camera:", e));
-                                    }
+
+                                const currentDev = (typeof app.deviceCamera.getCurrentDevice === 'function') ? app.deviceCamera.getCurrentDevice() : null;
+                                const currentLabel = (currentDev?.label || '').toLowerCase();
+                                const isCurrentDummy = currentLabel.includes('avatar') || currentLabel.includes('virtual') || currentLabel.includes('dummy');
+
+                                const optimalDevice = pickOptimalXRCamera(videoInputs);
+                                console.log("[CameraDiagnostic] Optimal camera evaluated:", optimalDevice?.label || optimalDevice?.deviceId);
+
+                                const isQuestAvatar = isQuest && (trackSettings?.facingMode === 'user');
+                                const isClearlySuperior = optimalDevice && currentDev && optimalDevice.deviceId !== currentDev.deviceId &&
+                                    (optimalDevice.label.toLowerCase().includes('rgb') || optimalDevice.label.toLowerCase().includes('xreal') || optimalDevice.label.toLowerCase().includes('aura'));
+
+                                const shouldSwitch = (isQuestAvatar || isCurrentDummy || isClearlySuperior) &&
+                                                     optimalDevice && typeof app.deviceCamera.setDeviceId === 'function' &&
+                                                     (!currentDev || currentDev.deviceId !== optimalDevice.deviceId);
+
+                                if (shouldSwitch) {
+                                    console.log("[CameraDiagnostic] Switching to optimal camera device:", optimalDevice.deviceId, optimalDevice.label);
+                                    app.deviceCamera.setDeviceId(optimalDevice.deviceId).catch(e => console.warn("[CameraDiagnostic] Failed switching camera:", e));
                                 }
                             }).catch(e => console.warn("[CameraDiagnostic] enumerateDevices error:", e));
                         }

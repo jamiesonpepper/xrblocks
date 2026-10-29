@@ -13,21 +13,54 @@ export class CameraManager {
 
     async startCamera() {
         try {
-            // Request camera (back facing if available, else user)
-            // Ideally 'environment' for AR, but 'user' for "Front Facing" as requested?
-            // "front facing camera(s) in an XR headset" usually means the world-facing cameras.
-            // On a phone, that's 'environment'. On a laptop, it's 'user'.
-            // Let's try 'environment' first, fall back to 'user'.
+            // Progressive constraints: Prefer environment, but support user / glasses / external cameras
             const constraints = {
                 video: {
-                    facingMode: 'environment', // prioritized
+                    facingMode: { ideal: 'environment' },
                     width: { ideal: 1280 },
                     height: { ideal: 720 }
                 },
                 audio: false // Disabled per user request
             };
 
-            this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+            // If permissions were previously granted, enumerate devices to pick the best physical camera
+            try {
+                if (navigator.mediaDevices && typeof navigator.mediaDevices.enumerateDevices === 'function') {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const videoInputs = devices.filter(d => d.kind === 'videoinput');
+                    if (videoInputs.length > 1) {
+                        const isQuest = /Quest|Oculus/i.test(navigator.userAgent);
+                        const isAndroid = /Android/i.test(navigator.userAgent);
+                        let bestDev = null;
+                        let highestScore = -Infinity;
+                        for (const dev of videoInputs) {
+                            const lbl = (dev.label || '').toLowerCase();
+                            let score = 0;
+                            if (lbl.includes('avatar') || lbl.includes('virtual') || lbl.includes('dummy')) score -= 100;
+                            if (lbl.includes('environment') || lbl.includes('back') || lbl.includes('world') || lbl.includes('passthrough')) score += isQuest ? 60 : 30;
+                            if (lbl.includes('rgb') || lbl.includes('xreal') || lbl.includes('aura') || lbl.includes('glasses')) score += 50;
+                            if (isAndroid && !isQuest && (lbl.includes('front') || lbl.includes('camera 0'))) score += 25;
+                            if (dev.label) score += 5;
+                            if (score > highestScore) {
+                                highestScore = score;
+                                bestDev = dev;
+                            }
+                        }
+                        if (bestDev && bestDev.deviceId) {
+                            constraints.video.deviceId = { ideal: bestDev.deviceId };
+                        }
+                    }
+                }
+            } catch (enumErr) {
+                console.warn("[CameraManager] Pre-enumeration check:", enumErr);
+            }
+
+            try {
+                this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+            } catch (strictErr) {
+                console.warn("[CameraManager] Ideal constraint getUserMedia failed, retrying with basic video constraint:", strictErr);
+                this.stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            }
             this.videoElement.srcObject = this.stream;
             
             return new Promise((resolve) => {

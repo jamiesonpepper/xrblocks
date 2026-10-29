@@ -68,6 +68,12 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 - **Scan-Gated Hardware Coordination**: Pauses camera decoding in resting mode to conserve GPU/CPU bandwidth and automatically toggles the hardware depth occluder between active scanning and resting configuration modes.
 - **Security Pass-Through & Rapid FoV Summon**: Critical perimeter and security devices (locks, covers/garage doors, and cameras) shine through physical walls with luminous beacon outlines when occluded, and can be summoned instantly to chest level (0.65m) via gaze dwell (0.35s) or controller raycast (0.25s) with a return-to-anchor cooldown.
 
+### 8. Cross-Platform Camera Detection for XREAL Aura & Quest 3/3s (Version 2.18)
+
+- **Ranked Multi-Device Camera Scoring (`pickOptimalXRCamera`)**: Automatically evaluates enumerated videoinput devices to select physical color passthrough/outward cameras over virtual dummy or avatar cameras across Meta Quest 3/3s (Horizon OS) and XREAL Aura (Android XR).
+- **Flexible Constraints & Progressive Fallbacks**: Employs soft ideal constraints (`facingMode: { ideal: 'environment' }`) and device pre-selection to support smart glasses RGB cameras without triggering `OverconstrainedError`.
+- **Hardware-Aware Diagnostics**: Differentiates between Quest avatar dummy feeds and valid outward glasses feeds, validating active pixel luminance (`maxBrightness > 15`) to eliminate false-positive black feed warnings.
+
 ---
 
 ## User Interaction Guide
