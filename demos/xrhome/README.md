@@ -74,6 +74,12 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
 - **Flexible Constraints & Progressive Fallbacks**: Employs soft ideal constraints (`facingMode: { ideal: 'environment' }`) and device pre-selection to support smart glasses RGB cameras without triggering `OverconstrainedError`.
 - **Hardware-Aware Diagnostics**: Differentiates between Quest avatar dummy feeds and valid outward glasses feeds, validating active pixel luminance (`maxBrightness > 15`) to eliminate false-positive black feed warnings.
 
+### 9. Hardware Depth Occlusion Exemption & HUD Depth Enforcement (Version 2.19)
+
+- **Unpaired & Unlocked Card Z-Buffer Exemption**: Dynamically toggles `depthTest` and `depthWrite` across all child meshes and materials via `OcclusionManager.setCardDepthOcclusion()`, ensuring unpaired cards, unlocked cards, and security beacons never get clipped or occluded by the hardware Z-buffer depth mesh.
+- **HUD & Modal Menu Depth Enforcement**: Configured `enforceDepth()` across HUD (`HUDManager`), Virtual Keypad (`VirtualKeypad`), and Auxiliary Room Menu (`AuxiliaryRoomMenu`) with `renderOrder: 9999` and `depthTest: false`, eliminating unintended depth clipping when menus spawn near physical walls or furniture.
+- **Ergonomic XR Near-Touch Positioning**: Recalibrated default HUD and Auxiliary Room Menu spawn distance from 1.2m to 0.95m directly in front of the active camera pose.
+
 ---
 
 ## User Interaction Guide

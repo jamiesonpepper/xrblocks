@@ -170,6 +170,12 @@ class HUDInteraction extends xb.Script {
                     }
                 }
                 occlusionManager.update(activeCam, virtualLights, occluders, 0.016, controllers);
+                if (hud && typeof hud.enforceDepth === 'function') {
+                    hud.enforceDepth();
+                }
+                if (roomMenu && typeof roomMenu.enforceDepth === 'function') {
+                    roomMenu.enforceDepth();
+                }
             }
 
             // 2. Card Pivoting & Adaptive Proximity Detection
@@ -662,11 +668,11 @@ import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=6
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=29';
-import { VirtualKeypad } from './keypad.js?v=27';
+import { HUDManager } from './hud.js?v=30';
+import { VirtualKeypad } from './keypad.js?v=28';
 import { GroupManager } from './services/group-manager.js';
-import { OcclusionManager } from './services/occlusion-manager.js?v=15';
-import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=32';
+import { OcclusionManager } from './services/occlusion-manager.js?v=16';
+import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=33';
 
 // Globals
 const auth = new AuthManager();

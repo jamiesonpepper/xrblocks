@@ -462,7 +462,7 @@ export class AuxiliaryRoomMenu {
             activeCamera.getWorldPosition(camPos);
             activeCamera.getWorldDirection(camDir);
 
-            const menuPos = camPos.clone().add(camDir.multiplyScalar(1.2));
+            const menuPos = camPos.clone().add(camDir.multiplyScalar(0.95));
             menuPos.y = Math.max(1.15, camPos.y - 0.05);
 
             this.panel.position.copy(menuPos);
@@ -472,5 +472,27 @@ export class AuxiliaryRoomMenu {
         if (this.scene) {
             this.scene.add(this.panel);
         }
+        this.enforceDepth();
+    }
+
+    enforceDepth() {
+        if (!this.panel) return;
+        this.panel.renderOrder = 9999;
+        this.panel.traverse((child) => {
+            if (child.isMesh) {
+                child.renderOrder = 9999;
+            }
+            if (child.material) {
+                const materials = Array.isArray(child.material) ? child.material : [child.material];
+                for (const mat of materials) {
+                    if (!mat) continue;
+                    if (mat.depthTest !== false || mat.depthWrite !== false) {
+                        mat.depthTest = false;
+                        mat.depthWrite = false;
+                        mat.needsUpdate = true;
+                    }
+                }
+            }
+        });
     }
 }

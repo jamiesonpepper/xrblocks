@@ -28,12 +28,40 @@ export class OcclusionManager {
 
     /**
      * Helper to configure depth testing, polygon offsets, and draw order on a card's meshes.
-     * When bypassDepth is true, the card completely ignores the Z-buffer (so ceilings and walls never clip it).
+     * When bypassDepth is true, the card completely ignores the hardware Z-buffer (so ceilings and walls never clip it).
      */
     setCardDepthOcclusion(card, bypassDepth) {
         if (!card) return;
-        card.renderOrder = bypassDepth ? 999 : 0;
-        if (card.panel) card.panel.renderOrder = bypassDepth ? 999 : 0;
+        const targetRenderOrder = bypassDepth ? 999 : 0;
+        card.renderOrder = targetRenderOrder;
+        if (card.panel) card.panel.renderOrder = targetRenderOrder;
+
+        card.traverse((child) => {
+            if (child.isMesh) {
+                child.renderOrder = targetRenderOrder;
+            }
+            if (child.material) {
+                const materials = Array.isArray(child.material) ? child.material : [child.material];
+                for (const mat of materials) {
+                    if (!mat) continue;
+                    const wantDepthTest = !bypassDepth;
+                    if (mat.depthTest !== wantDepthTest || (bypassDepth && mat.depthWrite !== false)) {
+                        mat.depthTest = wantDepthTest;
+                        if (bypassDepth) {
+                            if (mat._origDepthWrite === undefined) {
+                                mat._origDepthWrite = mat.depthWrite;
+                            }
+                            mat.depthWrite = false;
+                        } else {
+                            if (mat._origDepthWrite !== undefined) {
+                                mat.depthWrite = mat._origDepthWrite;
+                            }
+                        }
+                        mat.needsUpdate = true;
+                    }
+                }
+            }
+        });
     }
 
     /**

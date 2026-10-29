@@ -91,12 +91,12 @@ export class HUDManager {
         if (cam) {
             cam.getWorldPosition(camPos);
             cam.getWorldDirection(camDir);
-            // Place 1.2m in front of where the user is looking
-            this.menuPos = camPos.clone().add(camDir.multiplyScalar(1.2));
+            // Place 0.95m in front of where the user is looking (ergonomic touch distance)
+            this.menuPos = camPos.clone().add(camDir.multiplyScalar(0.95));
             // Set at comfortable chest/eye level
-            this.menuPos.y = Math.max(1.25, camPos.y - 0.1);
+            this.menuPos.y = Math.max(1.15, camPos.y - 0.1);
         } else {
-            this.menuPos = new THREE.Vector3(0, 1.35, -1.2);
+            this.menuPos = new THREE.Vector3(0, 1.35, -0.95);
         }
 
         this.menuRot = new THREE.Euler(0, 0, 0);
@@ -295,10 +295,28 @@ export class HUDManager {
         }
 
         this.sync3DLogs();
+        this.enforceDepth();
     }
     
     enforceDepth() {
-        // Handled natively by UICard
+        if (!this.panel) return;
+        this.panel.renderOrder = 9999;
+        this.panel.traverse((child) => {
+            if (child.isMesh) {
+                child.renderOrder = 9999;
+            }
+            if (child.material) {
+                const materials = Array.isArray(child.material) ? child.material : [child.material];
+                for (const mat of materials) {
+                    if (!mat) continue;
+                    if (mat.depthTest !== false || mat.depthWrite !== false) {
+                        mat.depthTest = false;
+                        mat.depthWrite = false;
+                        mat.needsUpdate = true;
+                    }
+                }
+            }
+        });
     }
     
     sync3DLogs() {
