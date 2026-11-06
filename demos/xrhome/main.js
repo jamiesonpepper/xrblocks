@@ -22,12 +22,29 @@ const _scratchDragOffset = new THREE.Vector3();
 
 // Drag State
 let dragController = null;
+let activeDraggedObject = null;
 let dragOffset = new THREE.Vector3();
 let dragQuaternion = new THREE.Quaternion();
 let dragStartPos = new THREE.Vector3();
 let dragStartCardPos = new THREE.Vector3();
 let dragStartControllerPos = new THREE.Vector3();
 let isActivelyDragging = false;
+
+// Helper: strictly identify if an XR controller / input source is Gaze
+function isGazeSource(ctrl) {
+    if (!ctrl) return false;
+    try {
+        if (typeof xb !== 'undefined') {
+            if (xb.core?.input?.gazeController && ctrl === xb.core.input.gazeController) return true;
+            if (xb.GazeController && ctrl instanceof xb.GazeController) return true;
+        }
+        if (ctrl.isGazeController || ctrl.type === 'GazeController') return true;
+        if (ctrl.name && typeof ctrl.name === 'string' && ctrl.name.toLowerCase().includes('gaze')) return true;
+        if (ctrl.inputSource && ctrl.inputSource.targetRayMode === 'gaze') return true;
+        if (ctrl.userData && (ctrl.userData.isGaze || ctrl.userData.source === 'gaze')) return true;
+    } catch (_) {}
+    return false;
+}
 
 // Vision Buffers (Global for access by toggleScan)
 let latestFrameBlob = null;
@@ -83,22 +100,93 @@ class HUDInteraction extends xb.Script {
             }
         } catch (e) {}
 
-        if (dragController && dragController.userData.selected) {
-            const objectToMove = dragController.userData.selected;
+        // 1. Gaze Immunity Watchdog: strip HUD and Keypad from Gaze raycast intersections so Gaze CANNOT focus, dwell, click, or hover them
+        try {
+            if (typeof xb !== 'undefined' && xb.core && xb.core.input) {
+                const gazeCtrl = xb.core.input.gazeController;
+                if (gazeCtrl && xb.core.input.intersectionsForController && xb.core.input.intersectionsForController.has(gazeCtrl)) {
+                    const gazeIsects = xb.core.input.intersectionsForController.get(gazeCtrl);
+                    if (gazeIsects && gazeIsects.length > 0) {
+                        for (let i = gazeIsects.length - 1; i >= 0; i--) {
+                            let cur = gazeIsects[i].object;
+                            while (cur) {
+                                if ((hud && (cur === hud.panel || cur === hud.grabHandle)) || (keypad && (cur === keypad.panel || cur === keypad.grabHandle))) {
+                                    gazeIsects.splice(i, 1);
+                                    break;
+                                }
+                                cur = cur.parent;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_) {}
+
+        // Watchdog for active drag: abort only if gaze or controller disconnected
+        if (dragController) {
+            let abortDrag = false;
+            // Strict guard: Gaze controller must NEVER move or drag anything
+            if (isGazeSource(dragController)) {
+                abortDrag = true;
+            }
+            // Controller disconnected or tracking lost
+            if (dragController.userData && dragController.userData.connected === false) {
+                abortDrag = true;
+            }
+            if (!activeDraggedObject) {
+                abortDrag = true;
+            }
+
+            if (abortDrag) {
+                dragController = null;
+                activeDraggedObject = null;
+                isActivelyDragging = false;
+            }
+        }
+
+        if (dragController && activeDraggedObject) {
+            const objectToMove = activeDraggedObject;
             
             // Get controller world pos/rot using scratch objects
             dragController.getWorldPosition(_scratchDragPos);
             dragController.getWorldQuaternion(_scratchDragQuat);
             
             const isVL = (typeof VirtualLight3D !== 'undefined' && objectToMove instanceof VirtualLight3D);
-            if (isVL) {
-                // Use controller translation delta from initial drag click
-                // This eliminates the downward lever-arm dip from trigger pull, keeps card 100% stationary on click, and moves smoothly with hand
+            const isHUD = (hud && objectToMove === hud.panel);
+            
+            if (isHUD) {
+                // Ray / Laser-guided dragging: Controller orientation steers HUD along ray arc at grab distance
+                _scratchDragOffset.copy(dragOffset).applyQuaternion(_scratchDragQuat);
+                objectToMove.position.copy(_scratchDragPos).add(_scratchDragOffset);
+                if (hud) {
+                    hud.menuPos.copy(objectToMove.position);
+                }
+                
+                // Keep the panel upright and smoothly facing the user horizontally (no pitching into the floor, no roll)
+                if (activeCam) {
+                    activeCam.getWorldPosition(_scratchCamPos);
+                    _scratchTargetPos.set(_scratchCamPos.x, objectToMove.position.y, _scratchCamPos.z);
+                    if (objectToMove.position.distanceToSquared(_scratchTargetPos) > 0.005) {
+                        _dummyLookObj.position.copy(objectToMove.position);
+                        _dummyLookObj.lookAt(_scratchTargetPos);
+                        objectToMove.quaternion.copy(_dummyLookObj.quaternion);
+                        if (hud) {
+                            hud.menuRot.copy(objectToMove.rotation);
+                        }
+                    }
+                }
+                
+                if (objectToMove.updateMatrixWorld) objectToMove.updateMatrixWorld(true);
+                if (hud && typeof hud.syncGrabHandle === 'function') {
+                    hud.syncGrabHandle();
+                }
+            } else if (isVL) {
+                // Use controller translation delta from initial drag click for Virtual Lights
                 _scratchDragOffset.copy(_scratchDragPos).sub(dragStartControllerPos);
                 objectToMove.position.copy(dragStartCardPos).add(_scratchDragOffset);
                 objectToMove.hasBeenMoved = true;
                 
-                // Keep the spatial card upright and smoothly facing the user horizontally (no pitching into the floor, no roll)
+                // Keep the panel upright and smoothly facing the user horizontally (no pitching into the floor, no roll)
                 if (activeCam) {
                     activeCam.getWorldPosition(_scratchCamPos);
                     _scratchTargetPos.set(_scratchCamPos.x, objectToMove.position.y, _scratchCamPos.z);
@@ -111,11 +199,14 @@ class HUDInteraction extends xb.Script {
                 
                 if (objectToMove.updateMatrixWorld) objectToMove.updateMatrixWorld(true);
             } else {
-                // Standard logic for HUD and Keypad panels
+                // Standard logic for Keypad panels
                 _scratchDragOffset.copy(dragOffset).applyQuaternion(_scratchDragQuat);
                 objectToMove.position.copy(_scratchDragPos).add(_scratchDragOffset);
                 objectToMove.quaternion.copy(_scratchDragQuat).multiply(dragQuaternion);
                 if (objectToMove.updateMatrixWorld) objectToMove.updateMatrixWorld(true);
+                if (keypad && objectToMove === keypad.panel && typeof keypad.syncGrabHandle === 'function') {
+                    keypad.syncGrabHandle();
+                }
             }
         }
 
@@ -194,7 +285,7 @@ class HUDInteraction extends xb.Script {
                 }
 
                 // If actively dragging this card, skip pivoting so the drag feels natural
-                if (dragController && dragController.userData && (dragController.userData.selected === vl || dragController.userData.selected === vl.panel)) {
+                if (dragController && (activeDraggedObject === vl || (vl.panel && activeDraggedObject === vl.panel) || (dragController.userData && (dragController.userData.selected === vl || dragController.userData.selected === vl.panel)))) {
                     continue;
                 }
 
@@ -412,13 +503,26 @@ function onXRSelectStart(event) {
 
     // Helper to see if user clicked a button or interactive slider
     function isInteractive(obj, root) {
+        // Direct checks for HUD and Keypad interactive controls
+        if (hud) {
+            if (hud.scanButton && (obj === hud.scanButton || isDescendant(obj, hud.scanButton))) return true;
+            if (hud.clearPairingsButton && (obj === hud.clearPairingsButton || isDescendant(obj, hud.clearPairingsButton))) return true;
+            if (hud.toggleBtn && (obj === hud.toggleBtn || isDescendant(obj, hud.toggleBtn))) return true;
+            if (hud.roomMenuBtn && (obj === hud.roomMenuBtn || isDescendant(obj, hud.roomMenuBtn))) return true;
+        }
+        if (keypad && keypad.buttons) {
+            for (const b of keypad.buttons) {
+                if (b && (obj === b || isDescendant(obj, b))) return true;
+            }
+        }
+
         // 1. Check logical mapping via UIBlocks interaction registry if available
         try {
             if (typeof xb !== 'undefined' && xb.core && xb.core.interaction && xb.core.interaction.registry) {
                 const resolved = xb.core.interaction.registry.resolve(obj);
                 if (resolved && resolved.logical) {
                     const el = resolved.logical;
-                    if (el.onClick || el.onInput || el.onChange || el.name === 'UIButton' || el.name === 'UISlider' || (el.userData && el.userData.interactive)) {
+                    if (el.onClick || el.onInput || el.onChange || el.name === 'UIButton' || el.name === 'UISlider' || el.isButton || (el.userData && el.userData.interactive)) {
                         return true;
                     }
                 }
@@ -428,7 +532,7 @@ function onXRSelectStart(event) {
         // 2. Walk up Three.js parent hierarchy
         let curr = obj;
         while (curr && curr !== root) {
-            if (curr.onClick || curr.onInput || curr.onChange || curr.name === 'UIButton' || curr.name === 'UISlider' || (curr.userData && curr.userData.interactive)) {
+            if (curr.onClick || curr.onInput || curr.onChange || curr.name === 'UIButton' || curr.name === 'UISlider' || curr.isButton || (curr.userData && curr.userData.interactive)) {
                 return true;
             }
             curr = curr.parent;
@@ -437,9 +541,18 @@ function onXRSelectStart(event) {
     }
 
     // Define draggables: HUD, Keypad, and any unlinked Virtual Light panels or Lighting Groups
+    // Strict Guard: Gaze should NEVER drag HUD or Keypad
     const draggables = [];
-    if (hud && hud.panel) draggables.push(hud.panel);
-    if (keypad && keypad.panel) draggables.push(keypad.panel);
+    if (!isGazeSource(controller)) {
+        if (hud && hud.panel) {
+            draggables.push(hud.panel);
+            if (hud.grabHandle) draggables.push(hud.grabHandle);
+        }
+        if (keypad && keypad.panel) {
+            draggables.push(keypad.panel);
+            if (keypad.grabHandle) draggables.push(keypad.grabHandle);
+        }
+    }
     if (virtualLights && virtualLights.length > 0) {
         for (const vl of virtualLights) {
             const isPaired = !!(vl.realDevice || vl.linkedNodeId || vl.isLightingGroup);
@@ -450,9 +563,13 @@ function onXRSelectStart(event) {
         }
     }
 
+    if (hud && typeof hud.syncGrabHandle === 'function') hud.syncGrabHandle();
+    if (keypad && typeof keypad.syncGrabHandle === 'function') keypad.syncGrabHandle();
+
+    controller.updateMatrixWorld(true);
     tempMatrix.identity().extractRotation(controller.matrixWorld);
     raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix).normalize();
 
     // Distant security pass-through card summon (Lock, Cover, Camera) on pointer activation
     if (typeof occlusionManager !== 'undefined' && occlusionManager && virtualLights && virtualLights.length > 0) {
@@ -491,42 +608,114 @@ function onXRSelectStart(event) {
     }
 
     const intersects = raycaster.intersectObjects(draggables, true);
+    let hit = intersects.length > 0 ? intersects[0] : null;
 
-    if (intersects.length > 0) {
-        const hit = intersects[0];
-        
+    // Secondary check: examine intersections recorded by XRBlocks input engine this frame
+    if (!hit && typeof xb !== 'undefined' && xb.core?.input?.intersectionsForController) {
+        const inputIsects = xb.core.input.intersectionsForController.get(controller);
+        if (inputIsects && inputIsects.length > 0) {
+            for (const isect of inputIsects) {
+                if (hud && hud.panel && (isect.object === hud.panel || isect.object === hud.grabHandle || isDescendant(isect.object, hud.panel))) {
+                    hit = isect;
+                    break;
+                }
+                if (keypad && keypad.panel && (isect.object === keypad.panel || isect.object === keypad.grabHandle || isDescendant(isect.object, keypad.panel))) {
+                    hit = isect;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Tertiary check: Ergonomic proximity touch/pinch grab for direct hand interaction (< 0.70m)
+    if (!hit && hud && hud.panel && !isGazeSource(controller)) {
+        const cPos = new THREE.Vector3();
+        controller.getWorldPosition(cPos);
+        const hudWorldPos = new THREE.Vector3();
+        hud.panel.getWorldPosition(hudWorldPos);
+        const distToHUD = cPos.distanceTo(hudWorldPos);
+        if (distToHUD < 0.70) {
+            const forward = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
+            const toHUD = new THREE.Vector3().subVectors(hudWorldPos, cPos).normalize();
+            if (distToHUD < 0.40 || forward.dot(toHUD) > 0.35) {
+                hit = { object: hud.grabHandle || hud.panel, point: hudWorldPos };
+            }
+        }
+    }
+
+    if (hit) {
         // 1. HUD Panel (Grab anywhere on card, unless clicking scan or toggle button)
-        if (hud && hud.panel && (hit.object === hud.panel || isDescendant(hit.object, hud.panel))) {
-            if (!isInteractive(hit.object, hud.panel)) {
+        if (hud && hud.panel && (hit.object === hud.panel || hit.object === hud.grabHandle || isDescendant(hit.object, hud.panel))) {
+            if (isGazeSource(controller)) {
+                return; // Gaze must NEVER drag or interact with HUD
+            }
+
+            let isInteractiveClick = isInteractive(hit.object, hud.panel);
+            if (!isInteractiveClick && hit.point) {
+                const localHit = hud.panel.worldToLocal(hit.point.clone());
+                const isOverToggleBtn = (localHit.x > 0.16 && localHit.y > 0.08);
+                const isOverActionButtons = hud.isMenuExpanded 
+                    ? (localHit.y < -0.02 && localHit.y > -0.22 && Math.abs(localHit.x) < 0.23)
+                    : (localHit.y < -0.02 && localHit.y > -0.10 && Math.abs(localHit.x) < 0.23);
+                if (isOverToggleBtn || isOverActionButtons) {
+                    isInteractiveClick = true;
+                }
+            }
+
+            if (!isInteractiveClick) {
                 dragController = controller;
-                const objectToMove = hud.panel;
-                dragController.userData.selected = objectToMove;
+                activeDraggedObject = hud.panel;
+                isActivelyDragging = true;
                 
+                controller.updateMatrixWorld(true);
                 const cPos = new THREE.Vector3();
                 const cQuat = new THREE.Quaternion();
                 controller.getWorldPosition(cPos);
                 controller.getWorldQuaternion(cQuat);
                 
-                dragOffset.copy(objectToMove.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
-                dragQuaternion.copy(cQuat.clone().invert()).multiply(objectToMove.quaternion);
+                dragStartControllerPos.copy(cPos);
+                dragStartCardPos.copy(hud.panel.position);
+                dragStartPos.copy(cPos);
+                
+                dragOffset.copy(hud.panel.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
+                dragQuaternion.copy(cQuat.clone().invert()).multiply(hud.panel.quaternion);
+
+                if (hud.grabBar && hud.grabBar.setStyle) {
+                    hud.grabBar.setStyle({ backgroundColor: 'rgba(255, 255, 255, 0.85)' });
+                }
                 return;
             }
         }
 
         // 2. Keypad Panel
-        if (keypad && keypad.panel && (hit.object === keypad.panel || isDescendant(hit.object, keypad.panel))) {
-            if (!isInteractive(hit.object, keypad.panel)) {
+        if (keypad && keypad.panel && (hit.object === keypad.panel || hit.object === keypad.grabHandle || isDescendant(hit.object, keypad.panel))) {
+            if (isGazeSource(controller)) {
+                return; // Gaze must NEVER drag or interact with Keypad
+            }
+            let isKeypadBtn = isInteractive(hit.object, keypad.panel);
+            if (!isKeypadBtn && hit.point) {
+                const localHit = keypad.panel.worldToLocal(hit.point.clone());
+                if (localHit.y < 0.02) {
+                    isKeypadBtn = true;
+                }
+            }
+            if (!isKeypadBtn) {
                 dragController = controller;
-                const objectToMove = keypad.panel;
-                dragController.userData.selected = objectToMove;
+                activeDraggedObject = keypad.panel;
+                isActivelyDragging = true;
                 
+                controller.updateMatrixWorld(true);
                 const cPos = new THREE.Vector3();
                 const cQuat = new THREE.Quaternion();
                 controller.getWorldPosition(cPos);
                 controller.getWorldQuaternion(cQuat);
                 
-                dragOffset.copy(objectToMove.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
-                dragQuaternion.copy(cQuat.clone().invert()).multiply(objectToMove.quaternion);
+                dragStartControllerPos.copy(cPos);
+                dragStartCardPos.copy(keypad.panel.position);
+                dragStartPos.copy(cPos);
+                
+                dragOffset.copy(keypad.panel.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
+                dragQuaternion.copy(cQuat.clone().invert()).multiply(keypad.panel.quaternion);
                 return;
             }
         }
@@ -541,22 +730,22 @@ function onXRSelectStart(event) {
                     if (!isInteractive(hit.object, vl.panel)) {
                         if (vl.syncTransformFromPanel) vl.syncTransformFromPanel();
                         dragController = controller;
-                        const objectToMove = vl; // Move group in world space
-                        dragController.userData.selected = objectToMove;
+                        activeDraggedObject = vl; // Move group in world space
+                        isActivelyDragging = true;
                         
+                        controller.updateMatrixWorld(true);
                         const cPos = new THREE.Vector3();
                         const cQuat = new THREE.Quaternion();
                         controller.getWorldPosition(cPos);
                         controller.getWorldQuaternion(cQuat);
                         
                         dragStartControllerPos.copy(cPos);
-                        dragStartCardPos.copy(objectToMove.position);
+                        dragStartCardPos.copy(vl.position);
                         dragStartPos.copy(cPos);
-                        isActivelyDragging = true;
-                        objectToMove.hasBeenMoved = true;
+                        vl.hasBeenMoved = true;
                         
-                        dragOffset.copy(objectToMove.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
-                        dragQuaternion.copy(cQuat.clone().invert()).multiply(objectToMove.quaternion);
+                        dragOffset.copy(vl.position).sub(cPos).applyQuaternion(cQuat.clone().invert());
+                        dragQuaternion.copy(cQuat.clone().invert()).multiply(vl.quaternion);
                         return;
                     }
                 }
@@ -566,13 +755,31 @@ function onXRSelectStart(event) {
 }
 
 function onXRSelectEnd(event) {
-    if (dragController === event.target) {
-        const selected = dragController.userData ? dragController.userData.selected : null;
+    const controller = event ? event.target : null;
+
+    if (dragController && (!controller || dragController === controller)) {
+        const selected = activeDraggedObject;
         const wasDragging = isActivelyDragging;
+        
         dragController = null;
+        activeDraggedObject = null;
         isActivelyDragging = false;
 
         if (selected && wasDragging) {
+            if (hud && selected === hud.panel) {
+                hud.menuPos.copy(selected.position);
+                hud.menuRot.copy(selected.rotation);
+                if (hud.grabBar && hud.grabBar.setStyle) {
+                    hud.grabBar.setStyle({ backgroundColor: 'rgba(255, 255, 255, 0.40)' });
+                }
+                if (typeof hud.syncGrabHandle === 'function') {
+                    hud.syncGrabHandle();
+                }
+                if (typeof hud.enforceDepth === 'function') {
+                    hud.enforceDepth();
+                }
+            }
+
             let targetVL = null;
             if (typeof VirtualLight3D !== 'undefined' && selected instanceof VirtualLight3D) {
                 targetVL = selected;
@@ -616,6 +823,22 @@ function onXRSelect(event) {
     
     // If we were dragging, ignore the click
     if (dragController === controller) return;
+
+    // Strict Guard: Gaze should NEVER fire against HUD or Keypad
+    if (isGazeSource(controller)) {
+        if ((hud && hud.panel) || (keypad && keypad.panel)) {
+            tempMatrix.identity().extractRotation(controller.matrixWorld);
+            raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+            raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+            const targets = [];
+            if (hud && hud.panel) targets.push(hud.panel);
+            if (keypad && keypad.panel) targets.push(keypad.panel);
+            const hits = raycaster.intersectObjects(targets, true);
+            if (hits && hits.length > 0) {
+                return; // Gaze clicks on HUD/Keypad strictly blocked
+            }
+        }
+    }
 
     // Distant security pass-through card summon (Lock, Cover, Camera) on pointer activation
     if (typeof occlusionManager !== 'undefined' && occlusionManager && virtualLights && virtualLights.length > 0) {
@@ -676,8 +899,8 @@ import { FirebaseHAIntegration } from './services/firebase-ha-integration.js?v=6
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-simd-compat';
-import { HUDManager } from './hud.js?v=32';
-import { VirtualKeypad } from './keypad.js?v=30';
+import { HUDManager } from './hud.js?v=35';
+import { VirtualKeypad } from './keypad.js?v=32';
 import { GroupManager } from './services/group-manager.js';
 import { OcclusionManager, applyDepthBypassToUIRoot } from './services/occlusion-manager.js?v=20';
 import { AuxiliaryRoomMenu } from './components/auxiliary-room-menu.js?v=36';
@@ -5359,25 +5582,49 @@ async function initApp(preloadedConfig = null) {
     xb.add(new HUDInteraction());
 
     // Attach XR Controller Listeners
-    setTimeout(() => {
+    const attachXRListeners = () => {
         if (xb.renderer && xb.renderer.xr) {
             const controller0 = xb.renderer.xr.getController(0);
             const controller1 = xb.renderer.xr.getController(1);
             
-            if (controller0 && controller1) {
+            if (controller0) {
+                controller0.removeEventListener('select', onXRSelect);
+                controller0.removeEventListener('selectstart', onXRSelectStart);
+                controller0.removeEventListener('selectend', onXRSelectEnd);
+                controller0.removeEventListener('disconnected', onXRSelectEnd);
+
                 controller0.addEventListener('select', onXRSelect);
-                controller1.addEventListener('select', onXRSelect);
-                
                 controller0.addEventListener('selectstart', onXRSelectStart);
-                controller1.addEventListener('selectstart', onXRSelectStart);
-                
                 controller0.addEventListener('selectend', onXRSelectEnd);
-                controller1.addEventListener('selectend', onXRSelectEnd);
-                
-                console.log("XR Interaction Listeners Attached to controllers");
+                controller0.addEventListener('disconnected', onXRSelectEnd);
             }
+            if (controller1) {
+                controller1.removeEventListener('select', onXRSelect);
+                controller1.removeEventListener('selectstart', onXRSelectStart);
+                controller1.removeEventListener('selectend', onXRSelectEnd);
+                controller1.removeEventListener('disconnected', onXRSelectEnd);
+
+                controller1.addEventListener('select', onXRSelect);
+                controller1.addEventListener('selectstart', onXRSelectStart);
+                controller1.addEventListener('selectend', onXRSelectEnd);
+                controller1.addEventListener('disconnected', onXRSelectEnd);
+            }
+            console.log("XR Interaction Listeners Attached to controllers");
         }
-    }, 1000);
+        try {
+            if (xb.core && xb.core.input) {
+                xb.core.input.bindListener('selectstart', onXRSelectStart);
+                xb.core.input.bindListener('selectend', onXRSelectEnd);
+                xb.core.input.bindListener('select', onXRSelect);
+                xb.core.input.bindListener('disconnected', onXRSelectEnd);
+            }
+        } catch (_) {}
+    };
+
+    setTimeout(attachXRListeners, 1000);
+    if (xb.renderer && xb.renderer.xr) {
+        xb.renderer.xr.addEventListener('sessionstart', attachXRListeners);
+    }
 
     // 4. Create Passthrough Plane (HUD) - ONLY for AR (or if we want it in VR)
     if (isARSupported) {
@@ -5404,22 +5651,15 @@ async function initApp(preloadedConfig = null) {
         hud.init(document.body, '2D');
         console.log("HUD: 2D Overlay Attached to Body");
     } else {
-        // XR: 3D Plane
+        // XR: 3D Plane - NEVER attach to Camera (prevents head-lock)
         setTimeout(() => {
-             let app = null;
-             try {
-                if (typeof xb.get === 'function') {
-                    app = xb.get();
-                }
-             } catch(e) {}
+             const worldScene = xb.scene || (xb.core && xb.core.scene);
              
-             const parent = app?.camera || xb.scene; 
-             
-             if (parent) {
-                hud.init(parent, '3D');
-                console.log("HUD: 3D Plane Attached to Scene/Camera");
+             if (worldScene) {
+                hud.init(worldScene, '3D');
+                console.log("HUD: 3D Plane Attached to World Scene");
              } else {
-                console.warn("Could not find Camera or Scene for 3D HUD");
+                console.warn("Could not find Scene for 3D HUD");
              }
         }, 500);
     }

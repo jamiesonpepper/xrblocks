@@ -77,6 +77,7 @@ export class VirtualKeypad {
         rowButtons.push(new xb.UIButton({
           label: char,
           icon: iconName,
+          userData: { interactive: true },
           style: {
             flexGrow: 1,
             height: 42,
@@ -101,6 +102,7 @@ export class VirtualKeypad {
     cardChildren.push(new xb.UIButton({
       label: 'Cancel',
       icon: 'close',
+      userData: { interactive: true },
       style: {
         width: '100%',
         height: 38,
@@ -114,7 +116,7 @@ export class VirtualKeypad {
       size: { width: 0.40, height: 'auto' },
       anchorX: 'center',
       anchorY: 'top',
-      manipulation: true,
+      manipulation: false,
       style: {
         flexDirection: 'column',
         gap: 8,
@@ -127,11 +129,61 @@ export class VirtualKeypad {
       children: cardChildren,
     });
 
+    // 3D Physical Grab & Raycast Collider for WebXR direct and distant dragging
+    // Note: Raw THREE.Mesh CANNOT be added to UICard (.add validates UIElement/TransformScript)
+    const grabGeom = new THREE.PlaneGeometry(0.42, 0.48);
+    const grabMat = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0.0,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    const grabMesh = new THREE.Mesh(grabGeom, grabMat);
+    grabMesh.name = 'KeypadGrabHandle';
+    this.grabHandle = grabMesh;
+
+    // Ensure standard Three.js raycasting against keypad.panel directly hits the physical grab collider
+    this.panel.raycast = (raycaster, intersects) => {
+      if (this.grabHandle) {
+        this.syncGrabHandle();
+        const prevLen = intersects.length;
+        this.grabHandle.raycast(raycaster, intersects);
+        for (let i = prevLen; i < intersects.length; i++) {
+          intersects[i].object = this.panel;
+        }
+      }
+    };
+
+    // Gaze protection: gate UX so gaze can never focus, hover, or select Keypad
+    if (this.panel.ux) {
+      const origUxUpdate = this.panel.ux.update.bind(this.panel.ux);
+      this.panel.ux.update = (ctrl, isect) => {
+        if (typeof isGazeSource === 'function' && isGazeSource(ctrl)) return;
+        if (typeof xb !== 'undefined' && xb.core?.input?.gazeController && ctrl === xb.core.input.gazeController) return;
+        return origUxUpdate(ctrl, isect);
+      };
+    }
+
     this.group = this.panel;
     this.group.visible = false;
+    this.grabHandle.visible = false;
 
     if (parent && parent.add) {
       parent.add(this.group);
+      parent.add(this.grabHandle);
+    } else if (typeof xb !== 'undefined' && xb.scene) {
+      xb.scene.add(this.group);
+      xb.scene.add(this.grabHandle);
+    }
+  }
+
+  syncGrabHandle() {
+    if (this.grabHandle && this.panel) {
+      const normal = new THREE.Vector3(0, 0, -0.005).applyQuaternion(this.panel.quaternion);
+      this.grabHandle.position.copy(this.panel.position).add(normal);
+      this.grabHandle.quaternion.copy(this.panel.quaternion);
+      this.grabHandle.visible = (this.visible && this.panel.visible !== false);
+      this.grabHandle.updateMatrixWorld(true);
     }
   }
 
@@ -166,6 +218,7 @@ export class VirtualKeypad {
       this.group.visible = true;
     }
 
+    this.syncGrabHandle();
     this.updateDisplay();
     this.enforceDepth();
   }
@@ -174,6 +227,9 @@ export class VirtualKeypad {
     this.visible = false;
     if (this.group) {
       this.group.visible = false;
+    }
+    if (this.grabHandle) {
+      this.grabHandle.visible = false;
     }
     this.onEnter = null;
     this.onCancel = null;

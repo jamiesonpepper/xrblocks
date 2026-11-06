@@ -11,6 +11,8 @@ export class HUDManager {
     constructor() {
         this.mesh = null; // 2D Canvas Mesh (Legacy/2D)
         this.panel = null; // 3D SpatialPanel
+        this.grabHandle = null;
+        this.grabBar = null;
         this.mode = '3D';
         
         // 2D Canvas for Desktop Mode
@@ -74,7 +76,12 @@ export class HUDManager {
     }
 
     init3D(scene) {
-        this.scene = scene;
+        // Guarantee HUD is anchored in 3D world scene, NEVER head-locked to the Camera
+        let worldScene = scene;
+        if (!worldScene || worldScene.isCamera || worldScene instanceof THREE.Camera) {
+            worldScene = xb.scene || (xb.core && xb.core.scene) || null;
+        }
+        this.scene = worldScene;
         this.isMenuExpanded = true;
 
         let cam = null;
@@ -104,9 +111,12 @@ export class HUDManager {
         this.renderMenu();
 
         if (cam) {
-            this.panel.lookAt(camPos);
+            const targetPos = new THREE.Vector3(camPos.x, this.menuPos.y, camPos.z);
+            this.panel.lookAt(targetPos);
+            this.menuRot.copy(this.panel.rotation);
+            this.syncGrabHandle();
         }
-        console.log("HUD initialized in 3D Mode (UICard) at Y =", this.menuPos.y);
+        console.log("HUD initialized in 3D Mode (World Anchor) at Y =", this.menuPos.y);
     }
 
     renderMenu() {
@@ -120,6 +130,19 @@ export class HUDManager {
             } else if (typeof xb.remove === 'function') {
                 xb.remove(this.panel);
             }
+        }
+
+        if (this.grabHandle) {
+            if (this.grabHandle.parent) {
+                this.grabHandle.parent.remove(this.grabHandle);
+            } else if (this.scene) {
+                this.scene.remove(this.grabHandle);
+            } else if (typeof xb.remove === 'function') {
+                xb.remove(this.grabHandle);
+            }
+            if (this.grabHandle.geometry) this.grabHandle.geometry.dispose();
+            if (this.grabHandle.material) this.grabHandle.material.dispose();
+            this.grabHandle = null;
         }
 
         // Collapsed shows only 1 line, Expanded shows 4
@@ -158,6 +181,7 @@ export class HUDManager {
             label: this.isScanning ? "STOP SCAN" : "START SCAN",
             icon: this.isScanning ? "stop" : "search",
             ariaLabel: this.isScanning ? "Stop Scan" : "Start Scan",
+            userData: { interactive: true },
             style: scanStyle,
             onClick: () => {
                 if (this.onScanToggle) this.onScanToggle();
@@ -167,6 +191,7 @@ export class HUDManager {
         const toggleBtn = new xb.UIButton({
             label: this.isMenuExpanded ? '-' : '+',
             ariaLabel: 'Toggle HUD expand',
+            userData: { interactive: true },
             style: {
                 width: 36,
                 height: 36,
@@ -186,6 +211,7 @@ export class HUDManager {
                 this.renderMenu();
             }
         });
+        this.toggleBtn = toggleBtn;
 
         const headerRow = new xb.UIPanel({
             style: {
@@ -223,6 +249,7 @@ export class HUDManager {
                 label: "ROOM & DEVICE MENU",
                 icon: "meeting_room",
                 ariaLabel: "Room and Device Menu",
+                userData: { interactive: true },
                 style: {
                     width: '100%',
                     height: 38,
@@ -241,11 +268,13 @@ export class HUDManager {
                     if (this.onOpenRoomMenu) this.onOpenRoomMenu();
                 }
             });
+            this.roomMenuBtn = roomMenuBtn;
             actionButtons.push(roomMenuBtn);
 
             this.clearPairingsButton = new xb.UIButton({
                 label: "CLEAR PAIRINGS",
                 icon: "delete_sweep",
+                userData: { interactive: true },
                 style: {
                     width: '100%',
                     height: 38,
@@ -267,9 +296,21 @@ export class HUDManager {
             actionButtons.push(this.clearPairingsButton);
         }
 
+        const grabBar = new xb.UIPanel({
+            style: {
+                width: 64,
+                height: 5,
+                borderRadius: 3,
+                backgroundColor: 'rgba(255, 255, 255, 0.40)',
+                alignSelf: 'center',
+                marginBottom: 2
+            }
+        });
+        this.grabBar = grabBar;
+
         this.panel = new xb.UICard({
             size: { width: 0.54, height: 'auto' },
-            manipulation: true,
+            manipulation: false,
             style: {
                 flexDirection: 'column',
                 gap: 12,
@@ -280,23 +321,73 @@ export class HUDManager {
                 borderRadius: 20
             },
             children: [
+                grabBar,
                 headerRow,
                 logPanel,
                 ...actionButtons
             ]
         });
 
+        // 3D Physical Grab & Raycast Collider for WebXR direct and distant dragging
+        // Note: Raw THREE.Mesh CANNOT be added to UICard (.add validates UIElement/TransformScript)
+        const grabGeom = new THREE.PlaneGeometry(0.56, this.isMenuExpanded ? 0.48 : 0.24);
+        const grabMat = new THREE.MeshBasicMaterial({
+            transparent: true,
+            opacity: 0.0,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        const grabMesh = new THREE.Mesh(grabGeom, grabMat);
+        grabMesh.name = 'HUDGrabHandle';
+        this.grabHandle = grabMesh;
+
+        // Ensure standard Three.js raycasting against hud.panel directly hits the physical grab collider
+        this.panel.raycast = (raycaster, intersects) => {
+            if (this.grabHandle) {
+                this.syncGrabHandle();
+                const prevLen = intersects.length;
+                this.grabHandle.raycast(raycaster, intersects);
+                for (let i = prevLen; i < intersects.length; i++) {
+                    intersects[i].object = this.panel;
+                }
+            }
+        };
+
+        // Gaze protection: gate UX so gaze can never focus, hover, or select HUD
+        if (this.panel.ux) {
+            const origUxUpdate = this.panel.ux.update.bind(this.panel.ux);
+            this.panel.ux.update = (ctrl, isect) => {
+                if (typeof isGazeSource === 'function' && isGazeSource(ctrl)) return;
+                if (typeof xb !== 'undefined' && xb.core?.input?.gazeController && ctrl === xb.core.input.gazeController) return;
+                return origUxUpdate(ctrl, isect);
+            };
+        }
+
         this.panel.position.copy(this.menuPos);
         this.panel.rotation.copy(this.menuRot);
 
-        if (this.scene) {
-            this.scene.add(this.panel);
+        const targetScene = (this.scene && !this.scene.isCamera) ? this.scene : (xb.scene || null);
+        if (targetScene) {
+            targetScene.add(this.panel);
+            targetScene.add(this.grabHandle);
         } else {
             xb.add(this.panel);
+            xb.add(this.grabHandle);
         }
 
+        this.syncGrabHandle();
         this.sync3DLogs();
         this.enforceDepth();
+    }
+
+    syncGrabHandle() {
+        if (this.grabHandle && this.panel) {
+            const normal = new THREE.Vector3(0, 0, -0.005).applyQuaternion(this.panel.quaternion);
+            this.grabHandle.position.copy(this.panel.position).add(normal);
+            this.grabHandle.quaternion.copy(this.panel.quaternion);
+            this.grabHandle.visible = (this.panel.visible !== false);
+            this.grabHandle.updateMatrixWorld(true);
+        }
     }
     
     enforceDepth() {

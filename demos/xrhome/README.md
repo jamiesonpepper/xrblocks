@@ -90,6 +90,15 @@ Each device domain features a custom-engineered, glassmorphic 3D spatial panel w
   - `window.toggleDepthMesh(enabled)`: Live interactive toggle for the hardware depth occluder in headset DevConsole.
   - `window.forceBypassDepthAll()`: One-shot manual depth bypass override across all active mounts.
 
+### 11. Gaze Immunity, Ray-Guided HUD Dragging & Physical Collider Architecture (Version 2.21)
+
+- **Total Gaze Immunity for HUD & Keypad**: Gaze controllers are strictly shielded from targeting `HUDManager` and `VirtualKeypad`. Gaze cannot hover, focus, dwell, select, or drag HUD and Keypad panels, preventing accidental interaction or position locking while scanning or looking around.
+- **Ray/Laser-Guided HUD Dragging**: Switched HUD dragging to ray/laser-guided repositioning (`_scratchDragOffset = dragOffset * _scratchDragQuat`), allowing subtle wrist and controller orientation movements to swing the HUD smoothly across the field of view at distance, eliminating sluggish 1:1 arm-translation drag.
+- **Horizontal Billboarding & Upright Locking**: Maintained horizontal user-facing billboarding (`lookAt`) during drag, ensuring the HUD remains upright and comfortable to read without pitch dips or roll instability.
+- **Physical Grab Collider Architecture (`HUDGrabHandle` & `KeypadGrabHandle`)**: Decoupled physical `THREE.Mesh` plane colliders from `@pmndrs/uikit` semantic nodes (`UICard`), adding them directly to the world scene to comply with `validateUIChild` constraints while preserving standard Three.js raycasting and drag selection.
+- **Smart Interactive vs. Drag Zones**: Transparently passes through clicks to HUD action buttons (Scan, Clear Pairings, Room Menu, Expand/Collapse) and Keypad keys while card margins, headers, log panels, and top grab bars initiate drag.
+- **World-Anchor Initialization**: Ensured the 3D HUD always mounts to the world scene (`xb.scene` / `worldScene`) rather than `camera`, preventing head-locked HUD drift.
+
 ---
 
 ## User Interaction Guide
